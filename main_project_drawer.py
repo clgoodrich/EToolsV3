@@ -73,12 +73,6 @@ class ZoomPan:
         fig.canvas.mpl_connect('scroll_event', zoom)
         return zoom
 
-    def add_text(self, ax, x, y, text_str):
-        scale_factor = ax.get_xlim()[1] - ax.get_xlim()[0]
-        text = ax.text(x, y, text_str, ha='center', va='center', fontsize=12 / scale_factor * 2500,
-                       transform=ax.transData)
-        self.text_objects.append(text)
-
     def pan_factory(self, ax):
         def onPress(event):
             if event.inaxes != ax: return
@@ -140,11 +134,8 @@ class DataDrawer:
         self.added_viz_pts_model.dataChanged.connect(self.update_model_table_when_user_modifies_values)
         self.ui.insert_pts_lst.setEditTriggers(QAbstractItemView.AllEditTriggers)
 
-
         self.added_viz_points_data_model = QStandardItemModel()
         self.ui.dx_viz_data_table.setModel(self.added_viz_points_data_model)
-
-
 
         self.canvas_visual.mpl_connect('button_press_event', self.click_on_2d_targeter)
         self.hovertemplate = (
@@ -525,8 +516,10 @@ class DataDrawer:
         return inner_polygon
 
     def plat_drawer_process(self):
-        self.plat_df['geo_100ft'] = self.plat_df['geometry'].apply(lambda x: self.create_smaller_polygon(x, 100 * 0.3048))
-        self.plat_df['geo_330ft'] = self.plat_df['geometry'].apply(lambda x: self.create_smaller_polygon(x, 330 * 0.3048))
+        self.plat_df['geo_100ft'] = self.plat_df['geometry'].apply(
+            lambda x: self.create_smaller_polygon(x, 100 * 0.3048))
+        self.plat_df['geo_330ft'] = self.plat_df['geometry'].apply(
+            lambda x: self.create_smaller_polygon(x, 330 * 0.3048))
         self.plats.set_segments(self.plat_df['geometry'].apply(lambda x: x.exterior.coords))
         self.plats_100.set_segments(self.plat_df['geo_100ft'].apply(lambda x: x.exterior.coords))
 
@@ -540,33 +533,13 @@ class DataDrawer:
                       zip(self.plat_df['centroid'], self.plat_df['label'])]
         self.labels_plats_2d.set_paths(paths_main)
 
-    def plat_draw_bhl_shl(self, df_survey):
-        # Option 1: Use a set to collect unique points during the loop
-        shl_pts = set()  # initialize as set instead of list
-        bhl_pts = set()
-        for k, v in df_survey.items():
-            unpacked_data = v.clearance_data
-            point_shl = tuple(unpacked_data[['easting', 'northing']].iloc[0].values.tolist())  # convert to tuple for set
-            point_bhl = tuple(unpacked_data[['easting', 'northing']].iloc[-1].values.tolist())  # convert to tuple for set
-
-            shl_pts.add(point_shl)
-            bhl_pts.add(point_bhl)
-        # Convert back to list if needed
-        shl_pts = list(shl_pts)
-        bhl_pts = list(bhl_pts)
-
-        self.bhl_pts.set_offsets(bhl_pts)
-        self.bhl_pts.set_visible(False)
-
-        self.shl_pts.set_offsets(shl_pts)
-        self.shl_pts.set_visible(False)
-
     def plat_draw_wells_process(self, df_survey):
         id_dict = {'drl': "black", "pln": "red"}
         dashed_dict = {'drl': "-", "pln": "--"}
         for k, v in df_survey.items():
             unpacked_data = v.clearance_data
-            point_shl = tuple(unpacked_data[['easting', 'northing']].iloc[0].values.tolist())  # convert to tuple for set
+            point_shl = tuple(
+                unpacked_data[['easting', 'northing']].iloc[0].values.tolist())  # convert to tuple for set
             point_bhl = tuple(unpacked_data[['easting', 'northing']].iloc[-1].values.tolist())
             color = id_dict[k[:3]]
             dash_type = dashed_dict[k[:3]]
@@ -733,7 +706,6 @@ class DataDrawer:
         self.ui.dx_viz_data_table.setModel(self.added_viz_points_data_model)
         self.ui.dx_viz_data_table.setUpdatesEnabled(False)
 
-
     def update_clicked_data_table(self, pt_df):
         self.clear_clicked_data_table()
 
@@ -754,10 +726,6 @@ class DataDrawer:
                 item = QStandardItem(str(value))
                 # Optionally, set additional data or flags here
                 self.added_viz_points_data_model.setItem(row_idx, col_idx, item)
-
-
-
-
 
         #
         # for _, data in pt_df.iterrows():
@@ -798,137 +766,3 @@ class DataDrawer:
             out_empty = out_empty.sort_values('distance').reset_index(drop=True)
             return out_empty.head(1)
         return out_empty
-
-    # def click_on_2d_targeter2(self, event):
-    #     def findWhatisChecked():
-    #         def processDataframeForDistance(df, var_name):
-    #             df['distance'] = np.sqrt((df['Easting'].astype(float) - x_selected) ** 2 + (
-    #                     df['Northing'].astype(float) - y_selected) ** 2)
-    #
-    #             closest_points_df = df[df['distance'] < limit]
-    #             closest_points_df['dataframe'] = var_name
-    #             return closest_points_df
-    #
-    #         surveys_in_use = self.get_checked_surveys()
-    #         closest_points1, closest_points2, closest_points3, closest_points4 = pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-    #         if self.ui.well_viz_grid_drilled_check.isChecked():
-    #             closest_points1 = processDataframeForDistance(self.base_dx_df_drilled_new_grid,
-    #                                                           'base_dx_df_drilled_new_grid')
-    #         if self.ui.well_viz_true_drilled_check.isChecked():
-    #             closest_points2 = processDataframeForDistance(self.base_dx_df_drilled_new_true,
-    #                                                           'base_dx_df_drilled_new_true')
-    #         if self.ui.well_viz_grid_planned_check.isChecked():
-    #             closest_points3 = processDataframeForDistance(self.base_dx_df_planned_new_grid,
-    #                                                           'base_dx_df_planned_new_grid')
-    #         if self.ui.well_viz_true_planned_check.isChecked():
-    #             closest_points4 = processDataframeForDistance(self.base_dx_df_planned_new_true,
-    #                                                           'base_dx_df_planned_new_true')
-    #
-    #         closest1 = pd.concat([closest_points1, closest_points2], ignore_index=True)
-    #         closest2 = pd.concat([closest_points3, closest_points4], ignore_index=True)
-    #         closest_points = pd.concat([closest1, closest2], ignore_index=True).drop_duplicates(
-    #             keep="first")
-    #         # if self.ui.well_viz_drilled_check.isChecked() and not self.ui.well_viz_planned_check.isChecked():
-    #         #     used_df = self.base_dx_df_drilled_new
-    #         #     used_df = used_df[['Easting', 'Northing', 'shp_pt']]
-    #         # elif not self.ui.well_viz_drilled_check.isChecked() and self.ui.well_viz_planned_check.isChecked():
-    #         #     used_df = self.base_dx_df_planned_new
-    #         #     used_df = used_df[['Easting', 'Northing', 'shp_pt']]
-    #         # elif self.ui.well_viz_drilled_check.isChecked() and self.ui.well_viz_planned_check.isChecked():
-    #         #     used_df = self.base_dx_df_new
-    #         #     used_df = used_df[['Easting', 'Northing', 'shp_pt']]
-    #         # else:
-    #         #     if len(self.df_custom_viz_pts) == 0:
-    #         #         return used_df
-    #         # if len(self.df_custom_viz_pts) > 0:
-    #         #     extra_df = self.df_custom_viz_pts[['Easting', 'Northing']]
-    #         #     extra_df['shp_pt'] = extra_df.apply(lambda row: Point(row['Easting'], row['Northing']), axis=1)
-    #         #     used_df = pd.concat([extra_df, used_df], ignore_index=True)
-    #         #
-    #         # used_df['distance'] = np.sqrt((used_df['Easting'].astype(float) - x_selected) ** 2 + (
-    #         #         used_df['Northing'].astype(float) - y_selected) ** 2)
-    #         # # Create a dataframe of points that are within the limit distance of the actively found points
-    #         # used_df['distance'] = np.sqrt((used_df['Easting'].astype(float) - x_selected) ** 2 + (
-    #         #         used_df['Northing'].astype(float) - y_selected) ** 2)
-    #         #
-    #         # closest_points = used_df[used_df['distance'] < limit]
-    #         return closest_points
-    #
-    #     mods = QGuiApplication.queryKeyboardModifiers()
-    #
-    #     if event.inaxes is not None:
-    #         if event.button == Qt.LeftButton and mods == Qt.ShiftModifier:
-    #             self.targeting_reticule_process(event)
-    #             x_selected, y_selected = event.xdata, event.ydata
-    #             limit = (np.diff(self.ax_visual.get_xlim())[0] + np.diff(self.ax_visual.get_ylim())[0]) / 50
-    #             closest_points = findWhatisChecked()
-    #     #         if not closest_points.empty:
-    #     #             closest_point = closest_points.loc[closest_points['distance'].idxmin()]
-    #     #             self.selected_point_viz.set_offsets([closest_point['Easting'], closest_point['Northing']])
-    #     #             self.retrieveDistanceMeasurements(closest_point)
-    #     #             self.drawReticulePointToTable(closest_point)
-    #     #         else:
-    #     #             self.selected_point_viz.set_offsets([x_selected, y_selected])
-    #     #
-    #     # else:
-    #     #     self.selected_point_viz.set_offsets([None, None])
-
-    # def targeting_reticule_process(self, event):
-    #     for _, row in self.plat_df.iterrows():
-    #         if row['geometry'].contains(Point(event.xdata, event.ydata)):
-    #             poly = list(row['geometry'].exterior.coords)
-    #             point_used = [float(event.xdata), float(event.ydata)]
-    #             data = [{'Easting': float(event.xdata), 'Northing': float(event.ydata)}]
-    #             test_df = pd.DataFrame(data=data)
-    #             test_df['Conc'] = row['Conc']
-    #             test_df['point_index'] = 0
-    #             # output_df, _ = self.clearance_for_points(test_df, self.plat_df)
-    #             # dist_ns, dist_ew, mp_ns, mp_ew, original_ns_segment, original_ew_segment, pts, output_all, all_footage = self.process_point(poly,point_used)
-    #             # self.drawReticule(pts, original_ew_segment, original_ns_segment, dist_ew, dist_ns)
-    #             # self.ui.result_FEWL_box.setText(f"FNL - {output_df['FNL'].iloc[0]}")
-    #             # self.ui.result_FEWL_val_box.setText(f"FSL - {output_df['FSL'].iloc[0]}")
-    #             # self.ui.result_FNSL_box.setText(f"FEL - {output_df['FEL'].iloc[0]}")
-    #             # self.ui.result_FNSL_val_box.setText(f"FWL - {output_df['FWL'].iloc[0]}")
-
-    # def clearance_for_points(self, df_used, df_plat):
-    #     def calculate_well_to_line_clearance_detailed(well_trajectory, line_points):
-    #         well_trajectory = np.array(well_trajectory)
-    #         line_points = np.array(line_points)
-    #         p1, p2 = line_points
-    #         line_vector = p2 - p1
-    #         line_length_squared = np.sum(line_vector ** 2)
-    #
-    #         detailed_results = []
-    #         for i, well_point in enumerate(well_trajectory):
-    #             # Vector from line start to well point
-    #             t = np.divide(np.dot(well_point - p1, line_vector), line_length_squared,
-    #                           where=line_length_squared != 0,
-    #                           out=np.zeros_like(line_length_squared))
-    #             # Clamp t to [0, 1] to keep point on the segment
-    #             t = max(0, min(1, t))
-    #
-    #             # Calculate the closest point on the line segment
-    #             closest_point = p1 + t * line_vector
-    #             # Calculate the distance
-    #             distance = np.linalg.norm(well_point - closest_point)
-    #
-    #             # Calculate the angle
-    #             well_to_closest = well_point - closest_point
-    #             epsilon = 1e-10  # Adjust this value as needed
-    #             angle = np.degrees(np.arccos(np.dot(well_to_closest, line_vector) /
-    #                                          (np.linalg.norm(well_to_closest) * np.linalg.norm(line_vector) + epsilon)))
-    #             # Ensure the angle is the smaller one (acute angle)
-    #             if angle > 90:
-    #                 angle = 180 - angle
-    #
-    #             result = {
-    #                 "point_index": i,
-    #                 "well_point": well_point,
-    #                 "distance": distance,
-    #                 "closest_surface_point": closest_point,
-    #                 "intersection_angle": angle,
-    #                 "original_segment": line_points
-    #             }
-    #             detailed_results.append(result)
-    #
-    #         return detailed_results

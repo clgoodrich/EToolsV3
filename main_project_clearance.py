@@ -60,6 +60,8 @@ from typing import Optional, Tuple, Union, TypeVar
 from numpy.typing import NDArray
 
 T = TypeVar('T', bound=List[Any])
+
+
 def _reorganize_lst_points_with_angle(
         lst: List[List[float]],
         centroid: List[float]
@@ -103,6 +105,7 @@ def _reorganize_lst_points_with_angle(
     ]
 
     return lst_arrange
+
 
 def _calculate_well_to_line_clearance_detailed(
         well_trajectory: Union[List[List[float]], npt.NDArray],
@@ -197,6 +200,7 @@ def _calculate_well_to_line_clearance_detailed(
 
     return result
 
+
 def _optimized_corner_process(
         trajectory: Union[List[List[float]], npt.NDArray]
 ) -> List[List[float]]:
@@ -275,6 +279,7 @@ def _optimized_corner_process(
 
     return result.tolist()
 
+
 def _remove_dupes_list_of_lists(lst: List[List[T]]) -> List[List[T]]:
     """Removes duplicate sublists while preserving the original order.
 
@@ -315,6 +320,7 @@ def _remove_dupes_list_of_lists(lst: List[List[T]]) -> List[List[T]]:
             dup_free_set.add(x_tuple)
 
     return dup_free
+
 
 def _remove_duplicates_preserve_order(points_list: List[T]) -> List[Tuple]:
     """Removes duplicate points while preserving order, converting results to tuples.
@@ -358,6 +364,7 @@ def _remove_duplicates_preserve_order(points_list: List[T]) -> List[Tuple]:
             seen.add(point_tuple)
 
     return result
+
 
 def _consolidate_columns(
         df: pd.DataFrame,
@@ -431,6 +438,7 @@ def _consolidate_columns(
             })
 
     return pd.DataFrame(consolidated)
+
 
 def _process_row(
         row: pd.Series,
@@ -594,163 +602,6 @@ def _results_finder(
 
     return results_df
 
-# def _results_finder(
-#         segments: List[List[float]],
-#         dir_val: str,
-#         well_trajectory: np.ndarray
-# ) -> pd.DataFrame:
-#     """Optimized clearance calculations between well trajectory and line segments."""
-#     # Extract well trajectory components
-#     well_indices = well_trajectory[:, 2]
-#     well_points = well_trajectory[:, :2]
-#     # Convert segments to numpy array for vectorized operations
-#     segments = np.array(segments)
-#
-#     p1 = segments[:, 0, :]
-#     p2 = segments[:, 1, :]
-#     segment_vectors = p2 - p1
-#     segment_lengths_squared = np.sum(segment_vectors ** 2, axis=1)
-#
-#     # Pre-allocate result storage
-#     distances = []
-#     closest_points = []
-#     angles = []
-#     min_dist_indices = []
-#
-#     # Vectorized processing of all points against all segments
-#     for well_point in well_points:
-#         well_point_diff = well_point - p1  # Differences from each segment start point
-#         t = np.sum(well_point_diff * segment_vectors, axis=1) / segment_lengths_squared
-#         t = np.clip(t, 0, 1)  # Clamp projection to segment bounds
-#
-#         closest_point = p1 + t[:, None] * segment_vectors  # Closest points on segments
-#         distance = np.linalg.norm(well_point - closest_point, axis=1)  # L2 distances
-#
-#         # Calculate angles (convert obtuse angles to acute)
-#         vector_to_closest = closest_point - well_point
-#         norm_well_to_closest = np.linalg.norm(vector_to_closest, axis=1)
-#         norm_segment_vectors = np.linalg.norm(segment_vectors, axis=1)
-#         epsilon = 1e-10  # Numerical stability
-#         cos_angles = np.sum(vector_to_closest * segment_vectors, axis=1) / (
-#                 norm_well_to_closest * norm_segment_vectors + epsilon
-#         )
-#         angle = np.degrees(np.arccos(np.clip(cos_angles, -1, 1)))
-#         angle = np.where(angle > 90, 180 - angle, angle)
-#
-#         # Find minimum distance index
-#         min_idx = np.argmin(distance)
-#         distances.append(distance[min_idx])
-#         closest_points.append(closest_point[min_idx])
-#         angles.append(angle[min_idx])
-#         min_dist_indices.append(min_idx)
-#
-#     # Convert results to DataFrame
-#     results_df = pd.DataFrame({
-#         "point_index": well_indices,
-#         f"distance_{dir_val}": np.array(distances) / 0.3048,  # Convert to feet
-#         f"closest_surface_point_{dir_val}": closest_points,
-#         f"intersection_angle_{dir_val}": angles,
-#         f"segments_{dir_val}": [segments[i] for i in min_dist_indices]
-#     })
-#
-#     return results_df
-
-def _results_finder2(
-        segments: List[List[float]],
-        dir_val: str,
-        well_trajectory: List[Tuple[float, float, int]]
-) -> pd.DataFrame:
-
-    """Calculates and consolidates clearance measurements between well trajectory and surface segments.
-
-    Processes multiple surface segments against well trajectory points to find distances,
-    intersection angles, and closest points, then consolidates results into a DataFrame.
-
-    Args:
-        segments: List of surface line segments to check against well trajectory
-        dir_val: Direction identifier used in column naming ('up'/'down'/etc)
-        well_trajectory: List of tuples containing (x, y, index) for well points
-
-    Returns:
-        DataFrame containing consolidated results with columns:
-            - point_index: Original well point index
-            - well_point: (x,y) coordinates of well point
-            - distance_{dir_val}: Minimum distance to surface
-            - closest_surface_point_{dir_val}: Nearest point on surface
-            - intersection_angle_{dir_val}: Angle of intersection
-            - segments_{dir_val}: Associated surface segment
-
-    Notes:
-        - Distances are converted from meters to feet (divided by 0.3048)
-        - Empty results generate placeholder DataFrame with same structure
-        - Results are processed to keep only points closest to 90° intersection
-        - All floating point distances are rounded to 2 decimal places
-
-    Example:
-        >>> segments = [[[0,0], [1,1]], [[2,2], [3,3]]]
-        >>> well = [(0.5, 0.5, 1), (1.5, 1.5, 2)]
-        >>> df = _results_finder(segments, 'up', well)
-    """
-    # Initialize results storage
-    all_results: List[Dict[str, Any]] = []
-
-    # Separate well trajectory components
-    well_index: List[int] = [i[2] for i in well_trajectory]
-    well_trajectory_points: List[List[float]] = [i[:2] for i in well_trajectory]
-
-    # Process each segment against well trajectory
-
-    for i, segment in enumerate(segments):
-        # Calculate clearance details for current segment
-        results = _calculate_well_to_line_clearance_detailed(well_trajectory_points, segment)
-        # Store results for each well point
-        for j, result in enumerate(results):
-            # Initialize well point data on first segment
-            if i == 0:
-                all_results.append({
-                    'point_index': well_index[j],
-                    'well_point': well_trajectory_points[j]
-                })
-
-            # Add segment-specific results
-            all_results[j].update({
-                f'distance{i + 1}_{dir_val}': round(result['distance'] / 0.3048, 2),
-                f'closest_surface_point{i + 1}_{dir_val}': result['closest_surface_point'],
-                f'intersection_angle{i + 1}_{dir_val}': result['intersection_angle'],
-                f'segments{i + 1}_{dir_val}': segments[0]
-            })
-
-    # Create DataFrame and set column order
-    df = pd.DataFrame(all_results)
-    column_order = ['point_index', 'well_point'] + [
-        f'{col}{i}_{dir_val}' for i in range(1, len(segments) + 1)
-        for col in ['distance', 'closest_surface_point', 'intersection_angle', 'segments']
-    ]
-
-    # Handle empty results case
-    if df.empty:
-        well_traj_pts = [[None, None] for _ in well_trajectory]
-        placeholder_data = {
-            'point_index': well_index,
-            'well_point': well_trajectory_points,
-            f'distance1_{dir_val}': [None] * len(well_trajectory),
-            f'closest_surface_point1_{dir_val}': [None] * len(well_trajectory),
-            f'intersection_angle1_{dir_val}': [None] * len(well_trajectory),
-            f'segments1_{dir_val}': well_traj_pts
-        }
-        return pd.DataFrame(placeholder_data)
-
-    # Process and consolidate results
-
-
-    df = df[column_order]
-    num_segments = len(segments)
-    df = df.apply(lambda row: _process_row(row, num_segments, dir_val), axis=1)
-
-    consolidated_df = _consolidate_columns(df, num_segments, dir_val)
-
-    # Combine with well point information
-    return pd.concat([df[['point_index', 'well_point']], consolidated_df], axis=1)
 
 def _regular_corner_class(
         corners: List[List[float]],
@@ -871,6 +722,7 @@ def _regular_corner_class(
 
     return [west_side, north_side, east_side, south_side]
 
+
 def _corner_generator_process(
         data_lengths: List[List[float]]
 ) -> Tuple[List[List[float]], List[List[List[float]]]]:
@@ -928,6 +780,7 @@ def _corner_generator_process(
     all_data = _regular_corner_class(corners, data_lengths)
 
     return corners, all_data
+
 
 def _id_sides(polygon: List[List[float]]) -> Tuple[List[List[List[float]]], ...]:
     """Identifies and segments the sides of a polygon into directional components.
@@ -1042,23 +895,7 @@ class ClearanceProcess:
 
         # Extract used concentration values
         self.used_conc = self.clearance_data['label'].unique().tolist()
-    def populate_conc_label(self):
-        if not isinstance(self.plats, gpd.GeoDataFrame):
-            self.plats = gpd.GeoDataFrame(self.plats, geometry='geometry')
-        if not hasattr(self.plats, 'sindex'):
-            self.plats = self.plats.set_index(self.plats.sindex)
 
-        self.plats['found_label'] = None
-        self.plats['found_conc'] = None
-
-        for idx, point in self.plats['geometry'].items():
-            possible_matches_index = list(self.plats.sindex.intersection(point.bounds))
-            possible_matches = self.plats.iloc[possible_matches_index]
-            precise_matches = possible_matches[possible_matches.geometry.contains(point)]
-
-            if not precise_matches.empty:
-                self.plats.loc[idx, 'found_label'] = precise_matches['label'].iloc[0]
-                self.plats.loc[idx, 'found_conc'] = precise_matches['Conc'].iloc[0]
     def _main_clearance(self) -> pd.DataFrame:
         """Processes clearance calculations for well trajectories against plat boundaries.
 
@@ -1110,6 +947,7 @@ class ClearanceProcess:
                 if row['geometry'].contains(Point(pt)):
                     return row['Conc']
             return False
+
         output = find_if_contained()
         if not output:
             return
@@ -1124,7 +962,7 @@ class ClearanceProcess:
             conc: _id_sides(geom_coords)
             for conc, geom_coords in conc_geometries.items()
         }
-        conc = [i for i,v in boundary_segments.items()]
+        conc = [i for i, v in boundary_segments.items()]
         well_trajectory = np.array([[pt[0], pt[1], 1]])
         # well_trajectory: NDArray = group[['easting', 'northing', 'point_index']].values
 
@@ -1162,7 +1000,6 @@ class ClearanceProcess:
         # Reset index for merging
         combined_df.reset_index(inplace=True)
         return combined_df
-
 
     def _loop_through_list(self) -> pd.DataFrame:
         """Processes well trajectory points to calculate clearance distances from plat boundaries
@@ -1268,6 +1105,7 @@ class ClearanceProcess:
         )
 
         return final_df
+
     def geo_transform(self, df):
         def transform_string(s):
             part1 = str(int(s[:2]))
@@ -1290,10 +1128,12 @@ class ClearanceProcess:
         df_new['label'] = df_new.apply(lambda x: transform_string(x['Conc']), axis=1)
 
         return df_new
+
     def fnd_conc2(self, plat_df, point_df):
         path_used_db = r'C:\Work\Databases'
         apd_data_dir = os.path.join(path_used_db, 'Board_DB_Plss_Sections.db')
         conn_db = sqlite3.connect(apd_data_dir)
+
         def get_points_bbox(points_series):
             """
             Calculate bbox from a series of Shapely points
@@ -1341,25 +1181,6 @@ class ClearanceProcess:
         filtered_data = pd.read_sql(query, conn_db)
         test_plat = self.geo_transform(filtered_data)
 
-
-
-
-        # has_spatial_index = setup_spatial_db(conn_db)
-        # bbox = get_points_bbox(point_df['shp_pt'])
-        # spatial_query = get_spatial_query(bbox, has_spatial_index=has_spatial_index)
-        # filtered_data = pd.read_sql(spatial_query, conn_db)
-
-
-
-
-        # bbox = get_points_bbox(point_df['shp_pt'])
-        # spatial_query = get_spatial_query()
-        # filtered_data = pd.read_sql(spatial_query, conn_db)
-        # filtered_data = pd.read_sql(spatial_query, conn_db)
-        # query = f"""select * from BaseData"""
-        # test_plat = pd.read_sql(query, conn_db)
-        #
-        #
         if not isinstance(test_plat, gpd.GeoDataFrame):
             test_plat_gdf = gpd.GeoDataFrame(test_plat, geometry='geometry')
         else:
@@ -1375,39 +1196,3 @@ class ClearanceProcess:
         joined = gpd.sjoin(plat_gdf, test_plat_gdf[['Conc', 'label', 'geometry']], how='inner', predicate='within')
         df_out = pd.DataFrame(joined.drop(columns='geometry'))
         return df_out
-
-
-        # # Now, group by 'Conc' and count the number of points in each category
-        # priority_dictionary = joined.groupby('Conc').size().to_dict()
-
-
-    def _find_conc(self, point: Point) -> Optional[Any]:
-        """Finds the concentration value for a point by checking containing plat polygons.
-
-        Iterates through adjacent plats to find which polygon contains the given point,
-        returning that plat's concentration value. Used for assigning survey points to
-        their containing plat regions.
-
-        Args:
-            point: A Shapely Point object representing the location to check
-
-        Returns:
-            The concentration value from the containing plat polygon, or None if the
-            point is not contained within any plat
-
-        Notes:
-            - Performs sequential scan of all adjacent plats
-            - Returns first matching concentration found
-            - Returns None if point falls outside all plat boundaries
-            - Depends on adjacent_plats DataFrame having 'geometry' and 'label' columns
-        """
-        # Iterate through adjacent plats to find containing polygon
-
-
-
-        for idx, row in self.plats.iterrows():
-            if row['geometry'].contains(point):
-                return row['label'], row['Conc']
-
-        # No containing polygon found
-        return 'None', 'None'

@@ -517,56 +517,6 @@ def _create_survey(
     return survey, df
 
 
-# def _create_survey(
-#         df: pd.DataFrame,
-#         start_nev: Tuple[float, float, float],
-#         header: 'FastSurveyHeader',
-# ) -> 'we.survey.Survey':
-#     """Create and optionally interpolate a wellbore survey object.
-#
-#     Initializes a Survey object from measured depth, inclination, and azimuth data
-#     with specified starting position and reference parameters.
-#
-#     Args:
-#         df: DataFrame containing survey data with columns:
-#             - measured_depth: Measured depth values
-#             - inclination: inclination angles
-#             - azimuth: azimuth angles
-#         start_nev: Tuple of starting position coordinates (north, east, vertical)
-#         header: FastSurveyHeader object containing reference system settings
-#
-#     Returns:
-#         we.survey.Survey: Survey object containing well trajectory data and calculated parameters
-#
-#     Notes:
-#         - All angular inputs should be in radians (deg=False)
-#         - Uses ISCWSA MWD Rev4 error model for uncertainty calculations
-#         - Interpolation creates regular spacing between survey points
-#         - Original survey points are preserved in interpolation
-#
-#     Examples:
-#         >>> survey = _create_survey(df, (0,0,0), header, True, 100)
-#         >>> print(len(survey.md))  # Will show interpolated point count
-#     """
-#     # Initialize base survey object
-#     survey = we.survey.Survey(
-#         md=df['measured_depth'],
-#         inc=df['inclination'],
-#         azi=df['azimuth'],
-#         start_nev=start_nev,
-#         deg=False,
-#         header=header,
-#         error_model='ISCWSA MWD Rev4'
-#     )
-#     max_depth = df['measured_depth'].max()
-#     depth_ratio = max_depth/50
-#     if len(df) < depth_ratio:
-#         survey = survey.interpolate_survey(step=50)
-#         df = pd.DataFrame({
-#                     'measured_depth': survey.md,
-#                     'inclination': survey.inc_rad,
-#                     'azimuth': survey.azi_true_rad})
-#     return survey, df
 
 def _process_min_curve(
         df: pd.DataFrame,
@@ -738,78 +688,6 @@ def _create_output_df(
         'depth_actual': z
     })
 
-
-# def _create_output_df(
-#         survey: 'we.survey.Survey',
-#         min_curve: 'we.utils.MinCurve',
-#         utm_vals: npt.NDArray[np.float64],
-#         latlons: npt.NDArray[np.float64],
-#         deg_type: str
-# ) -> DataFrame:
-#     """Create a dictionary containing all computed survey and position data.
-#
-#     Organizes survey calculations, position data, and derived measurements into a
-#     standardized dictionary format for analysis and export.
-#
-#     Args:
-#         survey: Survey object containing basic survey calculations
-#         min_curve: MinCurve object with minimum curvature calculations
-#         utm_vals: Array of UTM coordinates (easting, northing pairs)
-#         latlons: Array of latitude/longitude coordinates
-#         deg_type: String specifying which degree attribute to use from survey
-#
-#     Returns:
-#         Dictionary containing arrays for:
-#             - Survey measurements (md, Inc, Azi, tvd)
-#             - Position data (N/E offsets, UTM, Lat/Lon)
-#             - Geometric calculations (dls, Build Rate, Turn Rate)
-#             - Minimum curvature results (RF, deltas)
-#             - Tool orientation (Tool Face)
-#             - Cartesian positions (X, Y, Z)
-#
-#     Notes:
-#         - All angular values are in degrees
-#         - Position values maintain original input units
-#         - Arrays are aligned by measured depth
-#         - X/Y/Z positions are transformed from min_curve coordinate system
-#
-#     Examples:
-#         >>> output = _create_output_df(survey, min_curve, utm, latlon, tf, 'azi_true_deg')
-#         >>> print(output['tvd'])  # Access true vertical depth array
-#     """
-#     # Unpack coordinate arrays for clarity
-#     lats, lons = latlons.T
-#     x, y, z = min_curve.poss.T
-#     easting, northing = utm_vals.T
-#     # Create comprehensive output dataframe with all survey and position data
-#
-#     return pd.DataFrame({
-#         'measured_depth': survey.md,
-#         'inclination': min_curve.inc,
-#         'azimuth': min_curve.azi,
-#         'tvd': survey.z,
-#         'ratio_factor': min_curve.rf,
-#         'N Offset': survey.y,
-#         'E Offset': survey.x,
-#         'ToolFace': survey.toolface,
-#         'vertical_section': survey.vertical_section,
-#         'easting': easting,
-#         'northing': northing,
-#         'Lat': lats,
-#         'Lon': lons,
-#         'delta_z': min_curve.delta_z,
-#         'delta_y': min_curve.delta_y,
-#         'delta_x': min_curve.delta_x,
-#         'delta_md': min_curve.delta_md,
-#         'dls': min_curve.dls,
-#         'build_radius': survey.radius,
-#         'build_rate': survey.build_rate,
-#         'turn_rate': survey.turn_rate,
-#         'position_x': y,  # Note coordinate system transformation
-#         'position_y': x,  # Note coordinate system transformation
-#         'depth_actual': z
-#     })
-#
 
 class SurveyProcess:
     """Process and transform well survey data between different coordinate systems and reference frames.

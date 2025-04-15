@@ -16,30 +16,6 @@ def _isolate_footage_depths(survey, spec_data):
     return df
 
 
-def get_table_data(table_view):
-    model = table_view.model()
-    rows = model.rowCount()
-    cols = model.columnCount()
-
-    # Get headers if they exist
-    headers = []
-    for col in range(cols):
-        header = model.headerData(col, Qt.Horizontal)
-        headers.append(header if header else f'Column {col}')
-
-    # Get data
-    data = []
-    for row in range(rows):
-        row_data = []
-        for col in range(cols):
-            item = model.index(row, col).data()
-            row_data.append(item)
-        data.append(row_data)
-
-    # Create DataFrame
-    df = pd.DataFrame(data, columns=headers)
-    return df
-
 
 class DataWriter:
     def __init__(self, ui, surveys, spec_surveys, parameters, plat_df):
@@ -79,12 +55,6 @@ class DataWriter:
         self.write_survey_to_table(survey, ui)
         footage_lst = _isolate_footage_depths(survey, spec_data)
         self.write_significant_depths_to_line_edits(ui, self.survey_parameters, footage_lst)
-        self.write_clearance_footages(footage_lst, ui)
-
-    def survey_writer2(self, survey, ui, spec_data, survey_parameters):
-        self.write_survey_to_table(survey, ui)
-        footage_lst = _isolate_footage_depths(survey, spec_data)
-        self.write_significant_depths_to_line_edits(ui, survey_parameters, footage_lst)
         self.write_clearance_footages(footage_lst, ui)
 
     def write_survey_to_table(self, survey, ui):

@@ -13,22 +13,6 @@ class SurveyProcessBase:
         self.survey_parameters["north_ref"] = north_ref[0].lower()
         self.survey_process(self.survey_dx, well_elevation, north_ref)
 
-    def sql_query_survey(self, db_process, api, lateral):
-        query = f"""SELECT MeasuredDepth as measured_depth, Inclination as inclination, Azimuth as azimuth, 
-        CitingType, dsh.SurveySurfaceElevation, dsh.SurfaceLatitude, dsh.SurfaceLongitude,dsh.NorthReference
-                FROM DirectionalSurveyHeader dsh
-                JOIN DirectionalSurveyData dsd on dsd.DirectionalSurveyHeaderKey = dsh.Pkey
-                WHERE dsh.APINumber = '{api}' and dsh.LateralName = '{lateral}' order by MeasuredDepth"""
-        survey_dx = db_process.query_to_dataframe(query)
-        well_elevation = survey_dx['SurveySurfaceElevation'].iloc[0]
-        north_ref = survey_dx['NorthReference'].iloc[0][0].lower()
-        survey_dx = survey_dx.drop(['SurveySurfaceElevation', 'NorthReference'], axis=1)
-        survey_dx = survey_dx.apply(lambda x: x.str.strip() if x.dtype == "object" else x)
-        survey_dx = survey_dx.sort_values(by=['CitingType', 'measured_depth'])
-        survey_dx['CitingType'] = survey_dx['CitingType'].str.lower().replace(
-            {'asdrilled': 'AsDrilled', 'planned': 'Planned'})
-        return survey_dx, well_elevation, north_ref
-
     def survey_process(self, survey_dx, well_elevation, north_ref):
         citing_types = survey_dx['CitingType'].unique()
         dict_citings = {"Planned": 'pln', 'AsDrilled': 'drl'}

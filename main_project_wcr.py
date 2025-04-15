@@ -97,7 +97,6 @@ class WCR_Main:
         self.ui.perf_interval_top.setText(str(perf_mods[0]))
         self.ui.perf_interval_bottom.setText(str(perf_mods[1]))
         one_letter_id = self.north_ref[0].upper()
-        # self.ui.survey_north_ref_combo.setCurrentText(baseline_dict[one_letter_id])
         if one_letter_id == 'T':
             self.ui.wcr_survey_northref_buttons.button(-2).setChecked(True)
         elif one_letter_id == 'G':
@@ -418,10 +417,7 @@ class WCR_Main:
              self.ui.bhl2_ew_offset_combo_2]]
         one_letter_id = self.north_ref[0].upper()
         self.ui.survey_north_ref_combo.setCurrentText(baseline_dict[one_letter_id])
-        # if one_letter_id == 'T':
-        #     self.ui.wcr_survey_northref_buttons.button(-2).setChecked(True)
-        # elif one_letter_id == 'G':
-        #     self.ui.wcr_survey_northref_buttons.button(-3).setChecked(True)
+
 
     def process_survey_data_misc(self, kop, perf_mods, wcr_df):
 
@@ -503,146 +499,6 @@ class WCR_Main:
 
     def process_wcr(self):
         self.setup_combo_boxes()
-
-    def wcr_assembly_process(self, perf_mods, perf_date):
-        def transform_string(s):
-            section = str(int(s[:2]))
-            township = str(int(s[2:4]))
-            township_dir = s[4]
-            rng = str(int(s[5:7]))
-            rng_dir = s[7]
-            baseline = s[-1]
-            return {
-                'Section': section,
-                'Township': township,
-                'Township_Direction': township_dir,
-                'Range': rng,
-                'Range_Direction': rng_dir,
-                'Baseline': baseline
-            }
-
-        baseline_dict = {'T': 'True', 'G': 'Grid'}
-        init = kop['MeasuredDepth'].head(1).tolist()
-        used_depths = perf_mods + init
-        perfs = self.wcr_df[self.wcr_df['MeasuredDepth'].isin(used_depths)]
-        last_line = self.wcr_df.tail(1)
-        first_line = self.wcr_df.head(1)
-
-        first_and_last_df = pd.concat([first_line, last_line], ignore_index=True)
-        self.wcr_result_df = pd.concat([perfs, first_and_last_df], ignore_index=True).sort_values(
-            'MeasuredDepth').reset_index(drop=True)
-
-        asdrilled_survey_data = [
-            [self.ui.bhl1_depth, self.ui.bhl1_ns_offset, self.ui.bhl1_ns_offset_combo, self.ui.bhl1_ew_offset,
-             self.ui.bhl1_ew_offset_combo],
-            [self.ui.bhl1_depth_2, self.ui.bhl1_ns_offset_2, self.ui.bhl1_ns_offset_combo_2, self.ui.bhl1_ew_offset_2,
-             self.ui.bhl1_ew_offset_combo_2],
-            [self.ui.bhl2_depth, self.ui.bhl2_ns_offset, self.ui.bhl2_ns_offset_combo, self.ui.bhl2_ew_offset,
-             self.ui.bhl2_ew_offset_combo],
-            [self.ui.bhl2_depth_2, self.ui.bhl2_ns_offset_2, self.ui.bhl2_ns_offset_combo_2, self.ui.bhl2_ew_offset_2,
-             self.ui.bhl2_ew_offset_combo_2]]
-        for i, val in enumerate(asdrilled_survey_data):
-            used_row = self.wcr_result_df.iloc[i + 1]
-            used_line = asdrilled_survey_data[i]
-            used_line[0].blockSignals(True)
-            used_line[0].setText(str(abs(round(used_row['MeasuredDepth'], 0))))
-            used_line[1].setText(str(abs(round(used_row['N Offset'], 0))))
-            used_line[2].setCurrentText(str('S' if abs(used_row['N Offset']) != used_row['N Offset'] else 'N'))
-            used_line[3].setText(str(abs(round(used_row['E Offset'], 0))))
-            used_line[4].setCurrentText(str('W' if abs(used_row['E Offset']) != used_row['E Offset'] else 'E'))
-            used_line[0].blockSignals(False)
-        self.ui.survey_north_ref_combo.setCurrentText(baseline_dict[self.wcr_north_ref[0].upper()])
-        self.surveyDataProcessPlanned()
-        self.writeCoordinatesForWCR(self.wcr_result_df)
-
-    def process_survey_data2(self):
-        self.plat_north_ref = 't'
-        api = self.ui.well_api_val.text()
-        try:
-
-            sql_query = f"""select [Top], Bottom, [Perf Date]
-                        from well w 
-        				join construct c on w.PKey = c.WellKey  
-                        join [dbo].[vwDM_ConstructPerf] cp on c.PKey = cp.PKey
-                        where wellid = {api} and [Zone Type] = 'Perforations'"""
-            tops = self.db.query_to_dataframe(sql_query)
-
-            # tops = pd.read_sql_query(sql_query, self.engine)
-            tops = tops.map(self.strip_if_string)
-            perf_top = tops['Top'].values.tolist()[0]
-            perf_bottom = tops['Bottom'].values.tolist()[0]
-            perf_mods = [float(perf_top), float(perf_bottom)]
-            perf_date = tops['Perf Date'].iloc[0]
-        except IndexError:
-            perf_mods = [0, 0]
-            perf_date = "1/1/1900"
-        lateral_num = self.ui.lateral_name_line_edit.text()
-        if lateral_num == '':
-            lateral_num = '0000'
-        query = f"""SELECT MeasuredDepth, Inclination, Azimuth, CitingType, dsd.X, dsd.Y, NorthReference, dsh.SurveySurfaceElevation 
-                        FROM DirectionalSurveyHeader dsh
-                        JOIN DirectionalSurveyData dsd on dsd.DirectionalSurveyHeaderKey = dsh.Pkey
-                        WHERE dsh.APINumber = '{api}'and CitingType = 'AsDrilled' and dsh.LateralName = '{lateral_num}' order by MeasuredDepth"""
-        # wcr_df = pd.read_sql_query(query, self.engine)
-        wcr_df = self.db.query_to_dataframe(query)
-
-        wcr_df = wcr_df.map(self.strip_if_string)
-        wcr_df = wcr_df.sort_values(by=['CitingType', 'MeasuredDepth'])
-        wcr_df['CitingType'] = wcr_df['CitingType'].str.lower().replace(
-            {'asdrilled': 'AsDrilled', 'planned': 'Planned'})
-        wcr_df = wcr_df[wcr_df['CitingType'] != 'Planned']
-        wcr_df = wcr_df.rename(columns={'X': 'Easting', 'Y': 'Northing'})
-        north_ref = wcr_df['NorthReference'].iloc[0]
-        for i in perf_mods:
-            wcr_df = ma.insert_row_at_md(wcr_df, i)
-
-        wcr_df = self.check_and_insert_zero_md(wcr_df)
-        drilled_depths = self.getDrilledDepthsWCR()
-        wcr_df['shp_pt'] = wcr_df.apply(lambda row: Point(row['Easting'], row['Northing']), axis=1)
-
-        drl_df = SurveyProcess(df_referenced=wcr_df, drilled_depths=drilled_depths, elevation=self.well_elevation,
-                               citing_type='AsDrilled', coords_type='utm')
-        output_df_g, kop_g = (drl_df.df_g, drl_df.kop_g)
-        output_df_t, kop_t = (drl_df.df_t, drl_df.kop_t)
-
-        # if north_ref[0].lower() == 'g':
-        #     output_df, kop = (drl_df.df_g, drl_df.kop_g)
-        # elif north_ref[0].lower() == 't':
-        #     output_df, kop = (drl_df.df_t, drl_df.kop_t)
-
-        if int(float(kop_g[kop_g['Point'] == 'KOP']['MeasuredDepth'].iloc[0])) == 0:
-            new_val = math.floor(len(output_df_g) * (2 / 3))
-            new_output = output_df_g.iloc[new_val]
-            kop_g.loc[0, 'MeasuredDepth'] = new_output['MeasuredDepth']
-            kop_g.loc[0, 'Inclination'] = new_output['Inclination']
-            kop_g.loc[0, 'Azimuth'] = new_output['Azimuth']
-
-        if int(float(kop_t[kop_t['Point'] == 'KOP']['MeasuredDepth'].iloc[0])) == 0:
-            new_val = math.floor(len(output_df_t) * (2 / 3))
-            new_output = output_df_t.iloc[new_val]
-            kop_t.loc[0, 'MeasuredDepth'] = new_output['MeasuredDepth']
-            kop_t.loc[0, 'Inclination'] = new_output['Inclination']
-            kop_t.loc[0, 'Azimuth'] = new_output['Azimuth']
-
-        plat_df_wcr, plat_adjacents = self.WCRGetPlatData()
-        plat_df_wcr['geometry'] = plat_df_wcr['geometry'].apply(lambda x: x if isinstance(x, Polygon) else None)
-        plat_df_wcr = plat_df_wcr.dropna(subset=['geometry'])
-        clear_df_g = ClearanceProcess(output_df_g, plat_df_wcr, plat_adjacents)
-        clear_df_t = ClearanceProcess(output_df_t, plat_df_wcr, plat_adjacents)
-
-        output_df_g = clear_df_g.clearance_data
-        output_df_t = clear_df_t.clearance_data
-
-        used_conc_drilled_g = output_df_g['Conc'].unique().tolist()
-        used_conc_drilled_t = output_df_t['Conc'].unique().tolist()
-
-        all_conc = list(set(used_conc_drilled_g + used_conc_drilled_t))
-        plat_df_wcr = plat_df_wcr[plat_df_wcr['Conc'].isin(all_conc)]
-        return {'grid': output_df_g, 'true': output_df_t}, perf_mods, {'grid': kop_g,
-                                                                       'true': kop_t}, north_ref, plat_df_wcr, perf_date
-
-        # self.df_dict, self.perf_mods, self.kop_dict, self.wcr_north_ref, self.plat_df_wcr, self.perf_date = self.WCRGetDXData()
-        # self.wcr_assembly_process()
 
     def present_plat_data(self):
         wcr_tsr_db = self.loc_df
@@ -821,21 +677,6 @@ class WCR_Main:
         except ValueError:
             pass
 
-    def generate_links(self, img):
-        path = os.getcwd()
-        image_path = os.path.join(path, img)
-        scroll_area = QScrollArea()
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        image_label = QLabel()
-        image_label.setPixmap(QPixmap(image_path))
-        image_label.setScaledContents(True)  # Scale image to fit scroll area
-        scroll_area.setWidget(image_label)
-        scroll_area.setMinimumSize(1000, 600)
-        message_box = QMessageBox()
-        message_box.setWindowTitle("Generate Links")
-        layout = message_box.layout()
-        layout.addWidget(scroll_area)
 
-    def retrieve_sql_data(self):
-        pass
+
+

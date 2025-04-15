@@ -1,3 +1,6 @@
+from pyflowchart import Flowchart
+
+code = '''
 from PyQt5.QtWebChannel import QWebChannel
 import itertools
 import os
@@ -116,10 +119,7 @@ from PyQt5.QtCore import QAbstractTableModel, Qt
 
 from shapely.geometry import Point, LineString, MultiPoint, Polygon
 
-# self.colors = ["#000000", "#004949", "#009292", "#ff6db6", "#ffb6db",
-#                "#490092", "#006ddb", "#b66dff", "#6db6ff", "#b6dbff",
-#                "#920000", "#924900", "#db6d00", "#24ff24", "#ffff6d",
-#                "#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442"]
+
 class DatabaseManager:
     def __init__(self):
         # Initialize the connection
@@ -349,7 +349,7 @@ class ETools(QMainWindow):
         # 4301354306
         # 4301950099
         #4304756908
-        self.ui.well_api_val.setText('4304757654')
+        self.ui.well_api_val.setText('4301354722')
         self.button_group = QButtonGroup(self.ui.survey_type_widget)
         self.button_group.setExclusive(True)
         self.ui.well_api_val.returnPressed.connect(self.run_api_when_entered)
@@ -449,7 +449,6 @@ class ETools(QMainWindow):
                 FROM DirectionalSurveyHeader dsh
                 JOIN DirectionalSurveyData dsd on dsd.DirectionalSurveyHeaderKey = dsh.Pkey
                 WHERE dsh.APINumber = '{api}' and dsh.LateralName = '{lateral}' order by MeasuredDepth"""
-        print(query)
         survey_dx = db_process.query_to_dataframe(query)
         try:
             well_elevation = survey_dx['SurveySurfaceElevation'].iloc[0]
@@ -1037,3 +1036,8 @@ if __name__ == "__main__":
     w.show()
     sys.excepthook = except_hook
     sys.exit(app.exec_())
+
+'''
+
+fc = Flowchart.from_code(code)
+print(fc.flowchart())
