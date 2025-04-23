@@ -87,7 +87,7 @@ class WCR_Main:
         self.coords_wcr_model = QStandardItemModel()
         self.ui.display_table_utm_locs.setModel(self.coords_wcr_model)
         self.ui.display_table_utm_locs.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.process_wcr()
+        # self.process_wcr()
         self.ui.survey_north_ref_combo.clear()
         self.ui.plat_north_ref_combo.clear()
         self.ui.sundries_combo_box.clear()

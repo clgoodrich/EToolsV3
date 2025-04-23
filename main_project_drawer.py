@@ -727,12 +727,6 @@ class DataDrawer:
                 # Optionally, set additional data or flags here
                 self.added_viz_points_data_model.setItem(row_idx, col_idx, item)
 
-        #
-        # for _, data in pt_df.iterrows():
-        #     items = [QStandardItem(str(item)) for item in data]
-        #     for k in range(len(data)):
-        #         items[k].setData(data[k])
-        #     self.added_viz_points_data_model.appendRow(items)
 
         columns = pt_df.columns.values
         self.added_viz_points_data_model.setHorizontalHeaderLabels(columns)

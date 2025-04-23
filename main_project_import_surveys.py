@@ -101,8 +101,6 @@ class PDFPageDetailedAggregator(PDFPageAggregator):
         self.rows = sorted(self.rows, key=lambda x: (x[0], -x[2]))
         self.result = ltpage
 
-    def clearDataReboot(self):
-        os.execl(sys.executable, sys.executable, *sys.argv)
 
 
 class SurveyImporter:
@@ -112,33 +110,6 @@ class SurveyImporter:
         self.db = None
         self.file_path = None
         # Create the thread as an instance variable
-
-    def show_dataframe(self, df, title="DataFrame Viewer"):
-        """
-        Display a pandas DataFrame in a new popup window and return user response.
-        """
-        # Create QApplication if it doesn't exist
-        app = QApplication.instance()
-        if app is None:
-            app = QApplication(sys.argv)
-
-        # Variable to store the response
-        response = {'value': None}
-
-        def handle_response(value):
-            response['value'] = value
-            app.quit()
-
-        # Create and show the window
-        viewer = DataFrameViewer(df, handle_response, title)
-        viewer.show()
-
-        # Start the event loop
-        app.exec_()
-
-        return response['value']
-
-        # return viewer
 
     def load_and_process_data(self, label, db, api, file_path_dict):
         print('loading and processing')
@@ -165,11 +136,9 @@ class SurveyImporter:
         north_ref = self.processNorthReference(parsed_text_data)
         df = df.drop_duplicates(keep="first")
         extra_plats = self.load_new_data_locations(df)
-
         return df, north_ref, extra_plats
 
     def load_new_data_locations(self, df):
-        print(df)
 
         def setup_sqlite_db():
             path_used_db = r'C:\Work\Databases'
@@ -238,43 +207,6 @@ class SurveyImporter:
         row_found = parse_for_location()
         conn_db.close()
         return row_found
-
-    def check_adjacent_plats(self, conn_db, plat_df):
-        def check_contains_any_point(polygon, points):
-            return any(polygon.contains(point) for point in points)
-
-        quoted_values = [f"'{value}'" for value in plat_df['Conc'].unique()]
-        values_string = ', '.join(quoted_values)
-        df_adjacent_plats = pd.read_sql(f"select * from Adjacent where Conc2 in ({values_string})", conn_db)[
-            'adjacent_Conc_Name_2']
-        quoted_values_2 = [f"'{value}'" for value in df_adjacent_plats.unique()]
-        quoted_values_2 = list(set(quoted_values_2))
-        values_string_2 = ', '.join(quoted_values_2)
-        values_string_2 += values_string
-
-        df_adjacent_plats2 = pd.read_sql(f"select * from Adjacent where Conc2 in ({values_string_2})", conn_db)[
-            'adjacent_Conc_Name_2']
-        quoted_values_3 = [f"'{value}'" for value in df_adjacent_plats2.unique()]
-        quoted_values_3 = list(set(quoted_values_3))
-        values_string_3 = ', '.join(quoted_values_3)
-        values_string_3 += values_string
-        values_string_2 = values_string_3
-
-        query = f"select * from BaseData where Conc in ({values_string_2})"
-        df_adjacent_plats_loc_data = pd.read_sql(query, conn_db)
-        plat_df = ma.geometryTransform(df_adjacent_plats_loc_data)
-
-        return plat_df
-
-    def load_data(self, label):
-        print("\n\n\n\n\n\n______________________________________________\n\n\n\n\n\n_")
-        filter = "pdf(*.pdf)"
-        current_dir = os.getcwd()
-        file_path = QFileDialog.getOpenFileName(None, 'Open file', current_dir, filter)
-        print('Loading: ', file_path)
-        while '.pdf' not in file_path[0] and file_path != ('', ''):
-            file_path = QFileDialog.getOpenFileName(None, 'Open file', current_dir, filter)
-        self.file_path_dict[label] = file_path[0]
 
     def find_elevation(self):
         query = f"""SELECT l.GRELEV
@@ -573,60 +505,6 @@ class SurveyImporter:
         return returned_data
 
     def gather_elevation(self, parsed_data, shl):
-        # def get_points_bbox(points_series):
-        #     """
-        #     Calculate the bounding box of a pandas Series of Shapely Points.
-        #     Returns (minx, miny, maxx, maxy).
-        #     """
-        #     coords = [(pt.x, pt.y) for pt in points_series]
-        #     x_coords, y_coords = zip(*coords)
-        #     return min(x_coords), min(y_coords), max(x_coords), max(y_coords)
-        def read_base_data_by_bbox(conn, buffer_dist=1000):
-            """
-            Run a bounding box query on BaseData in the database.
-            """
-            shl_utm = utm.from_latlon(float(shl[0]), float(shl[1]))[:2]
-            query = f"""
-                SELECT dsh.APINumber, dsh.SurveySurfaceElevation, dsh.SurfaceLatitude, dsh.SurfaceLongitude,dsh.X, dsh.Y
-                FROM DirectionalSurveyHeader dsh
-				JOIN DirectionalSurveyData dsd on dsd.DirectionalSurveyHeaderKey = dsh.Pkey
-                  where MeasuredDepth = 0 and dsh.X >= {float(shl_utm[0]) - buffer_dist}
-                  AND dsh.X <= {float(shl_utm[0]) + buffer_dist}
-                  AND dsh.Y >= {float(shl_utm[1]) - buffer_dist}
-                  AND dsh.Y <= {float(shl_utm[1]) + buffer_dist}
-            """
-            return self.db.query_to_dataframe(query)
-
-        def del_process_for_points():
-            shl_utm = utm.from_latlon(float(shl[0]), float(shl[1]))[:2]
-
-            points_2d = points[:, :2]
-            tri = Delaunay(points_2d)
-
-            # New point with known x and y
-            new_point = np.array([shl_utm[0], shl_utm[1]])
-            simplex_index = tri.find_simplex(new_point)
-
-            if simplex_index == -1:
-                print("The new point is outside the convex hull of the data.")
-            else:
-                # Get the vertices of the triangle
-                vertices = tri.simplices[simplex_index]
-                triangle = points[vertices]
-
-                # Set up the matrix for barycentric coordinates calculation
-                T = triangle[:, :2].T
-                T = np.vstack([T, np.ones(3)])
-                v = np.array([new_point[0], new_point[1], 1])
-
-                # Calculate barycentric weights
-                weights = np.linalg.solve(T, v)
-
-                # Interpolate z using the weights
-                z_new = weights.dot(triangle[:, 2])
-                print("Interpolated z value:", z_new)
-            # return pd.read_sql(query, conn)
-
         n_lst = self.parse_and_find(parsed_data, 'ground level', [''])
         for i in range(len(parsed_data)):
             for j in range(len(parsed_data[i])):
@@ -641,11 +519,7 @@ class SurveyImporter:
                                 return float(text)
                             except ValueError:
                                 pass
-        # bbox = get_points_bbox(shl)
-        filtered_data = read_base_data_by_bbox(shl)[['SurveySurfaceElevation', 'X', 'Y']].values.tolist()
-        print(filtered_data)
-        print(foo)
-        # return pd.read_sql(query, conn)
+
 
     def processNorthReference(self, parsed_data):
         n_lst = self.parse_and_find(parsed_data, 'north reference', [''])
@@ -693,7 +567,6 @@ class SurveyImporter:
     def processSHL(self, parsed_data):
         lat_lst_o = self.parse_and_find(parsed_data, 'latitude', [''])
         lon_lst_o = self.parse_and_find(parsed_data, 'longitude', [''])
-        # latlon_lst_2 = self.parse_and_find(parsed_data, 'location lat / long:', [''])
         latRange = ['35', '36', '37', '38', '39', '40', '41', '42', '43', '44']
         lonRange = ['115', '114', '113', '112', '111', '110', '109', '108']
         lat_lon_value = [0, 0]
@@ -783,13 +656,3 @@ class SurveyImporter:
 
         return finalValue
 
-
-def textBoxGrouperDataManager(self, device, counter):
-    data_lst = [[] for p in range(counter + 1)]
-    for (page_nb, x_min, y_min, x_max, y_max, txt) in device.rows:
-        data_lst[page_nb].append([x_min, y_min, x_max, y_max, txt])
-
-    for i in range(len(data_lst)):
-        if data_lst[i]:
-            data_lst[i] = sorted(data_lst[i], key=lambda x: (x[0], x[1]))
-    return data_lst

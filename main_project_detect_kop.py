@@ -1,5 +1,4 @@
 import numpy as np
-import pandas as pd
 from scipy import signal
 from scipy.stats import linregress
 from sklearn.cluster import DBSCAN

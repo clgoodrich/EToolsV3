@@ -1,104 +1,28 @@
-from PyQt5.QtWebChannel import QWebChannel
-import itertools
-import os
-import sqlite3
-from datetime import datetime
-from typing import Callable, Dict, List, Literal, NoReturn, Optional, Set, Tuple, Union
+
 from functools import partial
-# Third-party imports - Core Data/Scientific
-import numpy as np
-from numpy import array, std
-import pandas as pd
-from pandas import DataFrame, concat, options, read_sql, set_option, to_datetime, to_numeric
-import geopandas as gpd
-import utm
-from sqlalchemy import create_engine
-from PyQt5.QtGui import QPainter, QMouseEvent, QGuiApplication, QStandardItemModel, QStandardItem, QFont, QBrush, \
-    QPalette, QColor, QDesktopServices
 
-# Third-party imports - PyQt5
-import PyQt5
-from PyQt5.QtCore import QAbstractItemModel, QModelIndex, Qt
-from PyQt5.QtGui import QColor, QStandardItem, QStandardItemModel
-from PyQt5.QtWidgets import (
-    QApplication, QCheckBox, QGraphicsDropShadowEffect, QHeaderView,
-    QHBoxLayout, QLabel, QLayout, QMainWindow, QScrollArea,
-    QStyledItemDelegate, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget
-)
-
-import tempfile
-import matplotlib.pyplot as plt
-import urllib
-from sqlalchemy import create_engine
-from pyproj import Proj, Geod
-import time
-import copy
-from collections import defaultdict
-import sqlite3
-import os
-import numpy as np
-import pandas as pd
-import pandas.errors
-import pyodbc
-import ModuleAgnostic as ma
 import utm
-import warnings
 from pyproj import Geod, Proj, CRS
-from pdfminer.pdfinterp import PDFResourceManager, PDFPageInterpreter
-from pdfminer.converter import PDFPageAggregator
-from pdfminer.layout import LTPage, LTChar, LTAnno, LAParams, LTTextBox, LTTextLine
-from pdfminer.pdfpage import PDFPage
-import plotly.graph_objects as go
+
 import os
-import ModuleAgnostic as ma
 import pandas as pd
-import copy
-import pyodbc
+
 import numpy as np
-import welleng as we
-import sqlalchemy
+
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QLineEdit, QSpinBox,
                              QCheckBox,
                              QDialog, QTabWidget, QTextBrowser, QTableWidget, QLabel, QTableView, QRadioButton,
                              QGraphicsView,
                              QComboBox, QMessageBox, QFileDialog, QButtonGroup)
-from matplotlib.collections import PatchCollection
-from PyQt5.QtWebEngineWidgets import QWebEngineView
-from PyQt5.QtCore import QUrl, QObject, QItemSelectionRange, pyqtSlot
-from matplotlib.textpath import TextPath
-from matplotlib.patches import PathPatch
-from PyQt5.QtGui import QPainter, QMouseEvent, QGuiApplication, QStandardItemModel, QStandardItem, QFont, \
-    QDesktopServices, QTextCursor
-from matplotlib.ticker import ScalarFormatter, FuncFormatter
-from mpl_toolkits.mplot3d.art3d import Line3DCollection
-from PyQt5.QtWidgets import QMainWindow, QApplication, QStyledItemDelegate, QHeaderView, QAbstractItemView, QWidget, \
-    QApplication, QMainWindow, QVBoxLayout, QWidget, QSizePolicy
-# from EngineeringTools3 import Ui_Dialog.
+
+from PyQt5.QtGui import QDesktopServices
+from PyQt5.QtWidgets import QApplication, QMainWindow
 from EToolsLimited import Ui_Dialog
-# from GUIWellPlatCompare import WellVisualizer
-# from GUIWellPlatAddNew import AddNewPlatToVisualizer
-# from GUISurveyTab import SurveyTab
-# from GUICasingTab import CasingTab
-# from SQLQueries import SQLQueriesClass, DatabaseManager
-# from GUIWCRProcess import WCR_Main
-# from ExportDataProcess import ExportData
-# from GUIClearData import GUIClear
-# # from CasingCalculations import Casing
-# from WellEngVisualization import WellengVisualizationMain
-# import CasingCalculations as cc
-# import ScrapeForSurveyData
-from sqlalchemy import create_engine, Table, Column, Integer, String, MetaData, select, and_, text
-from matplotlib.collections import LineCollection, PolyCollection
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+
 import matplotlib.pyplot as plt
-from PyQt5.QtCore import QModelIndex
-import time
-import keyboard
-from welleng.survey import SurveyHeader
+
 import math
-import json
-from contextlib import contextmanager
+
 from sqlalchemy import create_engine
 from urllib.parse import quote_plus
 from functools import lru_cache
@@ -112,8 +36,7 @@ from main_project_writer import DataWriter
 from main_project_drawer import DataDrawer
 from main_project_wcr import WCR_Main
 from main_project_import_surveys import SurveyImporter
-from PyQt5.QtCore import QAbstractTableModel, Qt
-
+from main_project_plat_coord_editor import PlatCoordEditor
 from shapely.geometry import Point, LineString, MultiPoint, Polygon
 
 # self.colors = ["#000000", "#004949", "#009292", "#ff6db6", "#ffb6db",
@@ -349,7 +272,7 @@ class ETools(QMainWindow):
         # 4301354306
         # 4301950099
         #4304756908
-        self.ui.well_api_val.setText('4304757654')
+        self.ui.well_api_val.setText('4301354600')
         self.button_group = QButtonGroup(self.ui.survey_type_widget)
         self.button_group.setExclusive(True)
         self.ui.well_api_val.returnPressed.connect(self.run_api_when_entered)
@@ -393,7 +316,7 @@ class ETools(QMainWindow):
             self.ui.surveys_draw_layout.addWidget(checkbox)
             checkbox.setProperty('survey_name', survey_label)
             # survey_used = df[survey_label].clearance_data
-
+            print('check', survey_label)
             checkbox.stateChanged.connect(
                 lambda state, lbl=survey_label: self.drawer.check_box_activate_path(state=state, lbl=lbl))
 
@@ -418,7 +341,6 @@ class ETools(QMainWindow):
             radio_button.setObjectName(f"radio_survey_{idx}")
             self.ui.surveys_layout.addWidget(radio_button)
             self.button_group.addButton(radio_button, id=idx)
-
             # Use partial to ensure survey_label is captured correctly
             radio_button.clicked.connect(partial(self.writer.survey_writer, self.ui, survey_label))
 
@@ -531,9 +453,7 @@ class ETools(QMainWindow):
         if 166000 <= x <= 834000 and 0 <= y <= 10000000:
             return utm.to_latlon(x, y, 12, 'T')
 
-    # def alter_shl_data(self):
-    #     new_shl = [float(self.ui.shl_lat_easting.text()), float(self.ui.shl_lon_northing.text())]
-    #     pass
+
     def recalculate_data_with_new_md_input(self):
         def return_well_survey():
             dict_return = {'AsDrilled - True': self.well.cl_dx_dict['drl_df_true_dx'].clearance_data,
@@ -590,11 +510,10 @@ class ETools(QMainWindow):
         x, y = float(self.ui.shl_lat_easting.text()), float(self.ui.shl_lon_northing.text())
         pt = self.determine_coord_system(float(self.ui.shl_lat_easting.text()), float(self.ui.shl_lon_northing.text()))
         self.well.set_starting_point(pt)
-        self.well.etools_process()
         self.main_processes_program(self.ui.dx_survey_north_ref_line.text())
         self.writer.set_clear_survey(self.well.cl_dx_dict)
         self.writer.set_spec_surveys(self.well.spec_surveys_dict)
-
+        self.well.etools_process()
         # self.writer.write_new_survey_line_to_display(return_well_survey(), md)
 
     def press_new_survey_button(self, label):
@@ -656,9 +575,7 @@ class ETools(QMainWindow):
         section, ts, ts_dir, rng, rng_dir, baseline = self.ui.searcher_section.text(), self.ui.searcher_township.text(), self.ui.searcher_township_dir.text(), self.ui.searcher_range.text(), self.ui.searcher_range_dir.text(), self.ui.searcher_baseline.text()
 
         township_rng_section = f"""{section} {ts}{ts_dir} {rng}{rng_dir} {baseline}"""
-
         line = sql_find_section_data()
-
         self.ui.data_return_box.append("_______________________________________________________")
         self.ui.data_return_box.append(f"<b><u>{township_rng_section}<u><b>")
         for idx, row in line.iterrows():
@@ -710,8 +627,6 @@ class EToolsWell:
         self.plat_df, self.loc_df, self.cl_dx_dict = None, None, None
         self.set_plat_data(None)
         self.etools_process()
-        # self.ui.shl_lat_easting.setText()
-        # self.ui.shl_lon_northing.setText()
 
     def set_plat_data(self, plat_data):
         self.plat_df = plat_data
@@ -747,8 +662,11 @@ class EToolsWell:
                                                                                                       self.north_ref)
         if not preserve_plat:
             plat_df_new, loc_df_new = self.retrieve_location_data(self.surveys_dict)
+            editor_output = PlatCoordEditor(plat_df_new, self.ui)
+            print(loc_df_new)
             self.plat_df = pd.concat([self.plat_df, plat_df_new]).drop_duplicates()
             self.loc_df = pd.concat([self.loc_df, loc_df_new]).drop_duplicates()
+        print(self.plat_df)
         self.cl_dx_dict = self.retrieve_clearance_data(self.surveys_dict, self.plat_df)
 
     def reprocess_with_current_plat(self):
