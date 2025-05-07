@@ -505,7 +505,6 @@ class SQLQueriesClass:
                 WHERE WellID = '{api}' and LocType in ('BH', 'SURF')
                 and dsh.LateralName = '{lateral_num}'
                 ORDER BY CitingType"""
-        print(query)
         self.base_well_df = pd.read_sql_query(query, self.engine)
         self.base_well_df = self.base_well_df.map(self.strip_if_string)
         filtered_df = self.base_well_df[
@@ -519,7 +518,6 @@ class SQLQueriesClass:
             self.base_well_df[['X', 'Y']] = self.base_well_df.apply(update_xy, axis=1)
             self.base_well_df = self.base_well_df[self.base_well_df['X'].apply(is_valid_number) &
                                                   self.base_well_df['Y'].apply(is_valid_number)]
-        print(self.base_well_df)
         self.base_well_df['Lat'], self.base_well_df['Lon'] = zip(
             *self.base_well_df.apply(lambda row: utm.to_latlon(row['X'], row['Y'], 12, 'T'), axis=1))
         try:

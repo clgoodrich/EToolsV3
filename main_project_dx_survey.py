@@ -482,7 +482,6 @@ def _create_survey(
         ... )
     """
     # Input validation
-    # print('len3', len(df))
     required_columns = ['measured_depth', 'inclination', 'azimuth']
     if not all(col in df.columns for col in required_columns):
         raise ValueError(f"DataFrame must contain columns: {required_columns}")
@@ -916,13 +915,11 @@ class SurveyProcess:
 
         # Setup survey header and process kickoff points
         header = _setup_survey_header(north_ref, self.conv_angle)
-        # print('survey len1', len(self.df_referenced))
         # Combine and clean survey data
         self.df = self.df_referenced.drop_duplicates(subset='measured_depth', keep='first')
         self.df = self.df.sort_values('measured_depth').reset_index(drop=True)
 
         # Process survey calculations
-        # print('survey len2', len(self.df))
         survey_used, self.df = _create_survey(self.df, self.start_nev, header)
         proposed_azimuth = survey_used.survey_deg[-1][2]
 
@@ -1003,7 +1000,6 @@ class SurveyProcess:
             if tvd_range <= tvd_variation_limit:
                 return 'horizontal'
         type = determine_survey_type(survey_data)
-        print(type)
 
         pass
     def find_kick_off_point(

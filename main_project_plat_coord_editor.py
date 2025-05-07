@@ -11,21 +11,363 @@ import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Polygon
 from pyproj import Transformer
+from PyQt5.QtCore import QObject
+from PyQt5.QtWidgets import QWidget, QRadioButton, QButtonGroup
+from functools import partial
+from matplotlib.collections import LineCollection, PolyCollection
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+import numpy as np
+from matplotlib.textpath import TextPath
+from matplotlib.patches import PathPatch
+
+import ModuleAgnostic
+from main_project_drawer import ZoomPan
+from PyQt5.QtGui import QBrush, QColor
+from PyQt5.QtWidgets import QTableWidget
+import regex as re
 
 class PlatCoordEditor:
     def __init__(self, section_df, ui):
+        print(section_df)
         self.section_df = section_df
         self.ui = ui
         self.db = self.setup_sqlite_db()
-        self.dict_utm = {}
-        self.dict_latlon = {}
+        self.dict_utm = dict.fromkeys(range(1, 9))
+        self.dict_latlon = dict.fromkeys(range(1, 9))
+        self.button_groups = {}
+        self.dict_plats = {}
+        self.dict_figures = {}
+        self.dict_canvas = {}
+        self.dict_ax = {}
+        self.zp = ZoomPan()
+        # path_used_db = r'C:\Work\Databases'
+        # apd_data_dir = os.path.join(path_used_db, 'Board_DB_Plss_Sections.db')
+        # self.conn = sqlite3.connect(apd_data_dir)
         for i in range(8):
             setattr(self, f"plat_table_model_coords_{i + 1}", QStandardItemModel())
             model = getattr(self, f"plat_table_model_coords_{i + 1}")
             ui_element = getattr(self.ui, f"table_coords_{i + 1}")
+            ui_viz = getattr(self.ui, f"well_graphic_coords_{i + 1}")
             ui_element.setModel(model)
             self.setup_radio_buttons(i)
+            grp = getattr(self.ui, f'bg_coords_{i + 1}')
+            grp.buttonClicked[int].connect(partial(self.toggle_radio_button, group_index=i + 1))
+            self.dict_figures[i + 1] = plt.figure()
+            self.dict_canvas[i + 1] = FigureCanvas(self.dict_figures[i + 1])
+            self.dict_ax[i + 1] = self.dict_figures[i + 1].subplots()
+            ui_viz.addWidget(self.dict_canvas[i + 1])
+            line_collection_template, = self.dict_ax[i + 1].plot([], [], color='black', linewidth=1, zorder=5)
+            self.dict_plats[i + 1] = line_collection_template
+            self.dict_ax[i + 1].axis('equal')
+            self.zoom_fac = self.zp.zoom_factory(self.dict_ax[i + 1], 1.1)
+            figPan = self.zp.pan_factory(self.dict_ax[i + 1])
+            table_wid = getattr(self.ui, f"plat_table_coords_{i+1}")
+
+            table_wid.cellChanged.connect(partial(self.find_new_data, i+1))
+            table_wid.setMouseTracking(True)
+            table_wid.blockSignals(True)
+
+        for grp in self.button_groups.values():
+            # this signature delivers the button itself
+            grp.buttonClicked[QObject].connect(self.toggle_radio_button)
+        print("_______________________________writing____________________________________")
         self.write_all_data()
+        self.retrieve_all_data()
+        for i in range(8):
+            table_wid = getattr(self.ui, f"plat_table_coords_{i + 1}")
+            table_wid.blockSignals(False)
+    # def return_new_plat_data(self):
+        pass
+
+
+    def find_new_data(self, i):
+
+        def validate_coords_table(table):
+
+            tsr_data = []
+            for row in range(used_table.rowCount()):
+                tsr_row_data = []
+                for col in range(used_table.columnCount()):
+                    tsr_item = used_table.item(row, col)  # QTableWidgetItem or None
+                    tsr_text = tsr_item.text() if tsr_item else ""
+                    if tsr_item != "":
+                        tsr_row_data.append(tsr_text)
+                tsr_data.append(tsr_row_data[0])
+            return tsr_data
+
+        def validate_list(
+                values: list[str],
+                table: QTableWidget
+        ) -> list[str]:
+            """
+            values: list of exactly 6 strings, in order.
+            table: the QTableWidget holding those 6 rows (1 column).
+
+            Returns the same list if all pass validation.
+            On failure:
+              • highlights invalid rows red,
+              • sets a tooltip explaining *that* row’s error,
+              • raises ValueError.
+
+            No UI changes occur for valid rows.
+            """
+            if len(values) != 6:
+                raise ValueError("Expected exactly 6 values, got %d." % len(values))
+
+            # ensure the table will show tooltips on hover
+            table.setMouseTracking(True)
+
+            # brushes
+            error_brush = QBrush(QColor("red"))
+            normal_brush = QBrush(QColor("white"))
+
+            bad = False
+            # store cleaned results (strip whitespace)
+            cleaned = [v.strip() for v in values]
+
+            for row, text in enumerate(cleaned):
+                # ensure there's an item to color/tooltip
+                item = table.item(row, 0)
+                if not item:
+                    item = QTableWidgetItem(text)
+                    table.setItem(row, 0, item)
+                else:
+                    item.setText(text)
+
+                # default: valid
+                valid = True
+                tip = ""
+
+                # 1) empty?
+                if not text:
+                    valid = False
+                    tip = "This field cannot be empty."
+
+                # 2) rows 2,4,5 must be a single letter
+                elif row in (0, 1, 3):
+                    if not text.isdigit():
+                        valid = False
+                        tip = "Must be an integer."
+
+                # row 3: N or S
+                elif row == 2:
+                    if text.upper() not in ("N", "S"):
+                        valid = False
+                        tip = "Must be 'N' or 'S'."
+
+                # row 5: E or W
+                elif row == 4:
+                    if text.upper() not in ("E", "W"):
+                        valid = False
+                        tip = "Must be 'E' or 'W'."
+
+                # row 6: U or S
+                elif row == 5:
+                    if text.upper() not in ("U", "S"):
+                        valid = False
+                        tip = "Must be 'U' or 'S'."
+
+                # apply UI feedback only on error
+                if valid:
+                    # clear any old error styling/tooltip
+                    item.setBackground(normal_brush)
+                    item.setToolTip("")
+                else:
+                    item.setBackground(error_brush)
+                    item.setToolTip(tip)
+                    bad = True
+
+            if bad:
+                return False
+            return True
+
+        def search_db_for_conc():
+            query = f"SELECT * FROM BaseData WHERE Conc = '{conc_code}'"
+            return pd.read_sql(query, self.db)
+
+        # def validate_coords_table() -> list[str]:
+        #     table = getattr(self.ui, f"plat_table_coords_{i}")
+        #     """
+        #     table: a QTableWidget with exactly 6 rows and at least 1 column.
+        #     Returns the list of 6 cell-texts if all valid,
+        #     else raises ValueError after marking invalid cells red.
+        #     """
+        #     if table.rowCount() < 6 or table.columnCount() < 1:
+        #         raise ValueError("Table must be at least 6×1")
+        #
+        #     results = []
+        #     bad = False
+        #
+        #     # clear any existing highlights
+        #     normal_brush = QBrush(QColor("white"))
+        #     error_brush = QBrush(QColor("red"))
+        #
+        #     for row in range(6):
+        #         item = table.item(row, 0)
+        #         text = (item.text() if item else "").strip()
+        #         # default to invalid
+        #         valid = True
+        #
+        #         # 1) empty?
+        #         if not text:
+        #             valid = False
+        #         else:
+        #             # 2) rows 2,4,5 must be exactly one letter
+        #             if row in (2, 4, 5):
+        #                 if not (len(text) == 1 and text.isalpha()):
+        #                     valid = False
+        #             # 3) rows 0,1,3 must be integer strings
+        #             else:
+        #                 if not text.isdigit():
+        #                     valid = False
+        #
+        #         # paint cell
+        #         if not item:
+        #             # if no item at all, create one so we can color it
+        #             from PyQt5.QtWidgets import QTableWidgetItem
+        #             item = QTableWidgetItem()
+        #             table.setItem(row, 0, item)
+        #         item.setBackground(error_brush if not valid else normal_brush)
+        #
+        #         if not valid:
+        #             bad = True
+        #
+        #         results.append(text)
+        #
+        #     if bad:
+        #         raise ValueError("One or more table entries are invalid; please correct the highlighted cells.")
+        #
+        #     return results
+        # def validate_coords_table():
+        #     used_table = getattr(self.ui, f"plat_table_coords_{i}")
+        #     tsr_data = []
+        #     for row in range(used_table.rowCount()):
+        #         tsr_row_data = []
+        #         for col in range(used_table.columnCount()):
+        #             tsr_item = used_table.item(row, col)  # QTableWidgetItem or None
+        #             tsr_text = tsr_item.text() if tsr_item else ""
+        #             if tsr_item != "":
+        #                 tsr_row_data.append(tsr_text)
+        #         tsr_data.append(tsr_row_data[0])
+        #     return tsr_data
+        used_table = getattr(self.ui, f"plat_table_coords_{i}")
+        tsr_data = validate_coords_table(used_table)
+        try:
+            output = validate_list(tsr_data, used_table)
+        except ValueError:
+            return
+        if output:
+            conc_code = self.label_to_conc_code(tsr_data)
+            data = search_db_for_conc()
+
+    def label_to_conc_code(self, label):
+        """
+        label: either
+          - a string like "6 3S 1W U"
+          - a list like ['6','3','s','1','w','u']
+        returns: e.g. "0603S01WU"
+        """
+        # 1) Build a flat list of exactly 6 elements:
+        if isinstance(label, str):
+            tokens = label.split()  # ["6","3S","1W","U"]
+            flat = []
+            for tok in tokens:
+                # split any digit+letter combo
+                if tok[:-1].isdigit() and tok[-1].isalpha():
+                    flat.append(tok[:-1])
+                    flat.append(tok[-1])
+                else:
+                    flat.append(tok)
+        else:
+            # assume it’s already a list of 6 strings or ints
+            flat = [str(x) for x in label]
+        if len(flat) != 6:
+            raise ValueError(f"Expected 6 parts after splitting, got {len(flat)}: {flat!r}")
+
+        # 2) Zero-pad and uppercase as needed:
+        section = flat[0].zfill(2)
+        township = flat[1].zfill(2)
+        rng = flat[3].zfill(2)
+
+        code = (
+                section
+                + township
+                + flat[2].upper()
+                + rng
+                + flat[4].upper()
+                + flat[5].upper()
+        )
+        return code
+    def label_to_conc_code2(self, label):
+        if isinstance(label, str):
+            label = label.split()
+            out = []
+            for v in label:
+                m = re.fullmatch(r'(\d+)([A-Za-z])', v)
+                if m:
+                    # split into the digit part and the letter
+                    out.extend(m.groups())
+                else:
+                    out.append(v)
+            label = out
+        section = label[0].zfill(2)
+        township = label[1].zfill(2)
+        rng = label[3].zfill(2)
+        full = [section, township, label[2].upper(), rng, label[4].upper(), label[-1].upper()]
+        return "".join(full)
+        # township_label = [label[1][:-1], label[1][-1:]]
+        # range_label = [label[2][:-1], label[2][-1:]]
+        # label[1], label[2] = label[1][:-1], label[2][:-1]
+        # section = label[0].zfill(2)
+        # township = township_label[0].zfill(2)
+        # rng = range_label[0].zfill(2)
+        # full = section, township, township_label[1].upper(), rng, range_label[1].upper(), label[-1]
+
+    def retrieve_all_data(self):
+        def retrieve_label():
+            used_table = getattr(self.ui, f"plat_table_coords_{i}")
+            tsr_data = []
+            for row in range(used_table.rowCount()):
+                tsr_row_data = []
+                for col in range(used_table.columnCount()):
+                    tsr_item = used_table.item(row, col)  # QTableWidgetItem or None
+                    tsr_text = tsr_item.text() if tsr_item else ""
+                    tsr_row_data.append(tsr_text)
+                tsr_data.append(tsr_row_data[0])
+            label = f"{tsr_data[0]} {tsr_data[1]}{tsr_data[2]} {tsr_data[3]}{tsr_data[4]} {tsr_data[5]}"
+            return label
+
+        # def label_to_conc_code(data):
+        #     label = data.split()
+        #     township_label = [label[1][:-1], label[1][-1:]]
+        #     range_label = [label[2][:-1], label[2][-1:]]
+        #     label[1], label[2] = label[1][:-1], label[2][:-1]
+        #     section = label[0].zfill(2)
+        #     township = township_label[0].zfill(2)
+        #     rng = range_label[0].zfill(2)
+        #     full = section, township, township_label[1], rng, range_label[1], label[-1]
+        #     return "".join(full)
+
+        def retrieve_coords_data():
+            selected_model = getattr(self, f"plat_table_model_coords_{i}")
+            table_data = [[selected_model.data(selected_model.index(row, column)) for column in
+                           range(selected_model.columnCount())] for row in
+                          range(selected_model.rowCount())]
+            table_data = [r for r in table_data if r and None not in r and '' not in r]
+            table_data = [[float(r[0]), float(r[1])] for r in table_data]
+            poly_out = Polygon(table_data)
+            return poly_out, poly_out.centroid
+        full_data = []
+        for i in range(1,9):
+            try:
+                label = retrieve_label()
+                conc_code = self.label_to_conc_code(label)
+                poly, cent = retrieve_coords_data()
+                full_data.append([conc_code, poly, label, cent])
+            except (IndexError, ValueError) as e:
+                pass
+        columns = ['Conc', 'geometry', 'label', 'centroid']
+        self.section_df = pd.DataFrame(columns=columns, data=full_data)
 
     def setup_radio_buttons(self, i):
         button_group = getattr(self.ui, f"bg_coords_{i + 1}")
@@ -41,42 +383,48 @@ class PlatCoordEditor:
         apd_data_dir = os.path.join(path_used_db, 'Board_DB_Plss_Sections.db')
         return sqlite3.connect(apd_data_dir)
 
-    # def tester_function(self):
-    #     cur = self.db.cursor()
-    #
-    #     # 2) grab all table names
-    #     cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';")
-    #     tables = [row[0] for row in cur.fetchall()]
-    #
-    #     # 3) for each table, pull its column info
-    #     for tbl in tables:
-    #         print(f"Table: {tbl}")
-    #         cur.execute(f"PRAGMA table_info({tbl});")
-    #         cols = cur.fetchall()
-    #         # PRAGMA table_info returns rows: (cid, name, type, notnull, dflt_value, pk)
-    #         for cid, name, typ, notnull, dflt, pk in cols:
-    #             nn = "NOT NULL" if notnull else "NULLABLE"
-    #             pk_flag = "PK" if pk else ""
-    #             print(f"   • {name} — {typ} {nn} {pk_flag}")
-    #         print()
-    #
-    #     self.db.close()
-    def write_all_data(self):
-        def write_coordinates():
-            main_table = getattr(self.ui, f"table_coords_{i + 1}")
-            model = getattr(self, f"plat_table_model_coords_{i + 1}")
-            main_table.setUpdatesEnabled(False)
-            main_table.verticalHeader().setVisible(False)
-            main_table.setShowGrid(True)
-            model.setHorizontalHeaderLabels(['X', 'Y'])
-            points = list(row['geometry'].exterior.coords)
-            for val, (x, y) in enumerate(points):
-                model.setItem(val, 0, QStandardItem(f"{x:.3f}"))
-                model.setItem(val, 1, QStandardItem(f"{y:.3f}"))
-            main_table.setUpdatesEnabled(True)
-            main_table.show()
-            self.dict_utm[str(i+1)] = row['geometry']
+    def toggle_radio_button(self, button_id: int, group_index: int):
+        try:
+            if button_id == -3:
+                data_used = self.dict_latlon[group_index]
+                self.write_coordinates(list(data_used.exterior.coords), group_index)
+                self.draw_well_data(group_index, "latlon")
+            elif button_id == -2:
+                data_used = self.dict_utm[group_index]
+                self.write_coordinates(list(data_used.exterior.coords), group_index)
+                self.draw_well_data(group_index, "utm")
+        except AttributeError:
+            pass
 
+    def draw_well_data(self, group_id, coord_type_label):
+        dict_used = getattr(self, f"dict_{coord_type_label}")[group_id]
+        canvas_used = getattr(self, f"dict_canvas")[group_id]
+        ax_used = getattr(self, f"dict_ax")[group_id]
+        line_collection_used = self.dict_plats[group_id]
+        x, y = np.array(dict_used.exterior.coords).T
+        line_collection_used.set_data(x, y)
+        ax_used.relim()
+        ax_used.autoscale_view()
+        canvas_used.blit(ax_used.bbox)
+        canvas_used.draw()
+
+    def write_coordinates(self, points, i):
+        print(i)
+        main_table = getattr(self.ui, f"table_coords_{i}")
+        model = getattr(self, f"plat_table_model_coords_{i}")
+        model.setRowCount(0)  # Clear existing rows efficiently
+        main_table.setModel(model)
+        main_table.setUpdatesEnabled(False)
+        main_table.verticalHeader().setVisible(False)
+        main_table.setShowGrid(True)
+        model.setHorizontalHeaderLabels(['X', 'Y'])
+        for val, (x, y) in enumerate(points):
+            model.setItem(val, 0, QStandardItem(f"{x:.3f}"))
+            model.setItem(val, 1, QStandardItem(f"{y:.3f}"))
+        main_table.setUpdatesEnabled(True)
+        main_table.show()
+
+    def write_all_data(self):
         def write_tsr():
             tsr_info = getattr(self.ui, f"plat_table_coords_{i + 1}")
             parameters = row['label'].split(" ")
@@ -91,23 +439,18 @@ class PlatCoordEditor:
             tsr_info.setRowCount(len(data))
             tsr_info.setColumnCount(1)
             tsr_info.setHorizontalHeaderLabels(['Value'])  # adjust header text as needed
-
             for row2, val in enumerate(data):
                 tsr_info.setItem(row2, 0, QTableWidgetItem(str(val)))
+
         def convert_utm_to_latlon():
-            utm_poly = row['geometry']  # a shapely Polygon in UTM zone 12N
-
-            # 3) build a transformer from UTM 12N → WGS84
-            #    (northern hemisphere uses 326##; southern is 327##)
+            utm_poly = row['geometry']
             transformer = Transformer.from_crs("EPSG:32612", "EPSG:4326", always_xy=True)
-
-            # 4) transform each exterior coordinate
             lonlat = [transformer.transform(x, y) for x, y in utm_poly.exterior.coords]
-            self.dict_latlon[str(i+1)] = Polygon(lonlat)
-
+            self.dict_latlon[index_val] = Polygon(lonlat)
         for i, row in self.section_df.iterrows():
-            write_coordinates()
+            index_val = i + 1
+            self.write_coordinates(list(row['geometry'].exterior.coords), index_val)
             write_tsr()
             convert_utm_to_latlon()
-
-
+            self.dict_utm[index_val] = row['geometry']
+            self.draw_well_data(index_val, 'utm')

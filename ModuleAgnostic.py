@@ -83,6 +83,237 @@ import pandas as pd
 # from UIDataGather import *
 # from shapely.geometry.polygon import Polygon
 import copy
+import cProfile
+import pstats
+from datetime import datetime
+from io import StringIO
+import time
+import cProfile
+import pstats
+from io import StringIO
+import pandas as pd
+from functools import wraps
+
+def timeit(func):
+    """
+    Decorator: prints elapsed time each time the function is called.
+    Usage:
+        @timeit
+        def foo(...):
+            ...
+    """
+    @wraps(func)
+    def wrapped(*args, **kwargs):
+        start = time.perf_counter()
+        result = func(*args, **kwargs)
+        elapsed = time.perf_counter() - start
+        print(f"[timeit] {func.__name__!r} took {elapsed:.4f}s")
+        return result
+    return wrapped
+
+def profile(func, *args, **kwargs):
+    def strip_root(pathway):
+        # normalize the incoming path so slashes/backslashes are consistent
+        loc_norm = os.path.normpath(loc)
+        if loc_norm.startswith(project_root):
+            # slice off exactly the project_root length
+            return loc_norm[len(project_root):]
+        else:
+            return loc
+    """
+    Profiles func(*args, **kwargs) with cProfile and returns a tuple:
+      (df, total_tt, sum_self)
+
+    df will have columns:
+      ['ncalls','tottime','percall','cumtime','percall2','location','is_user']
+
+    The function also prints:
+     - the DataFrame
+     - total_tt (overall wall time)
+     - sum_self (sum of self-times)
+     - split totals for user vs external code
+    """
+    # --- run profiler ---
+    prof = cProfile.Profile()
+    prof.runcall(func, *args, **kwargs)
+
+    # --- capture & parse stats text ---
+    s = StringIO()
+    ps = pstats.Stats(prof, stream=s)
+    ps.sort_stats('cumulative')
+    total_tt = ps.total_tt
+    ps.print_stats()
+
+    lines = s.getvalue().split('\n')
+    data = []
+    cwd = os.getcwd()
+    project_root = parent = os.path.dirname(cwd)
+    excluded = f"{os.getcwd()}\\.venv"
+    for line in lines[5:]:
+        if not line.strip():
+            continue
+        parts = line.split(None, 5)
+        if len(parts) == 6:
+            ncalls, tottime, percall, cumtime, percall2, loc = parts
+            loc_stripped = strip_root(loc)
+            is_user = not loc.startswith(excluded)
+            data.append({
+                'ncalls':   ncalls,
+                'tottime':  float(tottime),
+                'percall':  float(percall),
+                'cumtime':  float(cumtime),
+                'percall2': float(percall2),
+                'location': loc_stripped,
+                'is_user':  is_user
+            })
+
+    df = pd.DataFrame(data)
+    sum_self = df['tottime'].sum()
+
+    # --- summarize & print ---
+    print(df.sort_values('percall', ascending=False))
+    print(f"\n[profile] total_tt: {total_tt:.6f}s, sum_self: {sum_self:.6f}s")
+
+    # split‐out totals
+    user_cum = df.loc[df['is_user'], 'cumtime'].sum()
+    ext_cum  = df.loc[~df['is_user'], 'cumtime'].sum()
+    print(f"user‐code cumulative time:     {user_cum:.6f}s")
+    print(f"external (venv) cumulative time: {ext_cum:.6f}s")
+    key = "{method 'execute' of 'sqlite3.Cursor' objects}"
+    print(f"\nCallers of {key}:")
+    ps.print_callers(key)
+    return df, total_tt, sum_self
+
+# def profile2(func, *args, **kwargs):
+#     """
+#     Profiles func(*args, **kwargs) with cProfile and returns a tuple:
+#       (df, total_tt, sum_self)
+#     - df: pandas.DataFrame with columns
+#         ['ncalls','tottime','percall','cumtime','percall2','location']
+#     - total_tt: total wall-clock seconds from cProfile
+#     - sum_self: sum of all per-call self-times in df
+#
+#     Usage:
+#         # no args
+#         df, total, self_sum = profile(self.plat_editor.retrieve_all_data)
+#
+#         # with args
+#         df, total, self_sum = profile(my_func, arg1, arg2, key=value)
+#     """
+#     prof = cProfile.Profile()
+#     prof.runcall(func, *args, **kwargs)
+#
+#     # Capture the stats text
+#     s = StringIO()
+#     ps = pstats.Stats(prof, stream=s)
+#     ps.sort_stats('cumulative')
+#     total_tt = ps.total_tt
+#     ps.print_stats()
+#
+#     # Parse into a DataFrame
+#     lines = s.getvalue().split('\n')
+#     data = []
+#     str_to_remove = r"C:\Users\coltongoodrich\Documents\GitHub"
+#     for line in lines[5:]:
+#         if not line.strip():
+#             continue
+#         parts = line.split(None, 5)
+#         if len(parts) == 6:
+#             ncalls, tottime, percall, cumtime, percall2, loc = parts
+#             data.append({
+#                 'ncalls':   ncalls,
+#                 'tottime':  float(tottime),
+#                 'percall':  float(percall),
+#                 'cumtime':  float(cumtime),
+#                 'percall2': float(percall2),
+#                 'location': loc.replace(str_to_remove, "", 1)
+#             })
+#
+#     df = pd.DataFrame(data)
+#     sum_self = df['tottime'].sum()
+#
+#     # Print results
+#     print(df)
+#     print(f"\n[profile] total_tt: {total_tt:.6f}s, sum_self: {sum_self:.6f}s")
+#
+#     return df, total_tt, sum_self
+#
+
+def analyze_time_no_args(func, *args, **kwargs):
+    """
+    Profiles `func(*args, **kwargs)`, prints a filtered DataFrame
+    of the cumulative timings.
+    """
+    profiler = cProfile.Profile()
+    profiler.runcall(func, *args, **kwargs)
+
+    # capture the pstats output
+    s = StringIO()
+    ps = pstats.Stats(profiler, stream=s)
+    ps.sort_stats('cumulative')
+    ps.print_stats()
+
+    # parse it into a DataFrame
+    lines = s.getvalue().split('\n')
+    data = []
+    for line in lines[5:]:
+        if not line.strip():
+            continue
+        parts = line.split(None, 5)
+        if len(parts) == 6:
+            ncalls, tottime, percall, cumtime, percall2, flfn = parts
+            data.append({
+                'ncalls':   ncalls,
+                'tottime':  float(tottime),
+                'percall':  float(percall),
+                'cumtime':  float(cumtime),
+                'percall2': float(percall2),
+                'location': flfn
+            })
+
+    df = pd.DataFrame(data)
+    # filter out your own profiler overhead if desired
+    excluded = f"{os.getcwd()}\\.venv"
+    df = df[~df['location'].str.contains(excluded, case=False, regex=False)]
+    sum_self = df['tottime'].sum()
+    print(f"Sum of all self‐times (df['tottime'].sum()): {sum_self:.6f} s")
+    print(df)
+
+def analyzeTime2(function_call, args_list ):
+
+    profiler = cProfile.Profile()
+    profiler.runcall(function_call, *args_list )
+
+    # Redirect pstats output to a string stream
+    s = StringIO()
+    ps = pstats.Stats(profiler, stream=s)
+    ps.sort_stats('cumulative')
+    ps.print_stats()
+
+    # Get the string output and process it
+    lines = s.getvalue().split('\n')
+    data = []
+    for line in lines[5:]:  # Skip the header lines
+        if line.strip():
+            fields = line.split(None, 5)
+            if len(fields) == 6:
+                ncalls, tottime, percall, cumtime, percall2, filename_lineno_function = fields
+                data.append({
+                    'ncalls': ncalls,
+                    'tottime': float(tottime),
+                    'percall': float(percall),
+                    'cumtime': float(cumtime),
+                    'percall2': float(percall2),
+                    'filename_lineno_function': filename_lineno_function
+                })
+
+    # Create DataFrame
+    df = pd.DataFrame(data)
+    excluded_location = r'C:\Work\RewriteAPD\ven2'
+    filtered_df = df[~df['filename_lineno_function'].str.contains(excluded_location, case=False, regex=False)]
+    # filtered_df = filtered_df[
+    #     filtered_df['filename_lineno_function'].str.contains(r'C:\Work\RewriteAPD', case=False, regex=False)]
+    print(filtered_df)
 
 
 def insert_row_at_md(df, target_md):
@@ -135,7 +366,6 @@ def insert_row_at_md(df, target_md):
 
     return df
 # def insert_row_at_md(df, target_md):
-#     print(target_md)
 #     # Ensure the dataframe is sorted by MeasuredDepth
 #     df = df.sort_values('MeasuredDepth').reset_index(drop=True)
 #
@@ -374,7 +604,6 @@ def get_decimal_year():
 
 
 def printFunctionName():
-    # printLineBreak()
     curframe = inspect.currentframe()
     calframe = inspect.getouterframes(curframe, 2)
     print('\nFUNCTION CALLED:', calframe[1][3])
@@ -1222,10 +1451,8 @@ def convertToDecimal(data):
     data_converted = []
 
     for i in range(len(data)):
-        print(len(data[i]))
         if len(data[i]) == 8:
             data[i] = data[i][:-2]
-            print(data[i])
         elif len(data[i]) > 6:
             data[i] = data[i][6:12]
             data[i][1] = float(data[i][1])
@@ -1542,7 +1769,6 @@ def bearingToAzimuth(bearing):
 def bearingToAzimuth2(bearing, dir):
     labels = {1: 'SE', 2: 'NE', 3: 'SW', 4: 'NW'}
     decimal_degrees = round(float(bearing[0]) + float(bearing[1]) / 60 + float(bearing[2]) / 3600, 7)
-    print('bearing', bearing)
     label = labels[bearing[3]]
     if 'north' in dir.lower():
         if label == 'NE':

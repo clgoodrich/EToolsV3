@@ -129,6 +129,7 @@ class DataDrawer:
         self.canvas_visual = FigureCanvas(self.figure_visual)
         self.ax_visual = self.figure_visual.subplots()
         self.ui.well_viz_display.addWidget(self.canvas_visual)
+
         self.added_viz_pts_model = QStandardItemModel()
         self.ui.insert_pts_lst.setModel(self.added_viz_pts_model)
         self.added_viz_pts_model.dataChanged.connect(self.update_model_table_when_user_modifies_values)
@@ -383,7 +384,6 @@ class DataDrawer:
             else:
                 new_df = survey_reference.loc[data.index[0]:]
             used_well = new_df
-
             customdata_plat = np.column_stack((
                 used_well['tvd'] * -1,  # Depth in feet
                 used_well['measured_depth'],  # depth in MD
@@ -419,7 +419,6 @@ class DataDrawer:
         traces_3d = [trace for trace in fig.data if trace.name.startswith('3d_')]
         traces_3d_planned = [trace for trace in traces_3d if trace.name[3:5] == 'Pl']
         traces_3d_drilled = [trace for trace in traces_3d if trace.name[3:5] != 'Pl']
-
         traces_2d = [trace for trace in fig.data if trace.name.startswith('2d_')]
         traces_2d_planned = [trace for trace in traces_2d if trace.name[3:5] == 'Pl']
         traces_2d_drilled = [trace for trace in traces_2d if trace.name[3:5] != 'Pl']
@@ -612,8 +611,6 @@ class DataDrawer:
         utm_pts, label = self.convert_lat_lon_pts_to_utm(data)
         new_row = pd.DataFrame(
             {'Label': [label], 'Easting': [utm_pts[0]], 'Northing': [utm_pts[1]], 'Geometry': [Point(utm_pts)]})
-        # self.df_custom_viz_pts = pd.concat([self.df_custom_viz_pts, new_row], ignore_index=True).drop_duplicates(
-        #     keep="first")
         self.df_custom_viz_pts = pd.concat([drop_all_na(self.df_custom_viz_pts), drop_all_na(new_row)],
                                            ignore_index=True).drop_duplicates(keep="first")
         self.update_plot_values()

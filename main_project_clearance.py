@@ -58,7 +58,7 @@ import numpy as np
 import math
 from typing import Optional, Tuple, Union, TypeVar
 from numpy.typing import NDArray
-
+import ModuleAgnostic as ma
 T = TypeVar('T', bound=List[Any])
 
 
@@ -891,6 +891,7 @@ class ClearanceProcess:
         self.whole_df = pd.DataFrame()
 
         # Process clearance data
+
         self.clearance_data = self._main_clearance()
 
         # Extract used concentration values
