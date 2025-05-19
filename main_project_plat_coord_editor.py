@@ -1,4 +1,6 @@
 import sqlite3
+
+import PyQt5
 import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
@@ -19,16 +21,22 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import numpy as np
 from matplotlib.textpath import TextPath
 from matplotlib.patches import PathPatch
-
+from PyQt5.QtWidgets import QAbstractItemView, QSizePolicy
+from PyQt5.QtWidgets import QHeaderView, QAbstractItemView
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QLineEdit, QSpinBox,
+                             QCheckBox,
+                             QDialog, QTabWidget, QTextBrowser, QTableWidget, QLabel, QTableView, QRadioButton,
+                             QGraphicsView,
+                             QComboBox, QMessageBox, QFileDialog, QButtonGroup)
 import ModuleAgnostic
 from main_project_drawer import ZoomPan
 from PyQt5.QtGui import QBrush, QColor
 from PyQt5.QtWidgets import QTableWidget
 import regex as re
+from PyQt5.QtCore import Qt
 
 class PlatCoordEditor:
     def __init__(self, section_df, ui):
-        print(section_df)
         self.section_df = section_df
         self.ui = ui
         self.db = self.setup_sqlite_db()
@@ -40,18 +48,36 @@ class PlatCoordEditor:
         self.dict_canvas = {}
         self.dict_ax = {}
         self.zp = ZoomPan()
-        # path_used_db = r'C:\Work\Databases'
-        # apd_data_dir = os.path.join(path_used_db, 'Board_DB_Plss_Sections.db')
-        # self.conn = sqlite3.connect(apd_data_dir)
+        self._program_changes = True  # Flag for programmatic changes
+        # self._initializing = True  # Flag to track initialization state
+        # self.added_viz_pts_model = QStandardItemModel()
+        # self.ui.insert_pts_lst.setModel(self.added_viz_pts_model)
+        # self.added_viz_pts_model.dataChanged.connect(self.update_model_table_when_user_modifies_values)
+        # self.ui.insert_pts_lst.setEditTriggers(QAbstractItemView.AllEditTriggers)
+
         for i in range(8):
+            print(i)
             setattr(self, f"plat_table_model_coords_{i + 1}", QStandardItemModel())
             model = getattr(self, f"plat_table_model_coords_{i + 1}")
             ui_element = getattr(self.ui, f"table_coords_{i + 1}")
             ui_viz = getattr(self.ui, f"well_graphic_coords_{i + 1}")
+            ui_element.blockSignals(True)
             ui_element.setModel(model)
             self.setup_radio_buttons(i)
             grp = getattr(self.ui, f'bg_coords_{i + 1}')
             grp.buttonClicked[int].connect(partial(self.toggle_radio_button, group_index=i + 1))
+
+            # Add selection mode and ability to edit
+            ui_element.setSelectionMode(QAbstractItemView.ExtendedSelection)
+            ui_element.setSelectionBehavior(QAbstractItemView.SelectRows)
+            ui_element.setEditTriggers(QAbstractItemView.AllEditTriggers)
+
+            # Connect data change signal
+            model.dataChanged.connect(partial(self.alter_coords_tables, i + 1))
+
+            # Setup delete key event
+            # ui_element.keyPressEvent = partial(self.handle_key_press, table_index=i + 1)
+
             self.dict_figures[i + 1] = plt.figure()
             self.dict_canvas[i + 1] = FigureCanvas(self.dict_figures[i + 1])
             self.dict_ax[i + 1] = self.dict_figures[i + 1].subplots()
@@ -61,11 +87,37 @@ class PlatCoordEditor:
             self.dict_ax[i + 1].axis('equal')
             self.zoom_fac = self.zp.zoom_factory(self.dict_ax[i + 1], 1.1)
             figPan = self.zp.pan_factory(self.dict_ax[i + 1])
-            table_wid = getattr(self.ui, f"plat_table_coords_{i+1}")
+            table_wid = getattr(self.ui, f"plat_table_coords_{i + 1}")
 
-            table_wid.cellChanged.connect(partial(self.find_new_data, i+1))
+            table_wid.cellChanged.connect(partial(self.find_new_data, i + 1))
             table_wid.setMouseTracking(True)
             table_wid.blockSignals(True)
+        #
+        # for i in range(8):
+        #     setattr(self, f"plat_table_model_coords_{i + 1}", QStandardItemModel())
+        #     model = getattr(self, f"plat_table_model_coords_{i + 1}")
+        #     ui_element = getattr(self.ui, f"table_coords_{i + 1}")
+        #     ui_viz = getattr(self.ui, f"well_graphic_coords_{i + 1}")
+        #     ui_element.setModel(model)
+        #     model.dataChanged.connect(partial(self.alter_coords_tables, i+1))
+        #     ui_element.setEditTriggers(QAbstractItemView.AllEditTriggers)
+        #     self.setup_radio_buttons(i)
+        #     grp = getattr(self.ui, f'bg_coords_{i + 1}')
+        #     grp.buttonClicked[int].connect(partial(self.toggle_radio_button, group_index=i + 1))
+        #     self.dict_figures[i + 1] = plt.figure()
+        #     self.dict_canvas[i + 1] = FigureCanvas(self.dict_figures[i + 1])
+        #     self.dict_ax[i + 1] = self.dict_figures[i + 1].subplots()
+        #     ui_viz.addWidget(self.dict_canvas[i + 1])
+        #     line_collection_template, = self.dict_ax[i + 1].plot([], [], color='black', linewidth=1, zorder=5)
+        #     self.dict_plats[i + 1] = line_collection_template
+        #     self.dict_ax[i + 1].axis('equal')
+        #     self.zoom_fac = self.zp.zoom_factory(self.dict_ax[i + 1], 1.1)
+        #     figPan = self.zp.pan_factory(self.dict_ax[i + 1])
+        #     table_wid = getattr(self.ui, f"plat_table_coords_{i+1}")
+        #
+        #     table_wid.cellChanged.connect(partial(self.find_new_data, i+1))
+        #     table_wid.setMouseTracking(True)
+        #     table_wid.blockSignals(True)
 
         for grp in self.button_groups.values():
             # this signature delivers the button itself
@@ -73,27 +125,222 @@ class PlatCoordEditor:
         print("_______________________________writing____________________________________")
         self.write_all_data()
         self.retrieve_all_data()
+        self._program_changes = False
         for i in range(8):
+
             table_wid = getattr(self.ui, f"plat_table_coords_{i + 1}")
             table_wid.blockSignals(False)
-    # def return_new_plat_data(self):
-        pass
+        # for i in range(8):
+        #     table_wid = getattr(self.ui, f"plat_table_coords_{i + 1}")
+        #     table_wid.blockSignals(False)
+        #     ui_element = getattr(self.ui, f"table_coords_{i + 1}")
+        #     ui_element.blockSignals(False)
+        # self._initializing = False  # Initialization complete
 
+    # def handle_key_press(self, event, table_index):
+    #     """Handle key press events for the tables"""
+    #     table = getattr(self.ui, f"table_coords_{table_index}")
+    #     print('kess pressed, foo')
+    #     # Handle original event first
+    #     QTableView.keyPressEvent(table, event)
+    #
+    #     # Check if Delete key was pressed
+    #     if event.key() == Qt.Key_Delete or event.key():
+    #         self.delete_selected_rows(table_index)
+
+    def delete_selected_rows(self, table_index):
+        """Delete selected rows from the specified table"""
+        self._program_changes = True  # Set flag for programmatic changes
+
+        table = getattr(self.ui, f"table_coords_{table_index}")
+        model = getattr(self, f"plat_table_model_coords_{table_index}")
+
+        points = []
+        for row in range(model.rowCount()):
+            try:
+                x = float(model.data(model.index(row, 0)))
+                y = float(model.data(model.index(row, 1)))
+                points.append([x, y])
+            except (ValueError, TypeError):
+                continue
+        # Get selection model
+        selection = table.selectionModel()
+        if not selection.hasSelection():
+            self._program_changes = False
+            return
+        # Get unique rows in descending order
+        selected_rows = sorted(set(index.row() for index in selection.selectedIndexes()), reverse=True)
+        selected_data = []
+        # for rows in range(8):
+
+        for row in selected_rows:
+            # For a QStandardItemModel
+            row_data = []
+            for col in range(model.columnCount()):
+                item = model.item(row, col)
+                if item:
+                    row_data.append(item.data(Qt.DisplayRole))
+            if all(x == '' for x in row_data):
+                print('remove row')
+                model.removeRow(row)
+            else:
+                print("keep row")
+                print(row_data)
+            # else:
+            #     print(row)
+            # print(row_data)
+            # selected_data.append(row_data)
+
+        # print(selected_data)
+        # Remove rows
+        # for row in selected_rows:
+        #     model.removeRow(row)
+        # Update visualization
+        self._program_changes = False  # Reset flag
+        # self.update_from_model_change(table_index)
+
+    def alter_coords_tables(self, table_index, topLeft, bottomRight, roles):
+        """Handle data changes in the table models"""
+        # Update the visualization based on the model changes
+        # if self._initializing:
+        #     return  # Skip during initialization
+        if self._program_changes:
+            return  # Skip if changes are programmatic
+        print('table index')
+
+        self.delete_selected_rows(table_index)
+        self.update_from_model_change(table_index)
+
+    def update_from_model_change(self, table_index):
+        def convert_to_shapely_polygon(coords_list):
+            # Filter out sublists with empty strings
+            filtered_coords = [sublist for sublist in coords_list if all(element != '' for element in sublist)]
+
+            # Convert all string values to floats
+            float_coords = [[float(x), float(y)] for x, y in filtered_coords]
+
+            # Create a Shapely Polygon (if we have at least 3 points)
+            if len(float_coords) >= 3:
+                # Ensure the polygon is closed (first and last points match)
+                if float_coords[0] != float_coords[-1]:
+                    float_coords.append(float_coords[0])
+
+                return Polygon(float_coords)
+            else:
+                return None
+        """Update visualizations after model changes"""
+        model = getattr(self, f"plat_table_model_coords_{table_index}")
+        # Extract points from model
+        points = []
+        selected_data = []
+        for row in range(model.rowCount()):
+            # For a QStandardItemModel
+            row_data = []
+            for col in range(model.columnCount()):
+                item = model.item(row, col)
+                if item:
+                    row_data.append(item.data(Qt.DisplayRole))
+            selected_data.append(row_data)
+
+        # for row in range(model.rowCount()):
+        #     try:
+        #         x = float(model.data(model.index(row, 0)))
+        #         y = float(model.data(model.index(row, 1)))
+        #         points.append([x, y])
+        #         # print('out', x, y)
+        #     except (ValueError, TypeError):
+        #         print('del', x,y)
+        #         continue
+
+        # Check if we have enough points for a valid polygon
+
+        if len(selected_data) >= 3:
+            print(selected_data)
+            # Create polygon and update display
+            # poly = Polygon(points)
+            poly = convert_to_shapely_polygon(points)
+            print(poly)
+            # Update the polygon in dict_plats
+            x, y = poly.exterior.xy
+            self.dict_plats[table_index].set_data(x, y)
+            # Store UTM and LatLon versions
+            self.dict_utm[table_index] = poly
+            # Convert to latlon for display if needed
+            latlon_poly = self.convert_utm_to_latlon_poly(poly)
+            self.dict_latlon[table_index] = latlon_poly
+            # Redraw the canvas
+            self.dict_ax[table_index].relim()
+            self.dict_ax[table_index].autoscale_view()
+            self.dict_canvas[table_index].draw()
+
+        # Update overall section_df when needed
+        self.update_model_table(table_index)
+        self.retrieve_all_data()
+
+    def update_model_table(self, table_index):
+        def extract_pt_data():
+            points = []
+            for row in range(model.rowCount()):
+                try:
+                    x = float(model.data(model.index(row, 0)))
+                    y = float(model.data(model.index(row, 1)))
+                    points.append([x, y])
+                except (ValueError, TypeError):
+                    continue
+            return points
+        model = getattr(self, f"plat_table_model_coords_{table_index}")
+        ui_data = getattr(self.ui, f"table_coords_{table_index}")
+        used_table = getattr(self.ui, f"plat_table_coords_{table_index}")
+        data_frame = self.section_df.iloc[table_index-1]
+        points_geo = Polygon(extract_pt_data())
+        tsr_data = self.validate_coords_table(used_table)
+        conc_code = self.label_to_conc_code(tsr_data)
+        all_conc_codes = self.section_df['Conc'].unique()
+        self.section_df.at[table_index-1, 'geometry'] = points_geo
+        self.section_df.at[table_index-1, 'centroid'] = points_geo.centroid
+
+        # # if conc_code in all_conc_codes:
+        # #     pass
+        # #
+        # print(all_conc_codes)
+        # print(self.section_df)
+
+        #
+        # model.removeRows(0, model.rowCount())
+        # for _, data in self.df_custom_viz_pts.iterrows():
+        #     row = [data['Easting'], data['Northing']]
+        #     items = [QStandardItem(str(item)) for item in row]
+        #     for k in range(2):
+        #         items[k].setData(row[k])
+        #     model.appendRow(items)
+        #     ui_data.verticalHeader().setVisible(False)
+        #     ui_data.horizontalHeader().setVisible(False)
+        #     ui_data.setShowGrid(True)
+        #     ui_data.show()
+
+    def convert_utm_to_latlon_poly(self, poly):
+        """Convert UTM polygon to LatLon polygon"""
+        latlon_coords = []
+        for x, y in poly.exterior.coords:
+            lat, lon = utm.to_latlon(x, y, 12, 'T')
+            latlon_coords.append((lon, lat))  # Note the order swap for lat/lon
+
+        return Polygon(latlon_coords)
+
+    def validate_coords_table(self, used_table):
+        tsr_data = []
+        for row in range(used_table.rowCount()):
+            tsr_row_data = []
+            for col in range(used_table.columnCount()):
+                tsr_item = used_table.item(row, col)  # QTableWidgetItem or None
+                tsr_text = tsr_item.text() if tsr_item else ""
+                if tsr_item != "":
+                    tsr_row_data.append(tsr_text)
+            tsr_data.append(tsr_row_data[0])
+        return tsr_data
 
     def find_new_data(self, i):
 
-        def validate_coords_table(table):
-
-            tsr_data = []
-            for row in range(used_table.rowCount()):
-                tsr_row_data = []
-                for col in range(used_table.columnCount()):
-                    tsr_item = used_table.item(row, col)  # QTableWidgetItem or None
-                    tsr_text = tsr_item.text() if tsr_item else ""
-                    if tsr_item != "":
-                        tsr_row_data.append(tsr_text)
-                tsr_data.append(tsr_row_data[0])
-            return tsr_data
 
         def validate_list(
                 values: list[str],
@@ -185,73 +432,8 @@ class PlatCoordEditor:
             query = f"SELECT * FROM BaseData WHERE Conc = '{conc_code}'"
             return pd.read_sql(query, self.db)
 
-        # def validate_coords_table() -> list[str]:
-        #     table = getattr(self.ui, f"plat_table_coords_{i}")
-        #     """
-        #     table: a QTableWidget with exactly 6 rows and at least 1 column.
-        #     Returns the list of 6 cell-texts if all valid,
-        #     else raises ValueError after marking invalid cells red.
-        #     """
-        #     if table.rowCount() < 6 or table.columnCount() < 1:
-        #         raise ValueError("Table must be at least 6×1")
-        #
-        #     results = []
-        #     bad = False
-        #
-        #     # clear any existing highlights
-        #     normal_brush = QBrush(QColor("white"))
-        #     error_brush = QBrush(QColor("red"))
-        #
-        #     for row in range(6):
-        #         item = table.item(row, 0)
-        #         text = (item.text() if item else "").strip()
-        #         # default to invalid
-        #         valid = True
-        #
-        #         # 1) empty?
-        #         if not text:
-        #             valid = False
-        #         else:
-        #             # 2) rows 2,4,5 must be exactly one letter
-        #             if row in (2, 4, 5):
-        #                 if not (len(text) == 1 and text.isalpha()):
-        #                     valid = False
-        #             # 3) rows 0,1,3 must be integer strings
-        #             else:
-        #                 if not text.isdigit():
-        #                     valid = False
-        #
-        #         # paint cell
-        #         if not item:
-        #             # if no item at all, create one so we can color it
-        #             from PyQt5.QtWidgets import QTableWidgetItem
-        #             item = QTableWidgetItem()
-        #             table.setItem(row, 0, item)
-        #         item.setBackground(error_brush if not valid else normal_brush)
-        #
-        #         if not valid:
-        #             bad = True
-        #
-        #         results.append(text)
-        #
-        #     if bad:
-        #         raise ValueError("One or more table entries are invalid; please correct the highlighted cells.")
-        #
-        #     return results
-        # def validate_coords_table():
-        #     used_table = getattr(self.ui, f"plat_table_coords_{i}")
-        #     tsr_data = []
-        #     for row in range(used_table.rowCount()):
-        #         tsr_row_data = []
-        #         for col in range(used_table.columnCount()):
-        #             tsr_item = used_table.item(row, col)  # QTableWidgetItem or None
-        #             tsr_text = tsr_item.text() if tsr_item else ""
-        #             if tsr_item != "":
-        #                 tsr_row_data.append(tsr_text)
-        #         tsr_data.append(tsr_row_data[0])
-        #     return tsr_data
         used_table = getattr(self.ui, f"plat_table_coords_{i}")
-        tsr_data = validate_coords_table(used_table)
+        tsr_data = self.validate_coords_table(used_table)
         try:
             output = validate_list(tsr_data, used_table)
         except ValueError:
@@ -315,13 +497,7 @@ class PlatCoordEditor:
         rng = label[3].zfill(2)
         full = [section, township, label[2].upper(), rng, label[4].upper(), label[-1].upper()]
         return "".join(full)
-        # township_label = [label[1][:-1], label[1][-1:]]
-        # range_label = [label[2][:-1], label[2][-1:]]
-        # label[1], label[2] = label[1][:-1], label[2][:-1]
-        # section = label[0].zfill(2)
-        # township = township_label[0].zfill(2)
-        # rng = range_label[0].zfill(2)
-        # full = section, township, township_label[1].upper(), rng, range_label[1].upper(), label[-1]
+
 
     def retrieve_all_data(self):
         def retrieve_label():
@@ -336,17 +512,6 @@ class PlatCoordEditor:
                 tsr_data.append(tsr_row_data[0])
             label = f"{tsr_data[0]} {tsr_data[1]}{tsr_data[2]} {tsr_data[3]}{tsr_data[4]} {tsr_data[5]}"
             return label
-
-        # def label_to_conc_code(data):
-        #     label = data.split()
-        #     township_label = [label[1][:-1], label[1][-1:]]
-        #     range_label = [label[2][:-1], label[2][-1:]]
-        #     label[1], label[2] = label[1][:-1], label[2][:-1]
-        #     section = label[0].zfill(2)
-        #     township = township_label[0].zfill(2)
-        #     rng = range_label[0].zfill(2)
-        #     full = section, township, township_label[1], rng, range_label[1], label[-1]
-        #     return "".join(full)
 
         def retrieve_coords_data():
             selected_model = getattr(self, f"plat_table_model_coords_{i}")
@@ -409,7 +574,8 @@ class PlatCoordEditor:
         canvas_used.draw()
 
     def write_coordinates(self, points, i):
-        print(i)
+        # print(i)
+        self._program_changes = True
         main_table = getattr(self.ui, f"table_coords_{i}")
         model = getattr(self, f"plat_table_model_coords_{i}")
         model.setRowCount(0)  # Clear existing rows efficiently
@@ -419,10 +585,44 @@ class PlatCoordEditor:
         main_table.setShowGrid(True)
         model.setHorizontalHeaderLabels(['X', 'Y'])
         for val, (x, y) in enumerate(points):
+            print('val', x,y)
             model.setItem(val, 0, QStandardItem(f"{x:.3f}"))
             model.setItem(val, 1, QStandardItem(f"{y:.3f}"))
         main_table.setUpdatesEnabled(True)
         main_table.show()
+
+        self._program_changes = False
+    # def write_coordinates(self, points, i):
+    #     print(i)
+    #     main_table = getattr(self.ui, f"table_coords_{i}")
+    #     model = getattr(self, f"plat_table_model_coords_{i}")
+    #
+    #     # Tell the view a reset is starting
+    #     model.beginResetModel()
+    #
+    #     # Clear existing data
+    #     model.setRowCount(0)
+    #     model.setColumnCount(2)
+    #     model.setHorizontalHeaderLabels(['X', 'Y'])
+    #
+    #     # Add data
+    #     for val, (x, y) in enumerate(points):
+    #         row_items = [QStandardItem(f"{x:.3f}"), QStandardItem(f"{y:.3f}")]
+    #         model.appendRow(row_items)
+    #
+    #     # Signal the view that reset is complete
+    #     model.endResetModel()
+    #
+    #     # Configure view
+    #     main_table.verticalHeader().setVisible(False)
+    #     main_table.setShowGrid(True)
+    #     main_table.resizeColumnsToContents()
+    #     main_table.viewport().update()
+    #
+    #     # Force the view to appear
+    #     main_table.update()
+    #     main_table.repaint()
+
 
     def write_all_data(self):
         def write_tsr():
@@ -441,7 +641,6 @@ class PlatCoordEditor:
             tsr_info.setHorizontalHeaderLabels(['Value'])  # adjust header text as needed
             for row2, val in enumerate(data):
                 tsr_info.setItem(row2, 0, QTableWidgetItem(str(val)))
-
         def convert_utm_to_latlon():
             utm_poly = row['geometry']
             transformer = Transformer.from_crs("EPSG:32612", "EPSG:4326", always_xy=True)

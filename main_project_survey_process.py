@@ -1,7 +1,7 @@
 import pandas as pd
 from main_project_dx_survey import SurveyProcess
 import main_project_detect_kop
-
+from PyQt5.QtWidgets import QHeaderView, QAbstractItemView
 
 class SurveyProcessBase:
     def __init__(self, api, lateral, db_process, survey_dx, well_elevation, north_ref):

@@ -680,14 +680,13 @@ class EToolsWell:
         # ——————— Full load ———————
 
     def load_surveys(self):
+        ma.printFunctionName()
         """First‐time load: do everything from scratch."""
         self._run_survey_logic()
-
         # Get initial plats & locs
         plats, locs = self.retrieve_location_data(self.surveys_dict)
         self.plat_df = plats
         self.loc_df = locs
-
         # Build the editor UI from the *initial* plat set
         self.plat_editor = PlatCoordEditor(self.plat_df, self.ui)
 
@@ -696,17 +695,26 @@ class EToolsWell:
         # ——————— Re-run Surveys ———————
 
     def rerun_surveys(self):
+        ma.printFunctionName()
+
         """User changed survey inputs: find *new* plats then merge and re‐clearance."""
         # 1) Recompute surveys
         self._run_survey_logic()
 
         # 2) Pull whatever plats & locs come from the *new* survey set
         new_plats, new_locs = self.retrieve_location_data(self.surveys_dict)
-
+        print(new_plats)
+        print(self.plat_df)
         # 3) MERGE these into your existing DataFrames
-        self.plat_df = pd.concat([self.plat_df, new_plats]).drop_duplicates().reset_index(drop=True)
-        self.loc_df = pd.concat([self.loc_df, new_locs]).drop_duplicates().reset_index(drop=True)
+        # after concatenating…
+        df = pd.concat([self.plat_df, new_plats])
+        first_col = df.columns[0]
+        df = df.drop_duplicates(subset=[first_col], keep='first')
+        self.plat_df = df.reset_index(drop=True)
 
+
+        # self.plat_df = pd.concat([self.plat_df, new_plats]).drop_duplicates().reset_index(drop=True)
+        self.loc_df = pd.concat([self.loc_df, new_locs]).drop_duplicates().reset_index(drop=True)
         # 4) ***Rebuild the UI editor*** so the newly discovered plats show up for editing
         self.plat_editor = PlatCoordEditor(self.plat_df, self.ui)
 
@@ -753,61 +761,11 @@ class EToolsWell:
             self.surveys_dict,
             self.plat_df
         )
-    #
-    # def load_surveys(self):
-    #     """Full initial pipeline."""
-    #     # 1) coerce dtypes & run survey logic
-    #     self._run_survey_logic()
-    #
-    #     # 2) pull location & initialize plat editor
-    #     plats, locs = self.retrieve_location_data(self.surveys_dict)
-    #     self.loc_df = locs
-    #     if not self.plat_df_original.empty:
-    #         self.plat_df = pd.concat([self.plat_df, plats]).drop_duplicates()
-    #
-    #     self.plat_df_original = plats
-    #     self.plat_editor = PlatCoordEditor(plats, self.ui)
-    #
-    #     # 3) initial clearance
-    #     self._run_clearance()
-    #
-    # def rerun_surveys_only(self):
-    #     """User changed survey input—recompute surveys & clearance."""
-    #     self._run_survey_logic()
-    #
-    #     # (plat_df stays as-is, editor untouched)
-    #     self._run_clearance()
-    #
-    # def rerun_plats_only(self):
-    #     """User edited plat tables—rebuild plat_df & recompute clearance."""
-    #     # pull edited data out of the editor
-    #     updated_plats = self.plat_editor.get_updated_plats()
-    #     # replace the working DataFrame
-    #     self.plat_df = updated_plats
-    #     self._run_clearance()
-    #
-    # # ---- helpers ----
-    #
-    # def _run_survey_logic(self):
-    #     # the code you had at top of etools_process:
-    #     df = self.survey_dx
-    #     df['measured_depth'] = df['measured_depth'].astype(float)
-    #     df['inclination'] = df['inclination'].astype(float)
-    #     df['azimuth'] = df['azimuth'].astype(float)
-    #     df['SurfaceLatitude'] = df['SurfaceLatitude'].astype(float)
-    #     df['SurfaceLongitude'] = df['SurfaceLongitude'].astype(float)
-    #
-    #     self.surveys_dict, self.spec_surveys_dict, self.survey_parameters = \
-    #         self.retrieve_survey_data(df, self.well_elevation, self.north_ref)
-    #
-    # def _run_clearance(self):
-    #     # always call this with the latest survey+plat data
-    #     self.cl_dx_dict = self.retrieve_clearance_data(
-    #         self.surveys_dict,
-    #         self.plat_df
-    #     )
+
 
     def etools_process(self, *, preserve_plat=False, new_plat=False):
+        ma.printFunctionName()
+
         # 1) coerce column types, retrieve surveys always
         self.survey_dx['measured_depth'] = self.survey_dx['measured_depth'].astype(float)
         self.survey_dx['inclination'] = self.survey_dx['inclination'].astype(float)
@@ -839,35 +797,27 @@ class EToolsWell:
         # 4) clearance always recalculated from the latest plat_df
         self.cl_dx_dict = self.retrieve_clearance_data(self.surveys_dict, self.plat_df)
 
-    def etools_process2(self, preserve_plat=False, new_plat=False):
-        self.survey_dx['measured_depth'] = self.survey_dx['measured_depth'].astype(float)
-        self.survey_dx['inclination'] = self.survey_dx['inclination'].astype(float)
-        self.survey_dx['azimuth'] = self.survey_dx['azimuth'].astype(float)
-        self.survey_dx['SurfaceLatitude'] = self.survey_dx['SurfaceLatitude'].astype(float)
-        self.survey_dx['SurfaceLongitude'] = self.survey_dx['SurfaceLongitude'].astype(float)
-
-        self.surveys_dict, self.spec_surveys_dict, self.survey_parameters = self.retrieve_survey_data(self.survey_dx,
-                                                                                                      self.well_elevation,
-                                                                                                      self.north_ref)
-        if not preserve_plat:
-            plat_df_original, loc_df_new = self.retrieve_location_data(self.surveys_dict)
-            if not new_plat:
-                self.plat_editor = PlatCoordEditor(plat_df_original, self.ui)
-            self.plat_df = pd.concat([self.plat_df, self.plat_editor.section_df]).drop_duplicates()
-            self.loc_df = pd.concat([self.loc_df, loc_df_new]).drop_duplicates()
-        self.cl_dx_dict = self.retrieve_clearance_data(self.surveys_dict, self.plat_df)
-
-    # def etools_process_with_new_coords(self):
-    #     self.plat_editor.retrieve_all_data()
-    #     plat_df_original, loc_df_new = self.retrieve_location_data(self.surveys_dict)
-    #     self.plat_df = pd.concat([self.plat_df, self.plat_editor.section_df]).drop_duplicates()
-    #     self.loc_df = pd.concat([self.loc_df, loc_df_new]).drop_duplicates()
-    #     self.cl_dx_dict = self.retrieve_clearance_data(self.surveys_dict, self.plat_df)
+    # def etools_process2(self, preserve_plat=False, new_plat=False):
+    #     self.survey_dx['measured_depth'] = self.survey_dx['measured_depth'].astype(float)
+    #     self.survey_dx['inclination'] = self.survey_dx['inclination'].astype(float)
+    #     self.survey_dx['azimuth'] = self.survey_dx['azimuth'].astype(float)
+    #     self.survey_dx['SurfaceLatitude'] = self.survey_dx['SurfaceLatitude'].astype(float)
+    #     self.survey_dx['SurfaceLongitude'] = self.survey_dx['SurfaceLongitude'].astype(float)
     #
+    #     self.surveys_dict, self.spec_surveys_dict, self.survey_parameters = self.retrieve_survey_data(self.survey_dx,
+    #                                                                                                   self.well_elevation,
+    #                                                                                                   self.north_ref)
+    #     if not preserve_plat:
+    #         plat_df_original, loc_df_new = self.retrieve_location_data(self.surveys_dict)
+    #         if not new_plat:
+    #             self.plat_editor = PlatCoordEditor(plat_df_original, self.ui)
+    #         self.plat_df = pd.concat([self.plat_df, self.plat_editor.section_df]).drop_duplicates()
+    #         self.loc_df = pd.concat([self.loc_df, loc_df_new]).drop_duplicates()
+    #     self.cl_dx_dict = self.retrieve_clearance_data(self.surveys_dict, self.plat_df)
+
 
     def reprocess_with_current_plat(self):
         self.rerun_surveys()
-        # self.etools_process(preserve_plat=True)
 
     def retrieve_survey_data(self, survey_dx, well_elevation, north_ref):
         surveys_dict = SurveyProcessBase(self.api, self.lateral, self.db, survey_dx, well_elevation, north_ref)
