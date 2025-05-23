@@ -56,7 +56,6 @@ class PlatCoordEditor:
         # self.ui.insert_pts_lst.setEditTriggers(QAbstractItemView.AllEditTriggers)
 
         for i in range(8):
-            print(i)
             setattr(self, f"plat_table_model_coords_{i + 1}", QStandardItemModel())
             model = getattr(self, f"plat_table_model_coords_{i + 1}")
             ui_element = getattr(self.ui, f"table_coords_{i + 1}")
@@ -122,7 +121,6 @@ class PlatCoordEditor:
         for grp in self.button_groups.values():
             # this signature delivers the button itself
             grp.buttonClicked[QObject].connect(self.toggle_radio_button)
-        print("_______________________________writing____________________________________")
         self.write_all_data()
         self.retrieve_all_data()
         self._program_changes = False
@@ -140,7 +138,6 @@ class PlatCoordEditor:
     # def handle_key_press(self, event, table_index):
     #     """Handle key press events for the tables"""
     #     table = getattr(self.ui, f"table_coords_{table_index}")
-    #     print('kess pressed, foo')
     #     # Handle original event first
     #     QTableView.keyPressEvent(table, event)
     #
@@ -186,12 +183,9 @@ class PlatCoordEditor:
             else:
                 print("keep row")
                 print(row_data)
-            # else:
-            #     print(row)
-            # print(row_data)
+
             # selected_data.append(row_data)
 
-        # print(selected_data)
         # Remove rows
         # for row in selected_rows:
         #     model.removeRow(row)
@@ -206,7 +200,6 @@ class PlatCoordEditor:
         #     return  # Skip during initialization
         if self._program_changes:
             return  # Skip if changes are programmatic
-        print('table index')
 
         self.delete_selected_rows(table_index)
         self.update_from_model_change(table_index)
@@ -242,24 +235,13 @@ class PlatCoordEditor:
                     row_data.append(item.data(Qt.DisplayRole))
             selected_data.append(row_data)
 
-        # for row in range(model.rowCount()):
-        #     try:
-        #         x = float(model.data(model.index(row, 0)))
-        #         y = float(model.data(model.index(row, 1)))
-        #         points.append([x, y])
-        #         # print('out', x, y)
-        #     except (ValueError, TypeError):
-        #         print('del', x,y)
-        #         continue
 
         # Check if we have enough points for a valid polygon
 
         if len(selected_data) >= 3:
-            print(selected_data)
             # Create polygon and update display
             # poly = Polygon(points)
             poly = convert_to_shapely_polygon(points)
-            print(poly)
             # Update the polygon in dict_plats
             x, y = poly.exterior.xy
             self.dict_plats[table_index].set_data(x, y)
@@ -302,8 +284,6 @@ class PlatCoordEditor:
         # # if conc_code in all_conc_codes:
         # #     pass
         # #
-        # print(all_conc_codes)
-        # print(self.section_df)
 
         #
         # model.removeRows(0, model.rowCount())
@@ -574,7 +554,6 @@ class PlatCoordEditor:
         canvas_used.draw()
 
     def write_coordinates(self, points, i):
-        # print(i)
         self._program_changes = True
         main_table = getattr(self.ui, f"table_coords_{i}")
         model = getattr(self, f"plat_table_model_coords_{i}")
@@ -585,7 +564,6 @@ class PlatCoordEditor:
         main_table.setShowGrid(True)
         model.setHorizontalHeaderLabels(['X', 'Y'])
         for val, (x, y) in enumerate(points):
-            print('val', x,y)
             model.setItem(val, 0, QStandardItem(f"{x:.3f}"))
             model.setItem(val, 1, QStandardItem(f"{y:.3f}"))
         main_table.setUpdatesEnabled(True)
@@ -593,7 +571,6 @@ class PlatCoordEditor:
 
         self._program_changes = False
     # def write_coordinates(self, points, i):
-    #     print(i)
     #     main_table = getattr(self.ui, f"table_coords_{i}")
     #     model = getattr(self, f"plat_table_model_coords_{i}")
     #

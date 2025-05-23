@@ -275,7 +275,7 @@ class ETools(QMainWindow):
         # 4301354306
         # 4301950099
         #4304756908
-        self.ui.well_api_val.setText('4304757654')
+        self.ui.well_api_val.setText('4304757704')
         self.button_group = QButtonGroup(self.ui.survey_type_widget)
         self.button_group.setExclusive(True)
         self.ui.well_api_val.returnPressed.connect(self.run_api_when_entered)
@@ -584,7 +584,6 @@ class ETools(QMainWindow):
             output = self.db.query_to_dataframe(query)
 
             return output.drop_duplicates(keep="first")
-
         section, ts, ts_dir, rng, rng_dir, baseline = self.ui.searcher_section.text(), self.ui.searcher_township.text(), self.ui.searcher_township_dir.text(), self.ui.searcher_range.text(), self.ui.searcher_range_dir.text(), self.ui.searcher_baseline.text()
 
         township_rng_section = f"""{section} {ts}{ts_dir} {rng}{rng_dir} {baseline}"""
@@ -680,7 +679,6 @@ class EToolsWell:
         # ——————— Full load ———————
 
     def load_surveys(self):
-        ma.printFunctionName()
         """First‐time load: do everything from scratch."""
         self._run_survey_logic()
         # Get initial plats & locs
@@ -695,7 +693,6 @@ class EToolsWell:
         # ——————— Re-run Surveys ———————
 
     def rerun_surveys(self):
-        ma.printFunctionName()
 
         """User changed survey inputs: find *new* plats then merge and re‐clearance."""
         # 1) Recompute surveys
@@ -703,8 +700,6 @@ class EToolsWell:
 
         # 2) Pull whatever plats & locs come from the *new* survey set
         new_plats, new_locs = self.retrieve_location_data(self.surveys_dict)
-        print(new_plats)
-        print(self.plat_df)
         # 3) MERGE these into your existing DataFrames
         # after concatenating…
         df = pd.concat([self.plat_df, new_plats])
@@ -764,8 +759,6 @@ class EToolsWell:
 
 
     def etools_process(self, *, preserve_plat=False, new_plat=False):
-        ma.printFunctionName()
-
         # 1) coerce column types, retrieve surveys always
         self.survey_dx['measured_depth'] = self.survey_dx['measured_depth'].astype(float)
         self.survey_dx['inclination'] = self.survey_dx['inclination'].astype(float)
