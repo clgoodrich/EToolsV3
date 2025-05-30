@@ -275,7 +275,7 @@ class ETools(QMainWindow):
         # 4301354306
         # 4301950099
         #4304756908
-        self.ui.well_api_val.setText('4304757704')
+        self.ui.well_api_val.setText('4301354573')
         self.button_group = QButtonGroup(self.ui.survey_type_widget)
         self.button_group.setExclusive(True)
         self.ui.well_api_val.returnPressed.connect(self.run_api_when_entered)
@@ -863,6 +863,8 @@ class PointChecker:
         self.ui.a_check_pt_n.editingFinished.connect(self.collect_data)
         self.ui.b_check_pt_e.editingFinished.connect(self.collect_data)
         self.ui.b_check_pt_n.editingFinished.connect(self.collect_data)
+        self.ui.check_pt_e.editingFinished.connect(self.collect_data)
+        self.ui.check_pt_n.editingFinished.connect(self.collect_data)
 
         self.figure_check, self.ax_check = plt.subplots()
         self.canvas_check = self.figure_check.canvas
@@ -907,7 +909,6 @@ class PointChecker:
 
         output_a = utm.from_latlon(lat_dec_a, lon_dec_a)[:2]
         output_b = utm.from_latlon(lat_dec_b, lon_dec_b)[:2]
-
         return output_a, output_b
 
     def gather_pts(self):
@@ -915,7 +916,9 @@ class PointChecker:
             self.ui.a_check_pt_e.text(),
             self.ui.a_check_pt_n.text(),
             self.ui.b_check_pt_e.text(),
-            self.ui.b_check_pt_n.text()
+            self.ui.b_check_pt_n.text(),
+            self.ui.check_pt_e.text(),
+            self.ui.check_pt_n.text()
         ]
 
         # If any field is empty, use gather_deg_pts()
@@ -931,9 +934,12 @@ class PointChecker:
             n_dec_1 = float(self.ui.a_check_pt_n.text())
             e_dec_2 = float(self.ui.b_check_pt_e.text())
             n_dec_2 = float(self.ui.b_check_pt_n.text())
+            e_dec_pt = float(self.ui.check_pt_e.text())
+            n_dec_pt = float(self.ui.check_pt_n.text())
             output_a = self.check_if_utm_or_latlon(e_dec_1, n_dec_1)
             output_b = self.check_if_utm_or_latlon(e_dec_2, n_dec_2)
-            return output_a, output_b
+            output_pt = self.check_if_utm_or_latlon(e_dec_pt, n_dec_pt)
+            return output_a, output_b, output_pt
         except ValueError:
             # Handle unexpected conversion errors if needed
             try:
@@ -958,13 +964,13 @@ class PointChecker:
             return 'invalid'
 
     def collect_data(self):
+        global pt_a, pt_b, pt_used
         try:
-            pt_a, pt_b = self.gather_pts()
+            pt_a, pt_b, pt_used = self.gather_pts()
         except TypeError:
             pass
         try:
-
-            pt_used = (float(self.ui.check_pt_e.text()), float(self.ui.check_pt_n.text()))
+            # pt_used = (float(self.ui.check_pt_e.text()), float(self.ui.check_pt_n.text()))
             line = LineString([pt_a, pt_b])
             point = Point(pt_used)
 

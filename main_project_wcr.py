@@ -183,14 +183,40 @@ class WCR_Main:
         sheet = wb.active
         sheet.column_dimensions['A'].width = 30
         sheet.column_dimensions['B'].width = 15
+        list_dates = ['SpudRigDate', 'RotaryRigDate', 'TDReachedDate', 'CompletedOrAbandonedDate']
+        wcr_info[list_dates] = (
+            wcr_info[list_dates]
+            .apply(pd.to_datetime, errors='coerce')
+            .fillna(pd.Timestamp('1900-01-01'))
+        )
+
+        # 2) NOW you can safely grab the first element as a Timestamp
+        first_spud: pd.Timestamp = wcr_info['SpudRigDate'].iloc[0]
+        spud_str = first_spud.strftime('%Y-%m-%d')
+
+        # 3) only at the very end, convert the entire block to strings
+        wcr_info[list_dates] = wcr_info[list_dates].apply(lambda s: s.dt.strftime('%Y-%m-%d'))
+        # wcr_info[list_dates] = wcr_info[list_dates].apply(
+        #     pd.to_datetime,
+        #     errors='coerce'
+        # )
+        #
+        # # 2) fill any NaT with your default date
+        # wcr_info[list_dates] = wcr_info[list_dates].fillna(pd.Timestamp('1900-01-01'))
+        #
+        # # 3) format back out to YYYY-MM-DD strings if you need strings
+        # wcr_info[list_dates] = wcr_info[list_dates] \
+        #     .apply(lambda ser: ser.dt.strftime('%Y-%m-%d'))
+        # # wcr_info[list_dates] = wcr_info[list_dates].dt.strftime('%Y-%m-%d')
+        print(wcr_info)
         info_vals = [wcr_info['WellNameNumber'].iloc[0],
                      wcr_info['APINumber'].iloc[0],
                      wcr_info['OperatorName'].iloc[0],
                      wcr_info['ConstructKey'].iloc[0],
                      wcr_info['WellType'].iloc[0],
-                     wcr_info['SpudRigDate'].iloc[0].strftime('%Y-%m-%d'),
-                     wcr_info['RotaryRigDate'].iloc[0].strftime('%Y-%m-%d'),
-                     wcr_info['TDReachedDate'].iloc[0].strftime('%Y-%m-%d'),
+                     wcr_info['SpudRigDate'].iloc[0],
+                     wcr_info['RotaryRigDate'].iloc[0],
+                     wcr_info['TDReachedDate'].iloc[0],
                      wcr_info['CompletedOrAbandonedDate'].iloc[0].strftime('%Y-%m-%d')]
         for i in range(len(labels)):
             sheet["A" + label_cells[i]] = labels[i]

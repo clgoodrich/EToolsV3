@@ -592,6 +592,8 @@ class DataDrawer:
 
     def convert_lat_lon_pts_to_utm(self, data):
         try:
+            data[1] = abs(data[1]) * -1
+            print('data', data)
             utm_pts = utm.from_latlon(data[0], data[1])[:2]
         except utm.error.OutOfRangeError:
             utm_pts = data
