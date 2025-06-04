@@ -7,17 +7,17 @@ import os
 
 
 class TownShipAndRangeProcess:
-    def __init__(self, api, lateral, db_process, survey_dict):
+    def __init__(self, api, lateral, db_process, survey_dict, location_db):
         def setup_db():
             path_used_db = r'C:\Work\Databases'
             apd_data_dir = os.path.join(path_used_db, 'location_data.db')
             return sqlite3.connect(apd_data_dir)
 
-        location_db = setup_db()
+        # location_db = setup_db()
         loc_df, shl, bhl = self.retrieve_sql_location_data(api, lateral, db_process)
 
         plat_df = self.find_plats_data2(data=survey_dict, conn_db=location_db)
-        grouped_df = self.find_relative_data(conn_db=location_db, plat_df=plat_df)
+        # grouped_df = self.find_relative_data(conn_db=location_db, plat_df=plat_df)
         self.plat_df = plat_df
         self.loc_df = loc_df
 
