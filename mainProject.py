@@ -42,7 +42,7 @@ from main_project_import_surveys import SurveyImporter
 from main_project_plat_coord_editor import PlatCoordEditor
 from main_project_plat_editor_process import PlatEditorProcess
 from shapely.geometry import Point, LineString, MultiPoint, Polygon
-
+from main_project_plat_editor_process import convert_to_pts
 
 # self.colors = ["#000000", "#004949", "#009292", "#ff6db6", "#ffb6db",
 #                "#490092", "#006ddb", "#b66dff", "#6db6ff", "#b6dbff",
@@ -123,7 +123,7 @@ class SQLConnector:
     def _create_connection_string(self):
         """Create connection string with caching."""
         credentials = self._get_credentials()
-        credentials = {}
+        # credentials = {}
         if credentials:
             # Production connection
             params = {
@@ -249,6 +249,7 @@ def calculate_convergence_angle(latitude, longitude):
 
 # noinspection PyTestUnpassedFixture
 def setup_db():
+    path_used_db = r'C:\Work\Databases'
     path_used_db = r'C:\Work\Databases'
     apd_data_dir = os.path.join(path_used_db, 'Board_DB_Plss_Sections.db')
     return sqlite3.connect(apd_data_dir)
@@ -421,8 +422,10 @@ class ETools(QMainWindow):
         self.api_val = api_val
         self.lateral = lateral_name
         print('api', api_val, lateral_name)
-        print(self.files_db)
         self.retrieve_well_parameters()
+        # ma.search_db(r"C:\Users\coltongoodrich\Documents\GitHub\RewriteAPD2\APD_Data.db")
+        # ma.search_db(r'C:\Work\Databases\Board_DB_Plss_Sections.db')
+
         survey_dx, well_elevation, north_ref = self.sql_query_survey(self.db, self.api_val, self.lateral)
         self.well = EToolsWell(db=self.db, api=self.api_val, apd_num=self.apd_num, well_name=self.well_name,
                                lateral=self.lateral, survey_dx=survey_dx, well_elevation=well_elevation,
@@ -663,21 +666,90 @@ class EToolsWell:
         # self.etools_process()
 
     def recreate_survey_objects(self):
+        def decimal_converter(side, deg, minutes, sec, dir_val):
+            """
+            Simplified version with clearer logic (mathematically equivalent to above).
+            """
+            dec_val_base = deg + minutes / 60 + sec / 3600
+            side_lower = side.lower()
+
+            # Base orientations for each side
+            if 'west' in side_lower:
+                base_azimuth = 90
+            elif 'east' in side_lower:
+                base_azimuth = 270
+            elif 'north' in side_lower:
+                if dir_val in [3, 2]:  # SW, NE
+                    base_azimuth = 90
+                else:  # SE, NW
+                    base_azimuth = 270
+            elif 'south' in side_lower:
+                if dir_val in [4, 1]:  # NW, SE
+                    base_azimuth = 90
+                else:  # NE, SW
+                    base_azimuth = 270
+            else:
+                return dec_val_base
+
+            # Determine if we add or subtract the bearing
+            if ((side_lower.startswith('west') and dir_val in [4, 1]) or
+                    (side_lower.startswith('east') and dir_val in [4, 1]) or
+                    (side_lower.startswith('north') and dir_val not in [3, 2]) or
+                    (side_lower.startswith('south') and dir_val in [4, 1])):
+                return base_azimuth + dec_val_base
+            else:
+                return base_azimuth - dec_val_base
+
+        def convert_conc(sec, ts, ts_dir, rng, rng_dir, baseline):
+            translations = {
+                'rng': {'2': 'W', '1': 'E'},
+                'township': {'2': 'S', '1': 'N'},
+                'baseline': {'2': 'U', '1': 'S'},
+                'alignment': {'1': 'SE', '2': 'NE', '3': 'SW', '4': 'NW'}
+            }
+            section = str(int(float(sec))).zfill(2)
+            township = str(int(float(ts))).zfill(2)
+            rng = str(int(float(rng))).zfill(2)
+
+            # Handle direction codes (which might also be floats)
+            ts_dir = str(ts_dir)
+            rng_dir = str(rng_dir)
+            baseline = str(baseline)
+
+            # Translate direction codes
+            ts_dir = translations.get('township', {}).get(ts_dir, ts_dir).upper()
+            rng_dir = translations.get('rng', {}).get(rng_dir, rng_dir).upper()
+            baseline = translations.get('baseline', {}).get(baseline, baseline).upper()
+
+            return "".join([section, township, ts_dir, rng, rng_dir, baseline])
+        def find_relevant_datasets():
+            first_plat = self.loc_df[self.loc_df['zone_name'].str.contains('Surface')]
+            first_plat['conc'] = first_plat.apply(
+                lambda row: convert_conc(row['section'], row['township'], row['township_dir'],
+                                         row['rng'],
+                                         row['rng_dir'], row['baseline']), axis=1)
+            query = f"select * from section_plat_data where new_code = '{first_plat['conc'].iloc[0]}'"
+            output = pd.read_sql(query, self.files_db).drop_duplicates(keep="first")
+            output = output.astype({"Length": float, "Degrees": float, "Minutes": float, "Seconds": float})
+            output = output.astype({"Minutes": int, "Seconds": int})
+            grouped = output.groupby(['new_code', 'Version'])
+            return grouped
+
         citing_types = self.survey_dx['CitingType'].unique()
         shl_latlon = list(self.survey_dx.head(1)[['SurfaceLatitude', 'SurfaceLongitude']].iloc[0])
         ref_lst = ['_true_dx', '_grid_dx']
-
         type_map = {'planned': 'pln_df',
                     'asdrilled': 'drl_df'}
-
+        first_plat_rel = find_relevant_datasets()
+        _, first_plat_rel_out = next(iter(first_plat_rel))
+        first_plat_coords = convert_to_pts(first_plat_rel_out)
         for citing in citing_types:
             key = type_map.get(citing.lower())
             if key:
                 for ref in ref_lst:
                     attr_name = f"plat_editor_process_{key}{ref}"
                     used_data = self.cl_dx_dict[f"{key}{ref}"].clearance_data
-                    # print(used_data)
-                    setattr(self, attr_name, PlatEditorProcess(conn=self.files_db, plat_df=self.plat_df, shl=shl_latlon, well_df=used_data))
+                    setattr(self, attr_name, PlatEditorProcess(conn=self.files_db, plat_df=first_plat_rel,plat_coords =first_plat_coords,  shl=shl_latlon, well_df=used_data))
 
         # citing_types = self.survey_dx['CitingType'].unique() #asdrilled or planned
         # shl_latlon = list(self.survey_dx.head(1)[['SurfaceLatitude', 'SurfaceLongitude']].iloc[0])

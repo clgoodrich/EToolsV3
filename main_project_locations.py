@@ -21,6 +21,7 @@ class TownShipAndRangeProcess:
         self.plat_df = plat_df
         self.loc_df = loc_df
 
+
     def find_relative_data(self, conn_db, plat_df):
         used_concs = tuple(plat_df['Conc'].unique().tolist())
         query = f"select * from section_relative"

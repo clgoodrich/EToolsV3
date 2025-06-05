@@ -94,6 +94,17 @@ from io import StringIO
 import pandas as pd
 from functools import wraps
 
+def search_db(path):
+    conn = sqlite3.connect(path)
+    cur = conn.cursor()
+
+    # query the sqlite_master table for all tables
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table';")
+    tables = [row[0] for row in cur.fetchall()]
+
+    conn.close()
+
+    print(tables)
 def timeit(func):
     """
     Decorator: prints elapsed time each time the function is called.
@@ -1449,7 +1460,6 @@ def testRecovert(data_converted):
 
 def convertToDecimal(data):
     data_converted = []
-
     for i in range(len(data)):
         if len(data[i]) == 8:
             data[i] = data[i][:-2]
@@ -1459,7 +1469,6 @@ def convertToDecimal(data):
         side, deg, min, sec, dir_val = float(data[i][1]), float(data[i][2]), float(data[i][3]), float(
             data[i][4]), float(data[i][5])
         dec_val_base = (deg + min / 60 + sec / 3600)
-
         if 'west' in data[i][0].lower():
             if dir_val in [4, 1]:
                 decVal = 90 + dec_val_base
@@ -1493,12 +1502,10 @@ def dataConverterPlatToUtm(data):
 
 def convertToDecimal2(data):
     data_converted = []
-
     for item in data:
         if len(item) > 6:
             item = item[6:12]
             item[1] = float(item[1])
-
         side, deg, min, sec, dir_val = map(float, item[1:6])
         dec_val_base = deg + min / 60 + sec / 3600
 
