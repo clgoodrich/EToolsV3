@@ -56,19 +56,28 @@ def convert_to_pts(plat):
     xy_lst = []
     x, y = 0, 0
     custom_order = [3, 2, 1, 0, 8, 9, 10, 11, 4, 5, 6, 7, 15, 14, 13, 12]
+    dir_order = ['west', 'north', 'east', 'south']
     # # Method 1: Using reindex
-    df_reordered = plat.reindex(custom_order)
+    df_reordered = plat.reindex(custom_order).reset_index()
+    # print(df_reordered)
     for val, row in df_reordered.iterrows():
-        xy_lst.append([x, y])
+        test = math.floor(val / 4)
+
+        # print(val, dir_order[test])
+        xy_lst.append([x, y, dir_order[test]])
         x, y = new_point_finder(row['Length'], row['decimal_azimuth'], x, y)
-    xy_lst.append([x, y])
+    xy_lst.append([x, y, dir_order[test]])
     return tuple(xy_lst)
+
+
 def find_adjacent_sections(conn, conc_code):
     query = f"select * from Adjacent"
     output = pd.read_sql(query, conn).drop_duplicates(keep="first")
-    return output[output['Conc2']==conc_code]['adjacent_Conc_Name_2'].unique()
+    return output[output['Conc2'] == conc_code]['adjacent_Conc_Name_2'].values.tolist()
 
-def get_plat_adjacency_dict(val, conc_val):
+
+def get_plat_adjacency_dict(conc_val, direction):
+    conc_loc = int(float(conc_val[:2]))
     adjacency_dict = {
         0: [0, 0, 0, 0, 0, 0, 0, 0],
         1: [36, 31, 6, 7, 12, 11, 2, 35],
@@ -108,11 +117,207 @@ def get_plat_adjacency_dict(val, conc_val):
         35: [26, 25, 36, 1, 2, 3, 34, 27],
         36: [25, 30, 31, 6, 1, 2, 35, 26]
     }
+    used = adjacency_dict[conc_loc]
+    return used[direction]
+    # print(used direction)
     dirLst = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
-    return adjacency_dict[val]
+    # return adjacency_dict[val]
 
-def fix_adj_sections():
-    get_plat_adjacency_dict(val, conc_val)
+
+def calculate_angle(point1, point2):
+    angle = math.atan2(point2.y - point1.y, point2.x - point1.x)
+    print(round(angle % (math.pi*2),2), round(math.degrees(angle) % 360,2))
+    return math.degrees(angle)
+
+
+def fix_adj_sections(conn, adj_sections, init_plat):
+    # print(adj_sections, init_plat )
+    used_concs = adj_sections + [init_plat[0]]
+    # print(used_concs)
+    df = pd.DataFrame(columns=['conc', 'geometry'])
+    query = f"SELECT * FROM BaseData"
+    output = pd.read_sql(query, conn)
+    used_data = output[output['Conc'].isin(used_concs)]
+    init = used_data[used_data['Conc'] == init_plat[0]]
+    init_ref_plat = Polygon(init[['Easting', 'Northing']].values.tolist())
+    grouped = used_data.groupby(['Conc'])
+    # print(init_ref_plat)
+    for i, row in grouped:
+        geo_vals = Polygon(row[['Easting', 'Northing']].values.tolist())
+        angle = calculate_angle(init_ref_plat.centroid, geo_vals.centroid)
+
+        # shared_len, direction = classify_with_buffer(init_ref_plat, geo_vals, epsilon=1e-4)
+        # print(shared_len, direction)
+    # get_plat_adjacency_dict(val, conc_val)
+
+def classify_with_buffer(ref_poly, neigh_poly, epsilon=1e-6):
+    """
+    - ref_poly: Shapely Polygon (the reference section)
+    - neigh_poly: Shapely Polygon (a candidate neighbor)
+    - epsilon: buffer distance around ref_poly.boundary
+
+    Returns:
+      (shared_len, direction) where
+        shared_len = length of (ref.boundary ∩ neigh.boundary)
+                   OR, if that is zero, length of (ref.boundary.buffer(eps) ∩ neigh.boundary)
+        direction  = one of "N","S","E","W","NE","NW","SE","SW", or None if no adjacency even within epsilon.
+    """
+    # 1) Check exact shared boundary first:
+    exact_shared = ref_poly.boundary.intersection(neigh_poly.boundary)
+    if not exact_shared.is_empty and exact_shared.length > 0:
+        # Collect all coordinates from one or more LineStrings:
+        if exact_shared.geom_type == "MultiLineString":
+            coords = []
+            for seg in exact_shared.geoms:  # use .geoms instead of iterating directly
+                coords.extend(seg.coords)
+            x0, y0 = coords[0]
+            x1, y1 = coords[-1]
+        else:  # single LineString
+            x0, y0 = exact_shared.coords[0]
+            x1, y1 = exact_shared.coords[-1]
+
+        # Decide if edge is horizontal (→ N/S) or vertical (→ E/W):
+        if abs(y1 - y0) < abs(x1 - x0):
+            direction = "N" if (exact_shared.centroid.y > ref_poly.centroid.y) else "S"
+        else:
+            direction = "E" if (exact_shared.centroid.x > ref_poly.centroid.x) else "W"
+
+        return exact_shared.length, direction
+
+    # 2) Buffer the ref boundary by epsilon and check “proximal” touch:
+    buf = ref_poly.boundary.buffer(epsilon)
+    prox_shared = buf.intersection(neigh_poly.boundary)
+    if prox_shared.is_empty or prox_shared.length == 0:
+        return 0.0, None
+
+    # 3) Classify direction via centroids for near‐touchers:
+    rcx, rcy = ref_poly.centroid.x, ref_poly.centroid.y
+    ncx, ncy = neigh_poly.centroid.x, neigh_poly.centroid.y
+    dx, dy = ncx - rcx, ncy - rcy
+    tol = epsilon * 10
+    is_vert = abs(dx) < tol
+    is_horiz = abs(dy) < tol
+
+    if is_vert and dy > 0:
+        direction = "N"
+    elif is_vert and dy < 0:
+        direction = "S"
+    elif is_horiz and dx > 0:
+        direction = "E"
+    elif is_horiz and dx < 0:
+        direction = "W"
+    else:
+        if dx > 0 and dy > 0:
+            direction = "NE"
+        elif dx < 0 and dy > 0:
+            direction = "NW"
+        elif dx > 0 and dy < 0:
+            direction = "SE"
+        else:
+            direction = "SW"
+
+    return prox_shared.length, direction
+
+
+def find_point_from_footages(polygon_coords, ns_distance, ns_type, ew_distance, ew_type):
+    """
+    Find point within polygon using any combination of boundary distance references.
+
+    Args:
+        polygon_coords: List of [x, y, side] where side is 'north', 'south', 'east', or 'west'
+        ns_distance: North-South distance (feet)
+        ns_type: 'FNL' (From North Line) or 'FSL' (From South Line)
+        ew_distance: East-West distance (feet)
+        ew_type: 'FEL' (From East Line) or 'FWL' (From West Line)
+
+    Returns:
+        [x, y] coordinates of the intersection point
+    """
+    # Separate coordinates by side
+    sides = {}
+    for coord in polygon_coords:
+        x, y, side = coord
+        if side not in sides:
+            sides[side] = []
+        sides[side].append([x, y])
+    sides['west'].append(sides['north'][0])
+    sides['north'].append(sides['east'][0])
+    sides['east'].append(sides['south'][0])
+    sides['south'].append(sides['west'][0])
+
+    # Get the appropriate boundary segments based on ns_type
+    if ns_type == 'FNL':
+        ns_coords = sides.get('north', [])
+        ns_offset_side = 'right'  # South is right when going east
+    else:  # FSL
+        ns_coords = sides.get('south', [])
+        ns_offset_side = 'left'  # North is left when going west
+
+    # Get the appropriate boundary segments based on ew_type
+    if ew_type == 'FEL':
+        ew_coords = sides.get('east', [])
+        ew_offset_side = 'left'  # West is left when going north
+    else:  # FWL
+        ew_coords = sides.get('west', [])
+        ew_offset_side = 'right'  # East is right when going south
+
+    # Create line segments for each boundary
+    ns_segments = []
+    if len(ns_coords) > 1:
+        for i in range(len(ns_coords) - 1):
+            ns_segments.append((tuple(ns_coords[i]), tuple(ns_coords[i + 1])))
+
+    ew_segments = []
+    if len(ew_coords) > 1:
+        for i in range(len(ew_coords) - 1):
+            ew_segments.append((tuple(ew_coords[i]), tuple(ew_coords[i + 1])))
+
+    # Create parallel segments
+    ns_parallel_segments = []
+    for segment in ns_segments:
+        line = LineString(segment)
+        try:
+            parallel = line.parallel_offset(ns_distance, 'right')
+            #
+            # if ns_type == 'FNL':
+            #     parallel = line.parallel_offset(ns_distance, ns_offset_side)
+            # elif ns_type == 'FSL':
+            #     parallel = line.parallel_offset(-ns_distance, ns_offset_side)
+            if hasattr(parallel, 'coords'):
+                ns_parallel_segments.append(tuple(parallel.coords))
+        except:
+            continue
+
+    ew_parallel_segments = []
+    for segment in ew_segments:
+        line = LineString(segment)
+        try:
+            parallel = line.parallel_offset(ew_distance, 'right')
+
+            # if ns_type == 'FEL':
+            #     parallel = line.parallel_offset(-ew_distance, ew_offset_side)
+            # elif ns_type == 'FWL':
+            #     parallel = line.parallel_offset(ew_distance, ew_offset_side)
+
+            # parallel = line.parallel_offset(ew_distance, ew_offset_side)
+            if hasattr(parallel, 'coords'):
+                ew_parallel_segments.append(list(parallel.coords))
+        except:
+            continue
+
+    # Find intersection
+    for ns_seg in ns_parallel_segments:
+        line1 = LineString(ns_seg)
+        for ew_seg in ew_parallel_segments:
+            line2 = LineString(ew_seg)
+            intersection = line1.intersection(line2)
+
+            if hasattr(intersection, 'x') and hasattr(intersection, 'y'):
+                return [intersection.x, intersection.y]
+
+    return None
+
+
 class PlatEditorProcess:
     def __init__(self, conn, plat_df, plat_coords, shl, well_df):
         # self.load_surveys()
@@ -123,10 +328,10 @@ class PlatEditorProcess:
         self.inital_plat_coords = plat_coords
         self.all_plats = [plat_df]
         self.shl = shl
-        # print(self.initial_plat_conc)
         adj_sections = find_adjacent_sections(self.location_db, self.initial_plat_conc[0])
-        print(adj_sections)
-        # self.run_finder_process()
+        fix_adj_sections(self.location_db, adj_sections, self.initial_plat_conc)
+        # print(adj_sections)
+        self.run_finder_process(self.inital_plat_coords, self.well_path, self.initial_plat_conc[0])
         # self.initial_plat = first_group_name, first_group_data = next(iter(grouped))
         # print(self.initial_plat)
 
@@ -189,49 +394,74 @@ class PlatEditorProcess:
         else:
             return base_azimuth - dec_val_base
 
-    def run_finder_process(self):
-        # convert_to_pts(self.initial_plat)
+    def get_starter_pt(self, row, current_plat):
+        if row['FNL'] < row['FSL']:
+            fnsl_val = row['FNL']
+            fnsl = 'FNL'
+        else:
+            fnsl_val = row['FSL']
+            fnsl = 'FSL'
+        if row['FEL'] < row['FWL']:
+            fewl_val = row['FEL']
+            fewl = 'FEL'
+        else:
+            fewl_val = row['FWL']
+            fewl = 'FWL'
+        out = find_point_from_footages(current_plat, fnsl_val, fnsl, fewl_val, fewl)
+        return out
 
-        # pass
-        # print(row)
-        #
-        # print(df_reordered)
-        # print(df_reordered['Side'].unique())
-        for row, val in self.well_path.iterrows():
-            print(row, val)
+    def run_finder_process(self, init_plat, well_path, conc):
+        dirLst = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+        starter_pt = self.get_starter_pt(self.well_path.iloc[0], init_plat)
+        current_plat = Polygon([i[:2] for i in init_plat])
+        xMin, xMax, yMin, yMax = current_plat.bounds
+        used_pt = starter_pt
+        well_path['rel_plat_conc'] = False
+        used_conc = conc
+        for x, row in well_path.iterrows():
+            delta_x, delta_y = row['delta_x'] * 0.3048, row['delta_y'] * 0.3048
+            used_pt = [used_pt[0] + delta_x, used_pt[1] + delta_y]
+            dir_val,index = self.get_direction(used_pt, xMin, xMax, yMin, yMax)
+            index = dirLst.index(dir_val)
+            if not dir_val:
+                return
+            if current_plat.contains(Point(used_pt)):
+                well_path.at[x, 'rel_plat_conc'] = conc
+            else:
+                # adj_sections = find_adjacent_sections(self.location_db, conc)
+                new_plat = get_plat_adjacency_dict(conc, index)
 
-        # init_plat = self.used_data_df.head(1)['Conc'].iloc[0]
-        # initial_plat_rel_measurements = self.grouped_df.get_group((init_plat, 'V.1'))
-        # print(initial_plat_rel_measurements)
-        # for i, j in self.grouped_df:
-        #     print(i)
-        # initial_plat = self.build_initial_coord_list(shl_xy=self.shl, plat_df=initial_plat_rel_measurements)
+    def get_new_plat_data(self):
+        pass
 
-    # def convertToDecimal(self, data):
-    #     side, deg, min, sec, dir_val = float(data[i][1]), float(data[i][2]), float(data[i][3]), float(
-    #         data[i][4]), float(data[i][5])
-    #     dec_val_base = (deg + min / 60 + sec / 3600)
-    #     if 'west' in data[i][0].lower():
-    #         if dir_val in [4, 1]:
-    #             decVal = 90 + dec_val_base
-    #         else:
-    #             decVal = 90 - dec_val_base
-    #     if 'east' in data[i][0].lower():
-    #         if dir_val in [4, 1]:
-    #             decVal = 270 + dec_val_base
-    #         else:
-    #             decVal = 270 - dec_val_base
-    #     if 'north' in data[i][0].lower():
-    #         if dir_val in [3, 2]:
-    #             decVal = 360 - (270 + dec_val_base)
-    #         else:
-    #             decVal = 270 + dec_val_base
-    #     if 'south' in data[i][0].lower():
-    #         if dir_val in [4, 1]:
-    #             decVal = 90 + dec_val_base
-    #         else:
-    #             decVal = 360 - (90 + dec_val_base)
-    #     return side, decVal
+    def get_new_coords_plat(self, newPlat, section, direction, path, coordLst, valsLstTot):
+        valsLst = getPlatVals(newPlat, section, path)
+        coords = [0] * 20
+        if direction == "E":
+            coords, valsLst = ExcelGetNewCoords.directionE(coords, coordLst, valsLst, valsLstTot)
+            return coords, valsLst
+        elif direction == 'W':
+            coords, valsLst = ExcelGetNewCoords.directionW(coords, coordLst, valsLst, valsLstTot)
+            return coords, valsLst
+        elif direction == 'S':
+            coords, valsLst = ExcelGetNewCoords.directionS(coords, coordLst, valsLst, valsLstTot)
+            return coords, valsLst
+        elif direction == 'N':
+            coords, valsLst = ExcelGetNewCoords.directionN(coords, coordLst, valsLst, valsLstTot)
+            return coords, valsLst
+
+    def get_direction(self, val, xMin, xMax, yMin, yMax):
+
+        if val[0] > xMax:
+            return 'E', 2
+        elif val[0] < xMin:
+            return 'W', 6
+        if val[1] > yMax:
+            return 'N', 0
+        elif val[1] < yMin:
+            return 'S', 4
+        return False
+
 
     def decimal_converter(self, side, deg, minutes, sec, dir_val):
         dec_val_base = deg + minutes / 60 + sec / 3600
@@ -284,7 +514,7 @@ class PlatEditorProcess:
             y1 = y0 + dy
             corners.append((x1, y1))
             x0, y0 = x1, y1
-        print(corners)
+        # print(corners)
         # If the last corner isn’t exactly the SHL, we can drop the repeated closure.
         # We only want four distinct corners; the final appended might be equal to the first.
         unique_corners = corners[:4]
@@ -292,7 +522,7 @@ class PlatEditorProcess:
         return unique_corners
 
 
-#section_relative
+# section_relative
 # BaseData
 # def write_data_to_db(self):
 #     src_path = r'C:\Users\coltongoodrich\Documents\GitHub\RewriteAPD2\APD_Data.db'
@@ -479,21 +709,7 @@ def getPlatVals(newPlat, section, path):
     return valsLst
 
 
-def getNewCoords(newPlat, section, direction, path, coordLst, valsLstTot):
-    valsLst = getPlatVals(newPlat, section, path)
-    coords = [0] * 20
-    if direction == "E":
-        coords, valsLst = ExcelGetNewCoords.directionE(coords, coordLst, valsLst, valsLstTot)
-        return coords, valsLst
-    elif direction == 'W':
-        coords, valsLst = ExcelGetNewCoords.directionW(coords, coordLst, valsLst, valsLstTot)
-        return coords, valsLst
-    elif direction == 'S':
-        coords, valsLst = ExcelGetNewCoords.directionS(coords, coordLst, valsLst, valsLstTot)
-        return coords, valsLst
-    elif direction == 'N':
-        coords, valsLst = ExcelGetNewCoords.directionN(coords, coordLst, valsLst, valsLstTot)
-        return coords, valsLst
+
 
 
 def getXMinMax(coordLst):

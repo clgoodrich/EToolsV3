@@ -43,7 +43,7 @@ from main_project_plat_coord_editor import PlatCoordEditor
 from main_project_plat_editor_process import PlatEditorProcess
 from shapely.geometry import Point, LineString, MultiPoint, Polygon
 from main_project_plat_editor_process import convert_to_pts
-
+import pyproj
 # self.colors = ["#000000", "#004949", "#009292", "#ff6db6", "#ffb6db",
 #                "#490092", "#006ddb", "#b66dff", "#6db6ff", "#b6dbff",
 #                "#920000", "#924900", "#db6d00", "#24ff24", "#ffff6d",
@@ -123,7 +123,7 @@ class SQLConnector:
     def _create_connection_string(self):
         """Create connection string with caching."""
         credentials = self._get_credentials()
-        # credentials = {}
+        credentials = {}
         if credentials:
             # Production connection
             params = {
@@ -285,7 +285,9 @@ class ETools(QMainWindow):
         # 4301354306
         # 4301950099
         # 4304756908
+        #
         self.ui.well_api_val.setText('4304757090')
+
         self.button_group = QButtonGroup(self.ui.survey_type_widget)
         self.button_group.setExclusive(True)
         self.ui.well_api_val.returnPressed.connect(self.run_api_when_entered)
@@ -743,6 +745,7 @@ class EToolsWell:
         first_plat_rel = find_relevant_datasets()
         _, first_plat_rel_out = next(iter(first_plat_rel))
         first_plat_coords = convert_to_pts(first_plat_rel_out)
+
         for citing in citing_types:
             key = type_map.get(citing.lower())
             if key:
@@ -927,17 +930,17 @@ class EToolsWell:
     def clearance_process(self, df, plat_df):
         return ClearanceProcess(df, plat_df)
 
-
+# (590632.8649118496, 4450524.732002878)(592236.7912223932, 4450548.389611623)
 class PointChecker:
     def __init__(self, ui):
         self.ui = ui
 
-        self.ui.a_check_pt_e.setText('558421.8536512152')
-        self.ui.a_check_pt_n.setText('4442048.529338275')
-        self.ui.b_check_pt_e.setText('558448.0426760855')
-        self.ui.b_check_pt_n.setText('4441231.027283544')
-        self.ui.check_pt_e.setText('558473')
-        self.ui.check_pt_n.setText('4441472')
+        # self.ui.a_check_pt_e.setText('590632.8649118496')
+        # self.ui.a_check_pt_n.setText('4450524.732002878')
+        # self.ui.b_check_pt_e.setText('592236.7912223932')
+        # self.ui.b_check_pt_n.setText('4450548.389611623')
+        # self.ui.check_pt_e.setText('40.2000918')
+        # self.ui.check_pt_n.setText('-109.9351201')
 
         self.ui.lat_deg_a.editingFinished.connect(self.collect_data)
         self.ui.lat_min_a.editingFinished.connect(self.collect_data)
@@ -981,6 +984,7 @@ class PointChecker:
 
     def gather_deg_pts(self):
         def converter(label, id):
+
             deg_text = getattr(self.ui, f"{label}_deg_{id}").text().strip()
             min_text = getattr(self.ui, f"{label}_min_{id}").text().strip()
             sec_text = getattr(self.ui, f"{label}_sec_{id}").text().strip()
@@ -998,10 +1002,13 @@ class PointChecker:
         lon_dec_a = -abs(converter('lon', 'a'))
         lat_dec_b = converter('lat', 'b')
         lon_dec_b = -abs(converter('lon', 'b'))
-
+        e_dec_pt = float(self.ui.check_pt_e.text())
+        n_dec_pt = float(self.ui.check_pt_n.text())
         output_a = utm.from_latlon(lat_dec_a, lon_dec_a)[:2]
         output_b = utm.from_latlon(lat_dec_b, lon_dec_b)[:2]
-        return output_a, output_b
+        output_pt = self.check_if_utm_or_latlon(e_dec_pt, n_dec_pt)
+        return output_a, output_b, output_pt
+
 
     def gather_pts(self):
         fields = [
@@ -1012,15 +1019,18 @@ class PointChecker:
             self.ui.check_pt_e.text(),
             self.ui.check_pt_n.text()
         ]
-
+        # fields_data = [float(i) for i in fields]
         # If any field is empty, use gather_deg_pts()
+        print(1)
         if any(not field.strip() for field in fields):
             try:
                 return self.gather_deg_pts()
-            except ValueError:
+            except ValueError as e:
+                print('errored 1', e)
                 pass
 
         # Otherwise, proceed with conversion and UTM/latlon check
+        print(2)
         try:
             e_dec_1 = float(self.ui.a_check_pt_e.text())
             n_dec_1 = float(self.ui.a_check_pt_n.text())
@@ -1028,23 +1038,32 @@ class PointChecker:
             n_dec_2 = float(self.ui.b_check_pt_n.text())
             e_dec_pt = float(self.ui.check_pt_e.text())
             n_dec_pt = float(self.ui.check_pt_n.text())
+            print(e_dec_pt, n_dec_pt)
             output_a = self.check_if_utm_or_latlon(e_dec_1, n_dec_1)
             output_b = self.check_if_utm_or_latlon(e_dec_2, n_dec_2)
             output_pt = self.check_if_utm_or_latlon(e_dec_pt, n_dec_pt)
             return output_a, output_b, output_pt
-        except ValueError:
+        except ValueError as f:
+            print('errored 3', f)
             # Handle unexpected conversion errors if needed
             try:
+                print(3)
                 return self.gather_deg_pts()
-            except ValueError:
+            except ValueError as g:
+                print('errored 2', g)
                 pass
 
+    # (590632.8649118496, 4450524.732002878)(592236.7912223932, 4450548.389611623)
+    # invalid
     def check_if_utm_or_latlon(self, x_coord, y_coord):
         try:
             x = float(x_coord)
             y = float(y_coord)
-            if (-180 <= x <= 180) and (-90 <= y <= 90):
-                if (-114 <= x <= -109) and (37 <= y <= 42):
+            print('xy', x,y)
+            if (-180 <= y <= 180) and (-90 <= x <= 90):
+                print('xy2', x, y)
+                if (-114 <= y <= -109) and (37 <= x <= 42):
+                    print('xy3', x, y)
                     y = abs(y) * -1
                     return utm.from_latlon(x, y)[:2]
             if (140000 <= x <= 800000) and (3800000 <= y <= 4800000):
@@ -1059,6 +1078,7 @@ class PointChecker:
         global pt_a, pt_b, pt_used
         try:
             pt_a, pt_b, pt_used = self.gather_pts()
+
         except TypeError:
             pass
         try:
