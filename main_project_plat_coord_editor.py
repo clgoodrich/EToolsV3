@@ -40,6 +40,16 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout
                              QDialog, QTabWidget, QTextBrowser, QTableWidget, QLabel, QTableView, QRadioButton,
                              QGraphicsView,
                              QComboBox, QMessageBox, QFileDialog, QButtonGroup)
+
+class SetupRelativeCoordsPage:
+    def __init__(self):
+
+        pass
+    def get_all_rel_wells(self):
+        pass
+    def setup_combo_boxes(self):
+        for i in range(8):
+            combobox = getattr(self, f"version_combo_rel_{i + 1}")
 class PlatCoordEditor:
     def __init__(self, section_df, ui, files_db):
         self.section_df = section_df

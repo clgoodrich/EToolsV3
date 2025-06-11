@@ -284,9 +284,9 @@ class ETools(QMainWindow):
         # 4303950011
         # 4301354306
         # 4301950099
-        # 4304756908
-        #
-        self.ui.well_api_val.setText('4304757090')
+        # 4304757090
+        #4304757728
+        self.ui.well_api_val.setText('4304757728')
 
         self.button_group = QButtonGroup(self.ui.survey_type_widget)
         self.button_group.setExclusive(True)
@@ -743,6 +743,8 @@ class EToolsWell:
         type_map = {'planned': 'pln_df',
                     'asdrilled': 'drl_df'}
         first_plat_rel = find_relevant_datasets()
+        print(first_plat_rel.first())
+
         _, first_plat_rel_out = next(iter(first_plat_rel))
         first_plat_coords = convert_to_pts(first_plat_rel_out)
 
@@ -803,7 +805,7 @@ class EToolsWell:
         # print(self.survey_dx['CitingType'].unique())
         self.plat_editor = PlatCoordEditor(self.plat_df, self.ui, self.files_db)
         self._run_clearance()
-        self.recreate_survey_objects()
+        # self.recreate_survey_objects()
 
         # ——————— Re-run Surveys ———————
 
@@ -826,7 +828,7 @@ class EToolsWell:
         self.loc_df = pd.concat([self.loc_df, new_locs]).drop_duplicates().reset_index(drop=True)
         # 4) ***Rebuild the UI editor*** so the newly discovered plats show up for editing
         self.plat_editor = PlatCoordEditor(self.plat_df, self.ui, self.files_db)
-        self.recreate_survey_objects()
+        # self.recreate_survey_objects()
         # 5) Recalculate clearance
         self._run_clearance()
 
@@ -892,7 +894,7 @@ class EToolsWell:
                     self.retrieve_location_data(self.surveys_dict)
                 # first-time editor on raw data
                 self.plat_editor = PlatCoordEditor(self.plat_df_original, self.ui, self.files_db)
-                self.recreate_survey_objects()
+                # self.recreate_survey_objects()
             # always pull the *currently edited* section_df
             else:
                 updated = self.plat_editor.retrieve_all_data()
