@@ -40,7 +40,7 @@ from main_project_drawer import DataDrawer
 from main_project_wcr import WCR_Main
 from main_project_import_surveys import SurveyImporter
 from main_project_plat_coord_editor import PlatCoordEditor
-from main_project_plat_editor_process import PlatEditorProcess
+from main_project_plat_editor_process import PlatEditorProcess, SetupRelativeCoordsPage
 from shapely.geometry import Point, LineString, MultiPoint, Polygon
 from main_project_plat_editor_process import convert_to_pts
 import pyproj
@@ -123,7 +123,7 @@ class SQLConnector:
     def _create_connection_string(self):
         """Create connection string with caching."""
         credentials = self._get_credentials()
-        credentials = {}
+        # credentials = {}
         if credentials:
             # Production connection
             params = {
@@ -277,8 +277,8 @@ class ETools(QMainWindow):
 
         self.ui = Ui_Dialog()
         self.ui.setupUi(self)
-        self.files_db = setup_db()
-
+        self.conn = setup_db()
+        self.rel_plats = SetupRelativeCoordsPage(conn = self.conn, ui = self.ui)
         self.points_checker = PointChecker(ui=self.ui)
         # State 36 Rose, Dobby, Elkhorn
         # 4303950011
@@ -362,7 +362,7 @@ class ETools(QMainWindow):
         # Optionally, select the first radio button by default
         if variables:
             self.button_group.button(0).setChecked(True)
-
+            self.writer.survey_writer(self.ui, variables[0])
     def bad_api_popup(self):
         choice = QMessageBox.warning(self, "Attention", "Invalid API Detected! Fix it! (Possibly a string?)",
                                      QMessageBox.Ok)
@@ -431,7 +431,7 @@ class ETools(QMainWindow):
         survey_dx, well_elevation, north_ref = self.sql_query_survey(self.db, self.api_val, self.lateral)
         self.well = EToolsWell(db=self.db, api=self.api_val, apd_num=self.apd_num, well_name=self.well_name,
                                lateral=self.lateral, survey_dx=survey_dx, well_elevation=well_elevation,
-                               north_ref=north_ref, ui=self.ui, files_db=self.files_db)
+                               north_ref=north_ref, ui=self.ui, conn=self.conn)
         self.find_more_sections_combo_box()
         self.main_processes_program(north_ref)
         self.writer = DataWriter(ui=self.ui,
@@ -637,10 +637,10 @@ class ETools(QMainWindow):
 
 
 class EToolsWell:
-    def __init__(self, db, api, apd_num, well_name, lateral, survey_dx, well_elevation, north_ref, ui, files_db):
+    def __init__(self, db, api, apd_num, well_name, lateral, survey_dx, well_elevation, north_ref, ui, conn):
         super().__init__()
         self.plat_editor = None
-        self.files_db = files_db
+        self.conn = conn
         self.db = db
         self.ui = ui
         self.api = api
@@ -731,7 +731,7 @@ class EToolsWell:
                                          row['rng'],
                                          row['rng_dir'], row['baseline']), axis=1)
             query = f"select * from section_plat_data where new_code = '{first_plat['conc'].iloc[0]}'"
-            output = pd.read_sql(query, self.files_db).drop_duplicates(keep="first")
+            output = pd.read_sql(query, self.conn).drop_duplicates(keep="first")
             output = output.astype({"Length": float, "Degrees": float, "Minutes": float, "Seconds": float})
             output = output.astype({"Minutes": int, "Seconds": int})
             grouped = output.groupby(['new_code', 'Version'])
@@ -754,7 +754,7 @@ class EToolsWell:
                 for ref in ref_lst:
                     attr_name = f"plat_editor_process_{key}{ref}"
                     used_data = self.cl_dx_dict[f"{key}{ref}"].clearance_data
-                    setattr(self, attr_name, PlatEditorProcess(conn=self.files_db, plat_df=first_plat_rel,plat_coords =first_plat_coords,  shl=shl_latlon, well_df=used_data))
+                    setattr(self, attr_name, PlatEditorProcess(conn=self.conn, plat_df=first_plat_rel,plat_coords =first_plat_coords,  shl=shl_latlon, well_df=used_data))
 
         # citing_types = self.survey_dx['CitingType'].unique() #asdrilled or planned
         # shl_latlon = list(self.survey_dx.head(1)[['SurfaceLatitude', 'SurfaceLongitude']].iloc[0])
@@ -762,9 +762,9 @@ class EToolsWell:
         # for i in citing_types:
         #     for j in ref_lst:
         #         if i.lower() == 'planned':
-        #             setattr(self, f"plat_editor_process_'pln_df_{j}", PlatEditorProcess(self.files_db, self.plat_df, shl_latlon))
+        #             setattr(self, f"plat_editor_process_'pln_df_{j}", PlatEditorProcess(self.conn, self.plat_df, shl_latlon))
         #         elif i.lower() == 'asdrilled':
-        #             setattr(self, f"plat_editor_process_'drl_df_{j}", PlatEditorProcess(self.files_db, self.plat_df, shl_latlon))
+        #             setattr(self, f"plat_editor_process_'drl_df_{j}", PlatEditorProcess(self.conn, self.plat_df, shl_latlon))
 
     def set_plat_data(self, plat_data):
         self.plat_df = plat_data
@@ -803,7 +803,7 @@ class EToolsWell:
 
         # Build the editor UI from the *initial* plat set
         # print(self.survey_dx['CitingType'].unique())
-        self.plat_editor = PlatCoordEditor(self.plat_df, self.ui, self.files_db)
+        self.plat_editor = PlatCoordEditor(self.plat_df, self.ui, self.conn)
         self._run_clearance()
         # self.recreate_survey_objects()
 
@@ -827,7 +827,7 @@ class EToolsWell:
         # self.plat_df = pd.concat([self.plat_df, new_plats]).drop_duplicates().reset_index(drop=True)
         self.loc_df = pd.concat([self.loc_df, new_locs]).drop_duplicates().reset_index(drop=True)
         # 4) ***Rebuild the UI editor*** so the newly discovered plats show up for editing
-        self.plat_editor = PlatCoordEditor(self.plat_df, self.ui, self.files_db)
+        self.plat_editor = PlatCoordEditor(self.plat_df, self.ui, self.conn)
         # self.recreate_survey_objects()
         # 5) Recalculate clearance
         self._run_clearance()
@@ -893,7 +893,7 @@ class EToolsWell:
                 self.plat_df_original, self.loc_df_new = \
                     self.retrieve_location_data(self.surveys_dict)
                 # first-time editor on raw data
-                self.plat_editor = PlatCoordEditor(self.plat_df_original, self.ui, self.files_db)
+                self.plat_editor = PlatCoordEditor(self.plat_df_original, self.ui, self.conn)
                 # self.recreate_survey_objects()
             # always pull the *currently edited* section_df
             else:
@@ -914,7 +914,7 @@ class EToolsWell:
         return surveys_dict.dx_dict, surveys_dict.dx_dict_spec_depths, surveys_dict.survey_parameters
 
     def retrieve_location_data(self, survey_dict):
-        plat_output = TownShipAndRangeProcess(self.api, self.lateral, self.db, survey_dict, self.files_db)
+        plat_output = TownShipAndRangeProcess(self.api, self.lateral, self.db, survey_dict, self.conn)
         return plat_output.plat_df, plat_output.loc_df
 
     def retrieve_clearance_data(self, survey_dict, plat_df):

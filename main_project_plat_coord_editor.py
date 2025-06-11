@@ -40,22 +40,15 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout
                              QDialog, QTabWidget, QTextBrowser, QTableWidget, QLabel, QTableView, QRadioButton,
                              QGraphicsView,
                              QComboBox, QMessageBox, QFileDialog, QButtonGroup)
+import ModuleAgnostic as ma
 
-class SetupRelativeCoordsPage:
-    def __init__(self):
 
-        pass
-    def get_all_rel_wells(self):
-        pass
-    def setup_combo_boxes(self):
-        for i in range(8):
-            combobox = getattr(self, f"version_combo_rel_{i + 1}")
+
 class PlatCoordEditor:
-    def __init__(self, section_df, ui, files_db):
+    def __init__(self, section_df, ui, conn):
         self.section_df = section_df
-        self.db = files_db
+        self.conn = conn
         self.ui = ui
-        # self.db = self.setup_sqlite_db()
         self.dict_utm = dict.fromkeys(range(1, 9))
         self.dict_latlon = dict.fromkeys(range(1, 9))
         self.button_groups = {}
@@ -115,7 +108,9 @@ class PlatCoordEditor:
 
             table_wid = getattr(self.ui, f"plat_table_coords_{i + 1}")
             table_wid.blockSignals(False)
-
+        ma.search_db(r'C:\Work\Databases\Board_DB_Plss_Sections.db')
+        # path_used_db = r'C:\Work\Databases'
+        # apd_data_dir = os.path.join(path_used_db, 'Board_DB_Plss_Sections.db')
     def delete_selected_rows(self, table_index):
         """Delete selected rows from the specified table"""
         self._program_changes = True  # Set flag for programmatic changes
@@ -385,7 +380,7 @@ class PlatCoordEditor:
 
         def search_db_for_conc():
             query = f"SELECT * FROM BaseData WHERE Conc = '{conc_code}'"
-            return pd.read_sql(query, self.db)
+            return pd.read_sql(query, self.conn)
 
         used_table = getattr(self.ui, f"plat_table_coords_{i}")
         tsr_data = self.validate_coords_table(used_table)
