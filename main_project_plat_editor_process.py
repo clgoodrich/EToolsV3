@@ -70,17 +70,14 @@ def convert_to_pts(plat):
 
     dir_order = ['west', 'north', 'east', 'south']
     # # Method 1: Using reindex
-    print(plat)
-    print(plat['side'].unique())
+
 
     # plat['side'] = pd.Categorical(plat['side'], categories=dir_lst, ordered=True)
     plat['side'] = pd.Categorical(plat['side'], categories=dir_lst, ordered=True)
     df_reordered = plat.reindex(custom_order).reset_index()
-    # print(df_reordered)
     for val, row in df_reordered.iterrows():
         test = math.floor(val / 4)
 
-        # print(val, dir_order[test])
         xy_lst.append([x, y, dir_order[test]])
         x, y = new_point_finder(float(row['length']), float(row['decimal_azimuth']), x, y)
     xy_lst.append([x, y, dir_order[test]])
@@ -136,14 +133,10 @@ def get_plat_adjacency_dict(conc_val, direction):
     }
     used = adjacency_dict[conc_loc]
     return used[direction]
-    # print(used direction)
-    dirLst = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
-    # return adjacency_dict[val]
 
 
 def calculate_angle(point1, point2):
     angle = math.atan2(point2.y - point1.y, point2.x - point1.x)
-    print(round(angle % (math.pi * 2), 2), round(math.degrees(angle) % 360, 2))
     return math.degrees(angle)
 
 
@@ -238,7 +231,6 @@ def classify_with_buffer(ref_poly, neigh_poly, epsilon=1e-6):
 
 
 def find_point_from_footages(polygon_coords, ns_distance, ns_type, ew_distance, ew_type):
-    print(ns_distance, ns_type, ew_distance, ew_type)
     """
     Find point within polygon using any combination of boundary distance references.
 
@@ -516,7 +508,6 @@ class SetupRelativeCoordsPage:
                         rec[field] = item.text() if item is not None else ""
                     else:
                         rec[field] = ""
-                print('version', version)
                 rec['order'] = version
                 records.append(rec)
         df = pd.DataFrame.from_records(records)
@@ -748,24 +739,18 @@ class SetupRelativeCoordsPage:
             df = pd.DataFrame(data, columns=headers)
             return df
 
-        print(plat_data)
         grouped = plat_data.groupby(['order'])
-        # init_plat_data = next(iter(grouped))
         initial_plat_conc, init_plat_data = next(iter(grouped))
         init_plat = convert_to_pts(init_plat_data)
-
-        # for i, k in grouped:
-        #     print(i)
         well_path = get_dataframe_from_qtableview()
         dirLst = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
         starter_pt = get_starter_pt(well_path.iloc[0], init_plat)
-        print(starter_pt)
         used_pt = starter_pt
+        print('used', used_pt)
         for x, row in well_path.iterrows():
             print([row['delta_x'], row['delta_y']])
             delta_x, delta_y = float(row['delta_x']) * 0.3048, float(row['delta_y']) * 0.3048
             used_pt = [used_pt[0] + delta_x, used_pt[1] + delta_y]
-            print(used_pt)
             # dir_val, index = get_direction(used_pt, xMin, xMax, yMin, yMax)
         #     index = dirLst.index(dir_val)
         #     if not dir_val:
@@ -807,19 +792,8 @@ class PlatEditorProcess:
         self.shl = shl
         adj_sections = find_adjacent_sections(self.location_db, self.initial_plat_conc[0])
         fix_adj_sections(self.location_db, adj_sections, self.initial_plat_conc)
-        # print(adj_sections)
         self.run_finder_process(self.inital_plat_coords, self.well_path, self.initial_plat_conc[0])
-        # self.initial_plat = first_group_name, first_group_data = next(iter(grouped))
-        # print(self.initial_plat)
 
-        # self.used_data_df = plat_df
-        # self.grouped_df = self.find_relevant_datasets()
-
-        # print()
-        # print(well_df.columns)
-
-        # query = f"SELECT * FROM section_plat_data"
-        # print(pd.read_sql(query, self.location_db))
 
     # def find_relevant_datasets(self):
     #     used_concs = self.used_data_df['Conc'].unique()
@@ -962,7 +936,6 @@ class PlatEditorProcess:
             y1 = y0 + dy
             corners.append((x1, y1))
             x0, y0 = x1, y1
-        # print(corners)
         # If the last corner isn’t exactly the SHL, we can drop the repeated closure.
         # We only want four distinct corners; the final appended might be equal to the first.
         unique_corners = corners[:4]
@@ -977,7 +950,6 @@ class PlatEditorProcess:
 #     dst_path = r'C:\Work\Databases\Board_DB_Plss_Sections.db'
 #     with sqlite3.connect(src_path) as src_conn:
 #         df = pd.read_sql_query("SELECT * FROM SectionPlatData", src_conn)
-#     # print(df)
 #     # # Append it into the destination DB
 #     with sqlite3.connect(dst_path) as dst_conn:
 #         df.to_sql(
