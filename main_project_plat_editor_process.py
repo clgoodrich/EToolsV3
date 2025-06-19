@@ -12,7 +12,8 @@ from shapely.geometry import Polygon
 import numpy as np
 import ModuleAgnostic
 import regex as re
-
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 def decimal_converter(side, deg, minutes, sec, dir_val):
     """
@@ -50,15 +51,66 @@ def decimal_converter(side, deg, minutes, sec, dir_val):
         return base_azimuth - dec_val_base
 
 
+def sort_dataframe_by_custom_order(df, column_name, custom_order_list):
+    """
+    Sort DataFrame by a custom order for a specific column using pandas Categorical.
+
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        The DataFrame to sort
+    column_name : str
+        The name of the column to sort by
+    custom_order_list : list
+        List defining the custom sort order
+
+    Returns:
+    --------
+    pandas.DataFrame
+        Sorted DataFrame
+
+    Raises:
+    -------
+    ValueError
+        If column values don't match the custom order list
+    """
+    # Create a copy to avoid modifying original DataFrame
+    df_sorted = df.copy()
+
+    # Check if all values in the column exist in the custom order list
+    missing_values = set(df_sorted[column_name].unique()) - set(custom_order_list)
+    if missing_values:
+        print(f"Warning: These values in '{column_name}' are not in custom_order_list: {missing_values}")
+        # Add missing values to the end of the custom order
+        extended_order = custom_order_list + list(missing_values)
+    else:
+        extended_order = custom_order_list
+
+    # Convert column to Categorical with custom order
+    df_sorted[column_name] = pd.Categorical(
+        df_sorted[column_name],
+        categories=extended_order,
+        ordered=True
+    )
+
+    # Sort by the categorical column
+    df_sorted = df_sorted.sort_values(by=column_name, kind='mergesort')
+
+    # Reset index to maintain clean indexing
+    df_sorted = df_sorted.reset_index(drop=True)
+
+    return df_sorted
+
 def convert_to_pts(plat):
     def new_point_finder(r, angle, center_x, center_y):
         x_new = center_x + (r * math.cos(math.radians(angle)))
         y_new = center_y + (r * math.sin(math.radians(angle)))
         return x_new, y_new
 
+
     xy_lst = []
     x, y = 0, 0
-    custom_order = [3, 2, 1, 0, 8, 9, 10, 11, 4, 5, 6, 7, 15, 14, 13, 12]
+    # custom_order = [3, 2, 1, 0, 8, 9, 10, 11, 4, 5, 6, 7, 15, 14, 13, 12]
     # dirLst = ['South_Left_2', 'South_Left_1', 'South_Right_1', 'South_Right_2',
     #           'East_Up_2', 'East_Up_1', 'East_Down_1', 'East_Down_2',
     #           'North_Left_2', 'North_Left_1', 'North_Right_1', 'North_Right_2',
@@ -69,13 +121,9 @@ def convert_to_pts(plat):
                'south_left_1', 'south_left_2']
 
     dir_order = ['west', 'north', 'east', 'south']
-    # # Method 1: Using reindex
+    plat=sort_dataframe_by_custom_order(plat, 'side', dir_lst)
 
-
-    # plat['side'] = pd.Categorical(plat['side'], categories=dir_lst, ordered=True)
-    plat['side'] = pd.Categorical(plat['side'], categories=dir_lst, ordered=True)
-    df_reordered = plat.reindex(custom_order).reset_index()
-    for val, row in df_reordered.iterrows():
+    for val, row in plat.iterrows():
         test = math.floor(val / 4)
 
         xy_lst.append([x, y, dir_order[test]])
@@ -141,9 +189,7 @@ def calculate_angle(point1, point2):
 
 
 def fix_adj_sections(conn, adj_sections, init_plat):
-    # print(adj_sections, init_plat )
     used_concs = adj_sections + [init_plat[0]]
-    # print(used_concs)
     df = pd.DataFrame(columns=['conc', 'geometry'])
     query = f"SELECT * FROM BaseData"
     output = pd.read_sql(query, conn)
@@ -151,13 +197,11 @@ def fix_adj_sections(conn, adj_sections, init_plat):
     init = used_data[used_data['Conc'] == init_plat[0]]
     init_ref_plat = Polygon(init[['Easting', 'Northing']].values.tolist())
     grouped = used_data.groupby(['Conc'])
-    # print(init_ref_plat)
     for i, row in grouped:
         geo_vals = Polygon(row[['Easting', 'Northing']].values.tolist())
         angle = calculate_angle(init_ref_plat.centroid, geo_vals.centroid)
 
         # shared_len, direction = classify_with_buffer(init_ref_plat, geo_vals, epsilon=1e-4)
-        # print(shared_len, direction)
     # get_plat_adjacency_dict(val, conc_val)
 
 
@@ -255,7 +299,6 @@ def find_point_from_footages(polygon_coords, ns_distance, ns_type, ew_distance, 
     sides['north'].append(sides['east'][0])
     sides['east'].append(sides['south'][0])
     sides['south'].append(sides['west'][0])
-
     # Get the appropriate boundary segments based on ns_type
     if ns_type == 'FNL':
         ns_coords = sides.get('north', [])
@@ -263,7 +306,6 @@ def find_point_from_footages(polygon_coords, ns_distance, ns_type, ew_distance, 
     else:  # FSL
         ns_coords = sides.get('south', [])
         ns_offset_side = 'left'  # North is left when going west
-
     # Get the appropriate boundary segments based on ew_type
     if ew_type == 'FEL':
         ew_coords = sides.get('east', [])
@@ -274,15 +316,14 @@ def find_point_from_footages(polygon_coords, ns_distance, ns_type, ew_distance, 
 
     # Create line segments for each boundary
     ns_segments = []
-    if len(ns_coords) > 1:
+    if len(ns_coords) > 0:
         for i in range(len(ns_coords) - 1):
             ns_segments.append((tuple(ns_coords[i]), tuple(ns_coords[i + 1])))
 
     ew_segments = []
-    if len(ew_coords) > 1:
+    if len(ew_coords) > 0:
         for i in range(len(ew_coords) - 1):
             ew_segments.append((tuple(ew_coords[i]), tuple(ew_coords[i + 1])))
-
     # Create parallel segments
     ns_parallel_segments = []
     for segment in ns_segments:
@@ -298,24 +339,17 @@ def find_point_from_footages(polygon_coords, ns_distance, ns_type, ew_distance, 
                 ns_parallel_segments.append(tuple(parallel.coords))
         except:
             continue
-
     ew_parallel_segments = []
     for segment in ew_segments:
         line = LineString(segment)
-        try:
-            parallel = line.parallel_offset(ew_distance, 'right')
-
-            # if ns_type == 'FEL':
-            #     parallel = line.parallel_offset(-ew_distance, ew_offset_side)
-            # elif ns_type == 'FWL':
-            #     parallel = line.parallel_offset(ew_distance, ew_offset_side)
-
-            # parallel = line.parallel_offset(ew_distance, ew_offset_side)
-            if hasattr(parallel, 'coords'):
-                ew_parallel_segments.append(list(parallel.coords))
-        except:
-            continue
-
+        # try:
+        parallel = line.parallel_offset(ew_distance, 'right')
+        # new_data = line_str_seg.parallel_offset(distance, 'right', resolution=1, join_style=2, mitre_limit=5)
+        if hasattr(parallel, 'coords'):
+            ew_parallel_segments.append(list(parallel.coords))
+        # except as e:
+        #     print(e)
+        #     continue
     # Find intersection
     for ns_seg in ns_parallel_segments:
         line1 = LineString(ns_seg)
@@ -345,6 +379,12 @@ class SetupRelativeCoordsPage:
     def __init__(self, conn, ui):
         self._rel_models = {}
         self._rel_tbls = {}
+        self.dict_plats_lines = {}
+        self.dict_plats_pts = {}
+
+        self.dict_figures = {}
+        self.dict_canvas = {}
+        self.dict_ax = {}
         self.conn = conn
         self.ui = ui
         self.currently_used_plat_data = pd.DataFrame()
@@ -355,9 +395,26 @@ class SetupRelativeCoordsPage:
             "east_up_2", "east_up_1", "east_down_1", "east_down_2",
         ]
         # self.get_all_rel_wells2()
+        self.setup_figs()
         all_rel_surveys = self.get_all_rel_wells()
         self.setup_combo_boxes(all_rel_surveys)
+    def setup_figs(self):
+        for i in range(8):
+            # ui_element = getattr(self.ui, f"well_graphic_mp_individual_{i + 1}")
+            # ui_viz = getattr(self.ui, f"well_graphic_section_all_layout_{i + 1}")
+            ui_viz = getattr(self.ui, f"well_graphic_mp_individual_{i + 1}")
 
+            self.dict_figures[i + 1] = plt.figure()
+            self.dict_canvas[i + 1] = FigureCanvas(self.dict_figures[i + 1])
+            self.dict_ax[i + 1] = self.dict_figures[i + 1].subplots()
+            ui_viz.addWidget(self.dict_canvas[i + 1])
+            line_collection_template, = self.dict_ax[i + 1].plot([], [], color='black', linewidth=1, zorder=5)
+            scatter_collection_template = self.dict_ax[i + 1].scatter([], [], c='black', s=50, zorder=2, alpha=0.5)
+            self.dict_plats_lines[i + 1] = line_collection_template
+            self.dict_plats_pts[i + 1] = scatter_collection_template
+
+            self.dict_ax[i + 1].axis('equal')
+            # self.zoom_fac = self.zp.zoom_factory(self.dict_ax[i + 1], 1.1)
     def get_all_rel_wells(self):
         query = f"select * from tsr_plats_surveys"
         output = pd.read_sql(query, self.conn)
@@ -458,10 +515,70 @@ class SetupRelativeCoordsPage:
         fill_calls_models()
         fill_calls_data()
         self.currently_used_plat_data = self.collect_relative_data()
-        used_indexes = self.currently_used_plat_data['order'].unique()
-        self.run_plat_well_tracer(plat_data=self.currently_used_plat_data)
+        # used_indexes = self.currently_used_plat_data['order'].unique()
+        grouped = self.currently_used_plat_data.groupby(['order'])
+
+        # used_df = self.currently_used_plat_data[self.currently_used_plat_data['order']==version]
+        initial_plat_conc, init_plat_data = self.currently_used_plat_data[self.currently_used_plat_data['order']==version]['conc'].iloc[0], self.currently_used_plat_data[self.currently_used_plat_data['order']==version]
+        print(initial_plat_conc)
+        init_plat = convert_to_pts(init_plat_data)
+        self.draw_plat_solo(init_plat, version)
+        self.run_plat_well_tracer(init_plat=init_plat, initial_plat_conc = initial_plat_conc)
+
+    def grapher(self, data):
+        x_coords = [point[0] for point in data]
+        y_coords = [point[1] for point in data]
+        plt.figure(figsize=(10, 8))
+        plt.plot(x_coords, y_coords, 'b-', linewidth=2, marker='o', markersize=4)
+        plt.xlabel('X Coordinate')
+        plt.ylabel('Y Coordinate')
+        plt.title('XY Plot')
+        plt.grid(True, alpha=0.3)
+        plt.axis('equal')
+        plt.show()
+    def draw_plat_solo(self, plat, version):
+        # dict_used = getattr(self, f"dict_{coord_type_label}")[version]
+        canvas_used = getattr(self, f"dict_canvas")[version]
+        ax_used = getattr(self, f"dict_ax")[version]
+        # mp = getattr(self.ui, f"well_graphic_mp_individual_{version}")
+        # object = getattr(self.ui, f"well_graphic_section_all_layout_8{version}")
+        line_collection_used = self.dict_plats_lines[version]
+        pts_collection_used = self.dict_plats_pts[version]
+        x = [point[0] for point in plat]
+        y = [point[1] for point in plat]
+
+        pts_collection_used.set_offsets([i[:2] for i in plat])
+        # x, y = np.array(dict_used.exterior.coords).T
+        line_collection_used.set_data(x, y)
+        ax_used.relim()
+        ax_used.autoscale_view()
+        canvas_used.blit(ax_used.bbox)
+        canvas_used.draw()
+        # pass
 
     def collect_relative_data(self):
+        def convert_conc(sec, ts, ts_dir, rng, rng_dir, baseline):
+            translations = {
+                'rng': {'2': 'W', '1': 'E'},
+                'township': {'2': 'S', '1': 'N'},
+                'baseline': {'2': 'U', '1': 'S'},
+                'alignment': {'1': 'SE', '2': 'NE', '3': 'SW', '4': 'NW'}
+            }
+            section = str(int(float(sec))).zfill(2)
+            township = str(int(float(ts))).zfill(2)
+            rng = str(int(float(rng))).zfill(2)
+
+            # Handle direction codes (which might also be floats)
+            ts_dir = str(ts_dir)
+            rng_dir = str(rng_dir)
+            baseline = str(baseline)
+
+            # Translate direction codes
+            ts_dir = translations.get('township', {}).get(ts_dir, ts_dir).upper()
+            rng_dir = translations.get('rng', {}).get(rng_dir, rng_dir).upper()
+            baseline = translations.get('baseline', {}).get(baseline, baseline).upper()
+
+            return "".join([section, township, ts_dir, rng, rng_dir, baseline])
         """
         Read all the inputs and tables for versions 1–8 and return
         a DataFrame with one row per table-entry, with these columns:
@@ -511,93 +628,12 @@ class SetupRelativeCoordsPage:
                 rec['order'] = version
                 records.append(rec)
         df = pd.DataFrame.from_records(records)
-
+        df['conc'] = df.apply(
+            lambda row: convert_conc(row['section'], row['township'], row['township_bearing_str'],
+                                     row['rng'],
+                                     row['rng_bearing_str'], row['baseline_str']), axis=1)
         df['decimal_azimuth'] = df.apply(lambda row: decimal_converter(row['side'], row['degrees'], row['minutes'], row['seconds'], row['baseline_str']), axis=1)
         return df
-        #
-        # # 2) for each side-table, read every row
-        # for side in side_names:
-        #     tbl: QTableView = getattr(self.ui, f"{side}_table_rel_{version}")
-        #     model = tbl.model()
-        #     if model is None:
-        #         continue
-        #     rows = model.rowCount()
-        #     columns = model.columnCount()
-        #     rec = {
-        #         "section": section,
-        #         "township": township,
-        #         "township_bearing_str": town_dir,
-        #         "rng": rng,
-        #         "rng_bearing_str": rng_dir,
-        #         "baseline_str": baseline,
-        #         "side": side,
-        #     }
-        # for side in side_names:
-        #     tbl: QTableView = getattr(self.ui, f"{side}_table_rel_{version}")
-        #     model = tbl.model()
-        #     if model is None:
-        #         continue
-        #
-        #     # start a fresh record for this side
-        #     rec = dict(rec_base)
-        #     rec["side"] = side
-        #
-        #     # iterate each row in the single column
-        #     for row_idx, field in enumerate(table_fields):
-        #         # safe‐guard if someone changed row-count
-        #         if row_idx < model.rowCount():
-        #             item = model.item(row_idx, 0)
-        #             rec[field] = item.text() if item is not None else ""
-        #         else:
-        #             rec[field] = ""
-        #
-        #     records.append(rec)
-        #     #
-        #     # for row in range(rows):
-        #     #     row_data = []
-        #     #     for column in range(columns):
-        #     #         index = model.index(row, column)
-        #     #         # Get the data for the current cell
-        #     #         cell_data = model.data(index, Qt.DisplayRole)
-        #             row_data.append(cell_data)
-        # data.append(row_data)
-
-        # for col_idx, col_name in enumerate(row_cols):
-        #     print(col_idx, col_name)
-        #     item = model.item(row, col_idx)
-        # for row_idx, row_name in enumerate(row_cols):
-        #     print([row_idx])
-        #     # index = model.index(row_idx, 0)
-        #     cell_data = model.data(row_idx, 0)
-        #     print(cell_data)
-        # build one record per row
-
-        # pull out each column value
-        # for column in range(columns):
-        #     index = model.index(row, column)
-        #     # Get the data for the current cell
-        #     cell_data = model.data(index, Qt.DisplayRole)
-        #     # print('cell', cell_data)
-        #     # row_data.append(cell_data)
-        #
-        # for col_idx, col_name in enumerate(table_cols):
-        #     print(col_idx, col_name)
-        #     item = model.item(row, col_idx)
-        #     # print(item)
-        #     val = item.text() if item is not None else ""
-        #     rec[col_name] = val
-
-        # records.append(rec)
-
-        # 3) turn into a DataFrame
-        # df = pd.DataFrame.from_records(records)
-        # print(df)
-        # # 4) optionally cast numeric columns back to numbers
-        # for numcol in ["section","township","rng","length","degrees","minutes","seconds","decimal_azimuth"]:
-        #     if numcol in df:
-        #         df[numcol] = pd.to_numeric(df[numcol], errors="coerce")
-        # print(df)
-        # return df
 
     def get_all_rel_wells2(self):
         def convert_conc(sec, ts, ts_dir, rng, rng_dir, baseline):
@@ -706,9 +742,8 @@ class SetupRelativeCoordsPage:
                                 "minutes": int, "bearing": int})
 
         output.to_sql('tsr_plats_surveys', self.conn, index=False, if_exists='replace')
-        # print(output)
 
-    def run_plat_well_tracer(self, plat_data):
+    def run_plat_well_tracer(self, init_plat, initial_plat_conc):
         def get_dataframe_from_qtableview():
             # Get the model
             model = self.ui.dx_survey_table_mod.model()
@@ -739,27 +774,79 @@ class SetupRelativeCoordsPage:
             df = pd.DataFrame(data, columns=headers)
             return df
 
-        grouped = plat_data.groupby(['order'])
-        initial_plat_conc, init_plat_data = next(iter(grouped))
-        init_plat = convert_to_pts(init_plat_data)
         well_path = get_dataframe_from_qtableview()
         dirLst = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
         starter_pt = get_starter_pt(well_path.iloc[0], init_plat)
         used_pt = starter_pt
-        print('used', used_pt)
+        current_plat = [i[:2] for i in init_plat]
+        xMin, xMax, yMin, yMax = Polygon(current_plat).bounds
+
+        all_plats_dict = {initial_plat_conc:current_plat}
+        conc = initial_plat_conc
+        version = 0
+        self.currently_used_plat_data = self.collect_relative_data()
         for x, row in well_path.iterrows():
-            print([row['delta_x'], row['delta_y']])
             delta_x, delta_y = float(row['delta_x']) * 0.3048, float(row['delta_y']) * 0.3048
             used_pt = [used_pt[0] + delta_x, used_pt[1] + delta_y]
-            # dir_val, index = get_direction(used_pt, xMin, xMax, yMin, yMax)
-        #     index = dirLst.index(dir_val)
-        #     if not dir_val:
-        #         return
-        #     if current_plat.contains(Point(used_pt)):
-        #         well_path.at[x, 'rel_plat_conc'] = conc
-        #     pass
+            dir_val, index = get_direction(used_pt, xMin, xMax, yMin, yMax)
+            print(dir_val)
+            for k, v in all_plats_dict.items():
+                if Polygon(v).contains(Point(used_pt)):
+                    well_path.at[x, 'rel_plat_conc'] = conc
+                else:
 
-    # self.ui.plat_searcher_combo_box.activated.connect(self.plat_searcher_combo_process)
+                    pass
+
+    def stitcher_process(self, newPlat, section, direction, path, coordLst, valsLstTot):
+        valsLst = getPlatVals(newPlat, section, path)
+        coords = [0] * 20
+        if direction == "E":
+            coords, valsLst = ExcelGetNewCoords.directionE(coords, coordLst, valsLst, valsLstTot)
+            return coords, valsLst
+        # elif direction == 'W':
+        #     coords, valsLst = ExcelGetNewCoords.directionW(coords, coordLst, valsLst, valsLstTot)
+        #     return coords, valsLst
+        # elif direction == 'S':
+        #     coords, valsLst = ExcelGetNewCoords.directionS(coords, coordLst, valsLst, valsLstTot)
+        #     return coords, valsLst
+        # elif direction == 'N':
+        #     coords, valsLst = ExcelGetNewCoords.directionN(coords, coordLst, valsLst, valsLstTot)
+        #     return coords, valsLst
+
+    def directionE(self, coords, coordLst, valsLst, valsLstTot):
+        lineS = [valsLst[0], valsLst[1], valsLst[2], valsLst[3]]
+        lineN = [valsLst[11], valsLst[10], valsLst[9], valsLst[8]]
+        lineE = [valsLst[7], valsLst[6], valsLst[5], valsLst[4]]
+        lineW = [valsLst[12], valsLst[13], valsLst[14], valsLst[15]]
+        # oldLineE = [valsLstTot[-1][7], valsLstTot[-1][6], valsLstTot[-1][5], valsLstTot[-1][4]]
+
+        if len(coordLst) == 4:
+            coordLst = list(itertools.chain.from_iterable(coordLst))
+
+        coords[0] = coordLst[4]
+
+        for i in range(6):
+            coords[14 + i] = coordLst[10 - i]
+
+        # coords = unevenSideChecker(oldLineE, lineW, coords, 'E')
+
+        for i in range(4):
+            coords[i + 1] = list(intersectCircleAndLine(coords[i][0], coords[i][1], lineS[i][1], lineS[i][0], 'E'))
+            coords[13 - i] = list(
+                intersectCircleAndLine(coords[14 - i][0], coords[14 - i][1], lineN[i][1], lineN[i][0], 'E'))
+
+        coords[9] = coords[10]
+        coords[5] = coords[4]
+
+        for i in range(3):
+            coords[8 - i] = list(
+                intersectCircleAndLine(coords[9 - i][0], coords[9 - i][1], lineE[i][1], lineE[i][0], 'S'))
+
+        return coords, valsLst
+
+
+    def gather_new_plat(self, version):
+        pass
 
 
 def get_starter_pt(row, current_plat):
@@ -776,7 +863,7 @@ def get_starter_pt(row, current_plat):
     else:
         fewl_val = row['FWL']
         fewl = 'FWL'
-    out = find_point_from_footages(current_plat, fnsl_val, fnsl, fewl_val, fewl)
+    out = find_point_from_footages(current_plat, float(fnsl_val), fnsl, float(fewl_val), fewl)
     return out
 
 
