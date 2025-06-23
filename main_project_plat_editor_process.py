@@ -1,3 +1,5 @@
+import itertools
+
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QLineEdit, QSpinBox,
                              QCheckBox,
@@ -785,11 +787,12 @@ class SetupRelativeCoordsPage:
         conc = initial_plat_conc
         version = 0
         self.currently_used_plat_data = self.collect_relative_data()
+        print(self.currently_used_plat_data)
         for x, row in well_path.iterrows():
             delta_x, delta_y = float(row['delta_x']) * 0.3048, float(row['delta_y']) * 0.3048
             used_pt = [used_pt[0] + delta_x, used_pt[1] + delta_y]
             dir_val, index = get_direction(used_pt, xMin, xMax, yMin, yMax)
-            print(dir_val)
+            # print(dir_val)
             for k, v in all_plats_dict.items():
                 if Polygon(v).contains(Point(used_pt)):
                     well_path.at[x, 'rel_plat_conc'] = conc
@@ -801,7 +804,7 @@ class SetupRelativeCoordsPage:
         valsLst = getPlatVals(newPlat, section, path)
         coords = [0] * 20
         if direction == "E":
-            coords, valsLst = ExcelGetNewCoords.directionE(coords, coordLst, valsLst, valsLstTot)
+            coords, valsLst = self.directionE(coords, coordLst, valsLst, valsLstTot)
             return coords, valsLst
         # elif direction == 'W':
         #     coords, valsLst = ExcelGetNewCoords.directionW(coords, coordLst, valsLst, valsLstTot)
@@ -831,20 +834,66 @@ class SetupRelativeCoordsPage:
         # coords = unevenSideChecker(oldLineE, lineW, coords, 'E')
 
         for i in range(4):
-            coords[i + 1] = list(intersectCircleAndLine(coords[i][0], coords[i][1], lineS[i][1], lineS[i][0], 'E'))
+            coords[i + 1] = list(self.intersectCircleAndLine(coords[i][0], coords[i][1], lineS[i][1], lineS[i][0], 'E'))
             coords[13 - i] = list(
-                intersectCircleAndLine(coords[14 - i][0], coords[14 - i][1], lineN[i][1], lineN[i][0], 'E'))
+                self.intersectCircleAndLine(coords[14 - i][0], coords[14 - i][1], lineN[i][1], lineN[i][0], 'E'))
 
         coords[9] = coords[10]
         coords[5] = coords[4]
 
         for i in range(3):
             coords[8 - i] = list(
-                intersectCircleAndLine(coords[9 - i][0], coords[9 - i][1], lineE[i][1], lineE[i][0], 'S'))
+                self.intersectCircleAndLine(coords[9 - i][0], coords[9 - i][1], lineE[i][1], lineE[i][0], 'S'))
 
         return coords, valsLst
 
+    def intersectCircleAndLine(self, a, b, mr, r, dir):
+        if mr == 0 or mr == 180 or mr == 90 and r == 0:
+            return a, b
 
+        if mr < 90:
+            m = math.tan(math.radians(90 - mr))
+        if 95 > mr >= 90:
+            m = math.tan(math.radians(90 - mr))
+        if mr >= 180:
+            m = math.tan(math.radians(90 - (mr - 180)))
+        if 180 > mr > 175:
+            m = math.tan(math.radians(90 - (mr - 180)))
+
+        d = b - (m * a)
+
+        den = (1 + m ** 2)
+        ang = (r ** 2 * den) - (b - m * a - d) ** 2
+        sqAng = math.sqrt(ang)
+        x1 = (a + b * m - d * m + sqAng) / den
+        x2 = (a + b * m - d * m - sqAng) / den
+
+        y1 = (d + (a * m) + (b * m ** 2) + (m * sqAng)) / den
+        y2 = (d + (a * m) + (b * m ** 2) - (m * sqAng)) / den
+
+        if dir == 'E':
+            if x1 > a:
+                return [x1, y1]
+            elif x2 > a:
+                return [x2, y2]
+
+        elif dir == 'W':
+            if a > x1:
+                return [x1, y1]
+            elif a > x2:
+                return [x2, y2]
+
+        elif dir == 'S':
+            if y1 < b:
+                return [x1, y1]
+            elif y2 < b:
+                return [x2, y2]
+
+        elif dir == 'N':
+            if y1 > b:
+                return [x1, y1]
+            elif y2 > b:
+                return [x2, y2]
     def gather_new_plat(self, version):
         pass
 
@@ -952,6 +1001,7 @@ class PlatEditorProcess:
             else:
                 # adj_sections = find_adjacent_sections(self.location_db, conc)
                 new_plat = get_plat_adjacency_dict(conc, index)
+                print('new_plat', new_plat)
 
     def get_new_plat_data(self):
         pass

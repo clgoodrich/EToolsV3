@@ -123,7 +123,7 @@ class SQLConnector:
     def _create_connection_string(self):
         """Create connection string with caching."""
         credentials = self._get_credentials()
-        # credentials = {}
+        credentials = {}
         if credentials:
             # Production connection
             params = {
