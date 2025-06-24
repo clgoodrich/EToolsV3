@@ -131,7 +131,8 @@ def convert_to_pts(plat):
         xy_lst.append([x, y, dir_order[test]])
         x, y = new_point_finder(float(row['length']), float(row['decimal_azimuth']), x, y)
     xy_lst.append([x, y, dir_order[test]])
-    return tuple(xy_lst)
+    print(xy_lst)
+    return tuple(xy_lst[:-1])
 
 
 def find_adjacent_sections(conn, conc_code):
@@ -509,6 +510,8 @@ class SetupRelativeCoordsPage:
                 tbl.setShowGrid(True)
                 tbl.show()
 
+        all_plats_dict = {}
+        self.currently_used_plat_data = pd.DataFrame()
         cols = ["length", "degrees", "minutes", "seconds", "bearing_str"]
         current_label = combo.itemText(index)
         query = f"select * from tsr_plats_surveys where label = '{current_label}'"
@@ -517,15 +520,36 @@ class SetupRelativeCoordsPage:
         fill_calls_models()
         fill_calls_data()
         self.currently_used_plat_data = self.collect_relative_data()
-        # used_indexes = self.currently_used_plat_data['order'].unique()
-        grouped = self.currently_used_plat_data.groupby(['order'])
+        consecutive_codes, _ = pd.factorize(self.currently_used_plat_data['order'])
+        self.currently_used_plat_data['range'] = consecutive_codes + 1
+        grouped = self.currently_used_plat_data.groupby(['range'])
+        # print("______________________________________")
+        for x, df in grouped:
+            # print("__________________")
+            # print(x)
+            # print(all_plats_dict)
+            plat_coords = convert_to_pts(df)
+            # print(plat_coords)
+            conc = df['conc'].iloc[0]
+            all_plats_dict[conc] = plat_coords
+        # for k, v in all_plats_dict.items():
+        #     print(k, [v])
+        # print("______________________________________")
+        # print('dict here')
 
-        # used_df = self.currently_used_plat_data[self.currently_used_plat_data['order']==version]
-        initial_plat_conc, init_plat_data = self.currently_used_plat_data[self.currently_used_plat_data['order']==version]['conc'].iloc[0], self.currently_used_plat_data[self.currently_used_plat_data['order']==version]
-        print(initial_plat_conc)
-        init_plat = convert_to_pts(init_plat_data)
-        self.draw_plat_solo(init_plat, version)
-        self.run_plat_well_tracer(init_plat=init_plat, initial_plat_conc = initial_plat_conc)
+        initial_plat_conc = self.currently_used_plat_data[self.currently_used_plat_data['order']==version]['conc'].iloc[0]
+        # initial_plat_conc, init_plat_data = self.currently_used_plat_data[self.currently_used_plat_data['order']==version]['conc'].iloc[0], self.currently_used_plat_data[self.currently_used_plat_data['order']==version]
+
+        result = {
+            key: {direction: [item[:2] for item in group] for direction, group in
+                  itertools.groupby(value, key=lambda x: x[2])}
+            for key, value in all_plats_dict.items()
+        }
+        # for key, value in all_plats_dict.items():
+        # print(result)
+        # init_plat = convert_to_pts(init_plat_data)
+        self.draw_plat_solo(all_plats_dict[initial_plat_conc], version)
+        self.run_plat_well_tracer(current_plat_coords=result[initial_plat_conc], current_plat_conc = initial_plat_conc, all_plats_dict = result)
 
     def grapher(self, data):
         x_coords = [point[0] for point in data]
@@ -745,7 +769,8 @@ class SetupRelativeCoordsPage:
 
         output.to_sql('tsr_plats_surveys', self.conn, index=False, if_exists='replace')
 
-    def run_plat_well_tracer(self, init_plat, initial_plat_conc):
+    def run_plat_well_tracer(self, current_plat_coords, current_plat_conc, all_plats_dict):
+        # ModuleAgnostic.printFunctionName()
         def get_dataframe_from_qtableview():
             # Get the model
             model = self.ui.dx_survey_table_mod.model()
@@ -775,32 +800,60 @@ class SetupRelativeCoordsPage:
             # Create pandas DataFrame
             df = pd.DataFrame(data, columns=headers)
             return df
+        dirLst = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 
         well_path = get_dataframe_from_qtableview()
-        dirLst = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
-        starter_pt = get_starter_pt(well_path.iloc[0], init_plat)
+        result_coords = [item[:2] + [k] for k, v in current_plat_coords.items() for item in v]
+        starter_pt = get_starter_pt(well_path.iloc[0], result_coords)
         used_pt = starter_pt
-        current_plat = [i[:2] for i in init_plat]
-        xMin, xMax, yMin, yMax = Polygon(current_plat).bounds
 
-        all_plats_dict = {initial_plat_conc:current_plat}
-        conc = initial_plat_conc
-        version = 0
-        self.currently_used_plat_data = self.collect_relative_data()
-        print(self.currently_used_plat_data)
+        current_plat_coords_modified = [i[:2] for i in result_coords]
+        prev_plat_coords = current_plat_coords
+        next_plat_coords = None
+        current_plat_df = self.currently_used_plat_data[self.currently_used_plat_data['range'] == 1]
+        prev_plat_df = current_plat_df
+        next_plat_df = None
+
+        xMin, xMax, yMin, yMax = Polygon(current_plat_coords_modified).bounds
+
+        counter = 2
+
         for x, row in well_path.iterrows():
             delta_x, delta_y = float(row['delta_x']) * 0.3048, float(row['delta_y']) * 0.3048
             used_pt = [used_pt[0] + delta_x, used_pt[1] + delta_y]
             dir_val, index = get_direction(used_pt, xMin, xMax, yMin, yMax)
-            # print(dir_val)
-            for k, v in all_plats_dict.items():
-                if Polygon(v).contains(Point(used_pt)):
-                    well_path.at[x, 'rel_plat_conc'] = conc
-                else:
-
+            if Polygon(current_plat_coords_modified).contains(Point(used_pt)):
+                well_path.at[x, 'rel_plat_conc'] = current_plat_conc
+            else:
+                try:
+                    next_plat_df = self.currently_used_plat_data[self.currently_used_plat_data['range'] == counter]
+                    next_plat_conc = next_plat_df['conc'].iloc[0]
+                    next_plat_coords = all_plats_dict[next_plat_conc]
+                    self.stitcher_process(next_plat_df, current_plat_df, next_plat_coords,current_plat_coords,next_plat_conc, dir_val)
+                    print(foo)
+                    counter +=1
+                except IndexError as e:
                     pass
+            # for i in used_plats:
+            #     used_poly = all_plats_dict[i]
+            #     if Polygon(used_poly).contains(Point(used_pt)):
+            #         well_path.at[x, 'rel_plat_conc'] = conc
+            #     else:
+            #         pass
+            # for k, v in all_plats_dict.items():
+            #     if Polygon(v).contains(Point(used_pt)):
+            #         well_path.at[x, 'rel_plat_conc'] = conc
+            #     else:
+            #
+            #         pass
 
-    def stitcher_process(self, newPlat, section, direction, path, coordLst, valsLstTot):
+    def stitcher_process(self, next_plat_df, current_plat_df, next_plat_coords,current_plat_coords,next_plat_conc, dir_val):
+
+        coords = [0] * 20
+        if dir_val == "E":
+            self.directionE(next_plat_df, next_plat_coords, current_plat_coords, next_plat_conc, dir_val)
+            # return coords, valsLst
+    def stitcher_process2(self, newPlat, section, direction, path, coordLst, valsLstTot):
         valsLst = getPlatVals(newPlat, section, path)
         coords = [0] * 20
         if direction == "E":
@@ -816,12 +869,40 @@ class SetupRelativeCoordsPage:
         #     coords, valsLst = ExcelGetNewCoords.directionN(coords, coordLst, valsLst, valsLstTot)
         #     return coords, valsLst
 
-    def directionE(self, coords, coordLst, valsLst, valsLstTot):
+    def directionE(self, next_plat_df, next_plat_coords, current_plat_coords, conc, direction):
+        coords = [0] * 20
+        # updated_coords = []
+        # print(next_plat_coords)
+        # print(current_plat_coords)
+        original_plat = [item[:2] for k, v in current_plat_coords.items() for item in v]
+        new_plat = [item[:2] for k, v in next_plat_coords.items() for item in v]
+        # print(original_plat)
+        # print(new_plat)
+        lineS = next_plat_coords['south']
+        lineN = next_plat_coords['north']
+        lineE = next_plat_coords['east']
+        lineW = next_plat_coords['west']
+        coords[0] = original_plat[4]
+        for i in range(6):
+            coords[14 + i] = original_plat[10 - i]
+
+        for i in range(4):
+            coords[i + 1] = list(self.intersectCircleAndLine(coords[i][0], coords[i][1], lineS[i][1], lineS[i][0], 'E'))
+            coords[13 - i] = list(
+                self.intersectCircleAndLine(coords[14 - i][0], coords[14 - i][1], lineN[i][1], lineN[i][0], 'E'))
+        coords[9] = coords[10]
+        coords[5] = coords[4]
+
+        for i in range(3):
+            coords[8 - i] = list(
+                self.intersectCircleAndLine(coords[9 - i][0], coords[9 - i][1], lineE[i][1], lineE[i][0], 'S'))
+        print(coords)
+        pass
+    def directionE2(self, coords, coordLst, valsLst, valsLstTot):
         lineS = [valsLst[0], valsLst[1], valsLst[2], valsLst[3]]
         lineN = [valsLst[11], valsLst[10], valsLst[9], valsLst[8]]
         lineE = [valsLst[7], valsLst[6], valsLst[5], valsLst[4]]
         lineW = [valsLst[12], valsLst[13], valsLst[14], valsLst[15]]
-        # oldLineE = [valsLstTot[-1][7], valsLstTot[-1][6], valsLstTot[-1][5], valsLstTot[-1][4]]
 
         if len(coordLst) == 4:
             coordLst = list(itertools.chain.from_iterable(coordLst))
@@ -830,8 +911,6 @@ class SetupRelativeCoordsPage:
 
         for i in range(6):
             coords[14 + i] = coordLst[10 - i]
-
-        # coords = unevenSideChecker(oldLineE, lineW, coords, 'E')
 
         for i in range(4):
             coords[i + 1] = list(self.intersectCircleAndLine(coords[i][0], coords[i][1], lineS[i][1], lineS[i][0], 'E'))
@@ -894,6 +973,8 @@ class SetupRelativeCoordsPage:
                 return [x1, y1]
             elif y2 > b:
                 return [x2, y2]
+
+
     def gather_new_plat(self, version):
         pass
 
@@ -1001,7 +1082,7 @@ class PlatEditorProcess:
             else:
                 # adj_sections = find_adjacent_sections(self.location_db, conc)
                 new_plat = get_plat_adjacency_dict(conc, index)
-                print('new_plat', new_plat)
+                # print('new_plat', new_plat)
 
     def get_new_plat_data(self):
         pass

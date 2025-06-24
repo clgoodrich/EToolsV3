@@ -286,7 +286,7 @@ class ETools(QMainWindow):
         # 4301950099
         # 4304757090
         #4304757728
-        self.ui.well_api_val.setText('4304757728')
+        self.ui.well_api_val.setText('4304757090')
 
         self.button_group = QButtonGroup(self.ui.survey_type_widget)
         self.button_group.setExclusive(True)
