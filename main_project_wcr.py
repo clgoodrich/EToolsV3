@@ -208,7 +208,7 @@ class WCR_Main:
         # wcr_info[list_dates] = wcr_info[list_dates] \
         #     .apply(lambda ser: ser.dt.strftime('%Y-%m-%d'))
         # # wcr_info[list_dates] = wcr_info[list_dates].dt.strftime('%Y-%m-%d')
-        print(wcr_info)
+        print([wcr_info['CompletedOrAbandonedDate'].iloc[0]])
         info_vals = [wcr_info['WellNameNumber'].iloc[0],
                      wcr_info['APINumber'].iloc[0],
                      wcr_info['OperatorName'].iloc[0],

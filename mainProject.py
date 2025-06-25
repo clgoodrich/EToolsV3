@@ -286,7 +286,7 @@ class ETools(QMainWindow):
         # 4301950099
         # 4304757090
         #4304757728
-        self.ui.well_api_val.setText('4304757090')
+        self.ui.well_api_val.setText('4304757728')
 
         self.button_group = QButtonGroup(self.ui.survey_type_widget)
         self.button_group.setExclusive(True)
@@ -485,21 +485,24 @@ class ETools(QMainWindow):
         def filter_by_citing_type():
             lst_data = [survey]
             for citing, group in survey.groupby('CitingType'):
-                lower_row = group[group['measured_depth'].astype(float) < md].iloc[-1]
-                upper_row = group[group['measured_depth'].astype(float) > md].iloc[0]
-                new_row = {'measured_depth': md}
-                new_row['inclination'] = np.interp(md,
-                                                   [float(lower_row['measured_depth']),
-                                                    float(upper_row['measured_depth'])],
-                                                   [float(lower_row['inclination']), float(upper_row['inclination'])])
-                new_row['azimuth'] = np.interp(md,
-                                               [float(lower_row['measured_depth']), float(upper_row['measured_depth'])],
-                                               [float(lower_row['azimuth']), float(upper_row['azimuth'])])
-                new_row['CitingType'] = lower_row['CitingType']
-                new_row['SurfaceLatitude'] = lower_row['SurfaceLatitude']
-                new_row['SurfaceLongitude'] = lower_row['SurfaceLongitude']
-                new_row['LateralName'] = lower_row['LateralName']
-                lst_data.append(pd.DataFrame([new_row]))
+                try:
+                    lower_row = group[group['measured_depth'].astype(float) < md].iloc[-1]
+                    upper_row = group[group['measured_depth'].astype(float) > md].iloc[0]
+                    new_row = {'measured_depth': md}
+                    new_row['inclination'] = np.interp(md,
+                                                       [float(lower_row['measured_depth']),
+                                                        float(upper_row['measured_depth'])],
+                                                       [float(lower_row['inclination']), float(upper_row['inclination'])])
+                    new_row['azimuth'] = np.interp(md,
+                                                   [float(lower_row['measured_depth']), float(upper_row['measured_depth'])],
+                                                   [float(lower_row['azimuth']), float(upper_row['azimuth'])])
+                    new_row['CitingType'] = lower_row['CitingType']
+                    new_row['SurfaceLatitude'] = lower_row['SurfaceLatitude']
+                    new_row['SurfaceLongitude'] = lower_row['SurfaceLongitude']
+                    new_row['LateralName'] = lower_row['LateralName']
+                    lst_data.append(pd.DataFrame([new_row]))
+                except IndexError:
+                    pass
             return lst_data
 
         md = float(self.ui.new_md_survey_box.text())
