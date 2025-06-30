@@ -1,4 +1,5 @@
 import json
+import textwrap
 
 from tabulate import tabulate
 from datetime import datetime
@@ -620,7 +621,17 @@ def printFunctionName():
     print('\nFUNCTION CALLED:', calframe[1][3])
 
 def printDataframe(df):
-    print(tabulate(df, headers='keys'))
+    df_wrapped = df.applymap(lambda x: wrap_cell(x, 30))
+    print(tabulate(
+        df_wrapped,
+        headers="keys",
+        tablefmt="psql",
+        showindex=False
+    ))
+    # print(tabulate(df, headers='keys'))
+
+def wrap_cell(txt, width=30):
+    return "\n".join(textwrap.wrap(str(txt), width=width))
 def conv_angle(I13, J13):
     E44 = 12
     # I13, J13 = 40.25773955113004, 109.93833062548505

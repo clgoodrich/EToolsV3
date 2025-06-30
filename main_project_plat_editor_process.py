@@ -557,6 +557,9 @@ class SetupRelativeCoordsPage:
         self.currently_used_plat_data = self.collect_relative_data()
         consecutive_codes, _ = pd.factorize(self.currently_used_plat_data['order'])
         self.currently_used_plat_data['range'] = consecutive_codes + 1
+        ModuleAgnostic.printDF(self.currently_used_plat_data)
+        # print(self.currently_used_plat_data.to_markdown())
+        # print(self.currently_used_plat_data)
         grouped = self.currently_used_plat_data.groupby(['range'])
         all_conc_codes = []
         for x, df in grouped:
@@ -901,6 +904,7 @@ class SetupRelativeCoordsPage:
         # print(current_plat_coords)
         # print(next_plat_coords)
         coords = [0] * 20
+        print(dir_val)
         if dir_val == "E":
             # aligned = self.glue_plat(
             #     orientation='east',
@@ -1021,25 +1025,30 @@ class SetupRelativeCoordsPage:
         old_line_w = current_plat_coords['west']
 
         line_s = np.array(next_plat_coords['south'])
-        line_n = next_plat_coords['north']
+        line_n = np.array(next_plat_coords['north'])
         line_e = next_plat_coords['east']
         line_w = next_plat_coords['west']
 
-        new_line_s = []
-        new_line_n = []
-        new_line_e = line_w[::-1]
-        new_line_w = []
+        new_line_w = old_line_e[::-1]
+        south_pt = new_line_w[-1]
+        north_pt = new_line_w[0]
 
 
-        coords[0] = original_plat[4]
-        for i in range(6):
-            coords[14 + i] = original_plat[10 - i]
-
-        for i in range(4):
-            starting_pt =
-
-        for i in range(4):
-            coords[i + 1] = list(self.intersect_circle_and_line(coords[i][0], coords[i][1], lineS[i][1], lineS[i][0], 'E'))
+        new_line_s = (line_s + [south_pt]).tolist()
+        new_line_n = (line_n + [north_pt]).tolist()
+        new_line_e = []
+        print(new_line_w)
+        # coords = new_line_s + new_line_w
+        coords = new_line_w
+        # coords[0] = original_plat[4]
+        # for i in range(6):
+        #     coords[14 + i] = original_plat[10 - i]
+        #
+        # for i in range(4):
+        #     starting_pt =
+        #
+        # for i in range(4):
+        #     coords[i + 1] = list(self.intersect_circle_and_line(coords[i][0], coords[i][1], lineS[i][1], lineS[i][0], 'E'))
             # coords[13 - i] = list(
             #     self.intersect_circle_and_line(coords[14 - i][0], coords[14 - i][1], lineN[i][1], lineN[i][0], 'E'))
         # coords[9] = coords[10]
