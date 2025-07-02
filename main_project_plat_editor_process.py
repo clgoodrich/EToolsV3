@@ -1,3 +1,4 @@
+import copy
 import itertools
 
 from PyQt5.QtCore import Qt
@@ -547,8 +548,23 @@ class SetupRelativeCoordsPage:
                 tbl.setShowGrid(True)
                 tbl.show()
 
+        def data_frame_plat_builder():
+            rows = []
+            for _rng, df_build in grouped:
+                _conc = df_build['conc'].iloc[0]
+                coords_build = convert_to_pts(df_build)
+                df_pts = pd.DataFrame(coords_build, columns=['x', 'y', 'side'])
+                df_pts['conc'] = _conc
+                df_pts['point_i'] = df_pts.groupby('side').cumcount()
+                rows.append(df_pts)
+            plat_df = pd.concat(rows, ignore_index=True)
+            plat_df = plat_df[['conc', 'side', 'point_i', 'x', 'y']]
+            return plat_df
+
+
         all_plats_dict = {}
         self.currently_used_plat_data = pd.DataFrame()
+
         cols = ["length", "degrees", "minutes", "seconds", "bearing_str"]
         current_label = combo.itemText(index)
         query = f"select * from tsr_plats_surveys where label = '{current_label}'"
@@ -559,16 +575,19 @@ class SetupRelativeCoordsPage:
         self.currently_used_plat_data = self.collect_relative_data()
         consecutive_codes, _ = pd.factorize(self.currently_used_plat_data['order'])
         self.currently_used_plat_data['range'] = consecutive_codes + 1
+        initial_plat_conc = self.currently_used_plat_data[self.currently_used_plat_data['order'] == version]['conc'].iloc[0]
 
         grouped = self.currently_used_plat_data.groupby(['range'])
+
+
         all_conc_codes = []
+
         for x, df in grouped:
             plat_coords = convert_to_pts(df)
             conc = df['conc'].iloc[0]
             all_plats_dict[conc] = plat_coords
             all_conc_codes.append(conc)
         all_conc_codes = tuple(all_conc_codes)
-        initial_plat_conc = self.currently_used_plat_data[self.currently_used_plat_data['order'] == version]['conc'].iloc[0]
         result = {
             key: {direction: [item[:2] for item in group] for direction, group in
                   itertools.groupby(value, key=lambda x: x[2])}
@@ -576,8 +595,13 @@ class SetupRelativeCoordsPage:
         }
         # for key, value in all_plats_dict.items():
         # init_plat = convert_to_pts(init_plat_data)
+        # output_polygons = self.run_plat_well_tracer_4(current_plat_coords=result[all_conc_codes[0]], current_plat_conc=all_conc_codes[0], all_plats_dict=result)
         self.draw_plat_solo(all_plats_dict[initial_plat_conc], version)
-        self.run_plat_well_tracer(current_plat_coords=result[all_conc_codes[0]], current_plat_conc=all_conc_codes[0], all_plats_dict=result)
+
+        plat_df = data_frame_plat_builder()
+        plat_df_conc = plat_df['conc'].unique()
+        output_polygons = self.run_plat_well_tracer(current_plat_coords=plat_df[plat_df['conc']==plat_df_conc[0]],
+                                                    current_plat_conc=plat_df_conc[0], all_plats_dict=plat_df)
 
     def grapher(self, data):
         x_coords = [point[0] for point in data]
@@ -607,6 +631,21 @@ class SetupRelativeCoordsPage:
         plt.title('XY Plot')
         plt.grid(True, alpha=0.3)
         plt.axis('equal')
+        plt.show()
+    def graph_one_polygon(self, poly):
+        x, y = poly.exterior.xy
+
+        # x_coords_1 = [point[0] for point in data1]
+        # y_coords_1 = [point[1] for point in data1]
+
+        fig, ax = plt.subplots()
+
+        # 4. Plot the exterior of the polygon
+        # The '*' unpacks the x and y coordinate lists
+        ax.plot(x, y, color='blue', linewidth=3)
+
+        # 5. Set aspect ratio and display the plot
+        ax.set_aspect('equal', 'box')
         plt.show()
 
     def draw_plat_solo(self, plat, version):
@@ -879,7 +918,7 @@ class SetupRelativeCoordsPage:
         ax.set_ylabel('Y')
         ax.set_title('Polygon × LineString Intersection')
         plt.show()
-    def run_plat_well_tracer(self, current_plat_coords, current_plat_conc, all_plats_dict):
+    def run_plat_well_tracer_4(self, current_plat_coords, current_plat_conc, all_plats_dict):
         def well_path_prox(intersection, side_dict_all, direction, tol=1e-8):
             pt = intersection if isinstance(intersection, Point) else Point(intersection)
 
@@ -928,8 +967,6 @@ class SetupRelativeCoordsPage:
                     side_prox = True
                     # side_prox = False
                 return side_prox
-            
-            
         def find_crossing_segments(boundary, well_path):
             for i in range(len(coords) - 1):
                 seg = LineString([coords[i], coords[i + 1]])
@@ -943,7 +980,6 @@ class SetupRelativeCoordsPage:
                     crossings.append((i, seg, pts))
 
             return crossings
-
         def get_offset_added_delta(dx, dy):
             return starter_pt[0] + float(dx) * 0.3048, starter_pt[1] + float(dy) * 0.3048
         def get_dataframe_from_qtableview():
@@ -975,88 +1011,82 @@ class SetupRelativeCoordsPage:
             # Create pandas DataFrame
             df = pd.DataFrame(data, columns=headers)
             return df
+        def df_to_polygon(df):
+            all_cells = np.ravel(df.to_numpy(), order='F').tolist()
+            coords_unique = [list(t) for t in dict.fromkeys(map(tuple, all_cells))]
+            ring = [tuple(pt) for pt in coords_unique]
+            return Polygon(ring)
 
-        dirLst = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 
         well_path = get_dataframe_from_qtableview()
         result_coords = [item[:2] + [k] for k, v in current_plat_coords.items() for item in v]
         starter_pt = get_starter_pt(well_path.iloc[0], result_coords)
+        dx_start, dy_start = (float(well_path['easting'].iloc[0]) /0.3048) - starter_pt[0], (float(well_path['northing'].iloc[0]) /0.3048) - starter_pt[1]
 
         well_path[['e_offset_delta', 'n_offset_delta']] = (well_path.apply(lambda row: get_offset_added_delta(row['e_offset'], row['n_offset']), axis=1, result_type='expand'))
         well_path['rel_data_order'] = 99
-        # print(all_plats_dict)
-        # print(current_plat_coords)
         current_plat_coords_modified = [i[:2] for i in result_coords]
-        current_plat_coords_dict = all_plats_dict[current_plat_conc]
-        prev_plat_coords = current_plat_coords
-        next_plat_coords = None
-        current_plat_df = self.currently_used_plat_data[self.currently_used_plat_data['range'] == 1]
-        next_plat_coords_dict = {}
-        prev_plat_df = current_plat_df
-        next_plat_df = None
-        print(current_plat_conc)
-        xMin, xMax, yMin, yMax = Polygon(current_plat_coords_modified).bounds
+        current_polygon = Polygon(current_plat_coords_modified)
+        xMin, xMax, yMin, yMax = current_polygon.bounds
 
         counter = 2
 
-        column_names = ['x', 'y']
-        # test_df = pd.DataFrame(data = current_plat_coords_modified, columns=column_names)
-        # test_df.to_csv('current_plat_coords_modified.csv', index=False)
         intersection_segment = LineString(list(zip(well_path['e_offset_delta'], well_path['n_offset_delta'])))
         while True:
-            polygon_plat = Polygon(current_plat_coords_modified)
+            polygon_plat = current_polygon
             pts = [Point(x, y) for x, y in zip(well_path.e_offset_delta, well_path.n_offset_delta)]
             mask = [polygon_plat.contains(pt) for pt in pts]
             well_path.loc[mask, 'rel_data_order'] = counter-1
-            # mask_inside = well_path.apply(lambda w_row: polygon_plat.contains(Point(w_row['e_offset_delta'], w_row['n_offset_delta'])),  axis=1)
             boundary = polygon_plat.exterior
             intersection_pt = intersection_segment.intersection(boundary)
-
-            dir_val, index = get_direction((intersection_pt.x, intersection_pt.y), xMin, xMax, yMin, yMax)
+            try:
+                dir_val, index = get_direction((intersection_pt.x, intersection_pt.y), xMin, xMax, yMin, yMax)
+            except AttributeError:
+                # for k, v in all_plats_dict.items():
+                #     for r,s in v.items()
+                for k, v in all_plats_dict.items():
+                    print(k, v)
+                return all_plats_dict
             next_plat_df = self.currently_used_plat_data[self.currently_used_plat_data['range'] == counter]
-            next_plat_conc = next_plat_df['conc'].iloc[0]
+            try:
+                next_plat_conc = next_plat_df['conc'].iloc[0]
+            except IndexError:
+                break
             next_plat_coords_dict = all_plats_dict[next_plat_conc]
             next_plat_coords = [tuple(item) for k, v in next_plat_coords_dict.items() for item in v]
-
             well_prox_boo = well_path_prox(intersection = intersection_pt, side_dict_all=next_plat_coords_dict, direction=dir_val)
-            self.coords_stitcher(all_plats_dict[next_plat_conc], all_plats_dict[current_plat_conc], dir_val, well_prox_boo)
-
-            self.coords_stitcher_2(next_plat_coords, current_plat_coords_modified, dir_val, well_prox_boo)
-            print(next_plat_conc, current_plat_conc)
-
-
+            rewritten_coords = self.coords_stitcher_3(all_plats_dict[next_plat_conc], all_plats_dict[current_plat_conc], dir_val, well_prox_boo)
+            current_polygon = df_to_polygon(rewritten_coords)
+            new_dict = rewritten_coords.to_dict(orient='list')
+            all_plats_dict[next_plat_conc] = new_dict
             counter += 1
-            current_plat_coords_modified = next_plat_coords
+            # current_plat_coords_modified = next_plat_coords
             current_plat_conc = next_plat_conc
-            # self.plot_intersection(polygon_plat, intersection_segment)
-            print(foo)
 
-        print()
-        for x, row in well_path.iterrows():
-            polygon_plat = Polygon(current_plat_coords_modified)
-
-            boundary = polygon_plat.exterior
-            delta_x, delta_y = float(row['delta_x']) * 0.3048, float(row['delta_y']) * 0.3048
-            used_pt = [used_pt[0] + delta_x, used_pt[1] + delta_y]
-            dir_val, index = get_direction(used_pt, xMin, xMax, yMin, yMax)
-            intersection_pt = intersection_segment.intersection(boundary)
-            self.plot_intersection(polygon_plat, intersection_segment)
-
-            if polygon_plat.contains(Point(used_pt)):
-                well_path.at[x, 'rel_plat_conc'] = current_plat_conc
-            else:
-                try:
-                    intersection_pt = intersection_segment.intersection(boundary)
-                    self.plot_intersection(polygon_plat, intersection_segment)
-                    next_plat_df = self.currently_used_plat_data[self.currently_used_plat_data['range'] == counter]
-                    if not next_plat_df.empty:
-                        print(next_plat_df)
-                    next_plat_conc = next_plat_df['conc'].iloc[0]
-                    next_plat_coords = all_plats_dict[next_plat_conc]
-                    self.stitcher_process(next_plat_df, current_plat_df, next_plat_coords, current_plat_coords, next_plat_conc, dir_val)
-                    counter += 1
-                except IndexError as e:
-                    pass
+        # for x, row in well_path.iterrows():
+        #     polygon_plat = Polygon(current_plat_coords_modified)
+        #
+        #     boundary = polygon_plat.exterior
+        #     delta_x, delta_y = float(row['delta_x']) * 0.3048, float(row['delta_y']) * 0.3048
+        #     used_pt = [used_pt[0] + delta_x, used_pt[1] + delta_y]
+        #     dir_val, index = get_direction(used_pt, xMin, xMax, yMin, yMax)
+        #     intersection_pt = intersection_segment.intersection(boundary)
+        #     self.plot_intersection(polygon_plat, intersection_segment)
+        #
+        #     if polygon_plat.contains(Point(used_pt)):
+        #         well_path.at[x, 'rel_plat_conc'] = current_plat_conc
+        #     else:
+        #         try:
+        #             intersection_pt = intersection_segment.intersection(boundary)
+        #             self.plot_intersection(polygon_plat, intersection_segment)
+        #             next_plat_df = self.currently_used_plat_data[self.currently_used_plat_data['range'] == counter]
+        #
+        #             next_plat_conc = next_plat_df['conc'].iloc[0]
+        #             next_plat_coords = all_plats_dict[next_plat_conc]
+        #             self.stitcher_process(next_plat_df, current_plat_df, next_plat_coords, current_plat_coords, next_plat_conc, dir_val)
+        #             counter += 1
+        #         except IndexError as e:
+        #             pass
             # for i in used_plats:
             #     used_poly = all_plats_dict[i]
             #     if Polygon(used_poly).contains(Point(used_pt)):
@@ -1069,39 +1099,484 @@ class SetupRelativeCoordsPage:
             #     else:
             #
             #         pass
+
+    def run_plat_well_tracer(self, current_plat_coords, current_plat_conc, all_plats_dict):
+        def well_path_prox(intersection, side_dict_all, direction, tol=1e-8):
+            pt = intersection if isinstance(intersection, Point) else Point(intersection)
+
+            # pick just the one side
+            side_key = direction.lower()
+            if side_key == 'n':
+                # coords = side_dict_all['north']
+                coords = side_dict_all[side_dict_all['side']=='north'][['x', 'y']].values.tolist()
+            elif side_key == 's':
+                # coords = side_dict_all['south']
+                coords = side_dict_all[side_dict_all['side']=='south'][['x', 'y']].values.tolist()
+
+            elif side_key == 'e':
+                # coords = side_dict_all['east']
+                coords = side_dict_all[side_dict_all['side']=='east'][['x', 'y']].values.tolist()
+
+            elif side_key == 'w':
+                # coords = side_dict_all['west']
+                coords = side_dict_all[side_dict_all['side']=='west'][['x', 'y']].values.tolist()
+
+            else:
+                raise KeyError(f"Direction must be one of 'n','s','e','w', not {direction!r}")
+
+            # the “start” and “end” of that side’s line
+            p_start = Point(coords[0])  # corner A
+            p_end = Point(coords[-1])  # corner B
+
+            # whichever corner is nearer the intersection…
+            return pt.distance(p_start) < pt.distance(p_end)
+        def well_path_prox2(coordinates, inside_pts, direction):
+            side_bounds = Polygon(coordinates).bounds
+            north_bound, south_bound, east_bound, west_bound = side_bounds[3], side_bounds[1], side_bounds[2], side_bounds[0]
+            inside_pt_ns, inside_pt_ew = inside_pts[-1][1], inside_pts[-1][0]
+            n_diff, s_diff = abs(north_bound - inside_pt_ns), abs(south_bound - inside_pt_ns)
+            e_diff, w_diff = abs(east_bound - inside_pt_ew), abs(west_bound - inside_pt_ew)
+            ns_diffs, ew_diffs = [n_diff, s_diff], [e_diff, w_diff]
+
+            if direction.lower() in ['n', 's']:
+                ew_prox, minDiff = min(enumerate(ew_diffs), key=operator.itemgetter(1))
+                if ew_prox == 0:
+                    side_prox = False
+                    # side_prox = True
+                elif ew_prox == 1:
+                    side_prox = True
+                    # side_prox = False
+                return side_prox
+            elif direction.lower() in ['e', 'w']:
+                ns_prox, minDiff = min(enumerate(ns_diffs), key=operator.itemgetter(1))
+                if ns_prox == 1:
+                    side_prox = False
+                    # side_prox = True
+                elif ns_prox == 0:
+                    side_prox = True
+                    # side_prox = False
+                return side_prox
+        def find_crossing_segments(boundary, well_path):
+            for i in range(len(coords) - 1):
+                seg = LineString([coords[i], coords[i + 1]])
+                if seg.intersects(boundary):
+                    inter = seg.intersection(boundary)
+                    # normalize to a list of Points for consistency
+                    if isinstance(inter, Point):
+                        pts = [inter]
+                    else:
+                        pts = list(inter.geoms) if hasattr(inter, 'geoms') else []
+                    crossings.append((i, seg, pts))
+
+            return crossings
+        def get_offset_added_delta(x, y, dx, dy):
+            return x + float(dx) * 0.3048, y + float(dy) * 0.3048
+        def get_dataframe_from_qtableview():
+            # Get the model
+            model = self.ui.dx_survey_table_mod.model()
+            if model is None:
+                print("The QTableView does not have a model.")
+                return None
+            # Get the number of rows and columns
+            rows = model.rowCount()
+            columns = model.columnCount()
+            # Create a list to store all the data
+            data = []
+            # Get column headers
+            headers = []
+            for column in range(columns):
+                header = model.headerData(column, Qt.Horizontal, Qt.DisplayRole)
+                headers.append(str(header))
+            # Iterate through each cell in the table
+            for row in range(rows):
+                row_data = []
+                for column in range(columns):
+                    index = model.index(row, column)
+                    # Get the data for the current cell
+                    cell_data = model.data(index, Qt.DisplayRole)
+                    row_data.append(cell_data)
+                data.append(row_data)
+
+            # Create pandas DataFrame
+            df = pd.DataFrame(data, columns=headers)
+            return df
+        def df_to_polygon(df):
+            # all_cells = np.ravel(df.to_numpy(), order='F').tolist()
+            all_cells = df[['x', 'y']].values.tolist()
+            coords_unique = [list(t) for t in dict.fromkeys(map(tuple, all_cells))]
+
+            ring = [tuple(pt) for pt in coords_unique]
+            return Polygon(ring)
+        def update_original_dataframe(df_o, df_new):
+            df2 = df_o.set_index(['conc', 'side', 'point_i'])
+            repl2 = df_new.set_index(['conc', 'side', 'point_i'])
+
+            # 2) restrict repl2 to just the columns you want to overwrite
+            #    (here: 'x' and 'y')
+            repl2 = repl2[['x', 'y']]
+
+            # 3) update df2 in place
+            df2.update(repl2)
+
+            # 4) (optionally) drop the index back to columns
+            df_new = df2.reset_index()
+            return df_new
+
+        well_path = get_dataframe_from_qtableview()
+        result_coords = current_plat_coords[['x', 'y', 'side']].values.tolist()
+        # result_coords = [item[:2] + [k] for k, v in current_plat_coords.items() for item in v]
+        starter_pt = get_starter_pt(well_path.iloc[0], result_coords)
+        dx_start, dy_start = (float(well_path['easting'].iloc[0]) /0.3048) - starter_pt[0], (float(well_path['northing'].iloc[0]) /0.3048) - starter_pt[1]
+
+        well_path[['e_offset_delta', 'n_offset_delta']] = (well_path.apply(lambda row: get_offset_added_delta(starter_pt[0], starter_pt[1], row['e_offset'], row['n_offset']), axis=1, result_type='expand'))
+        well_path['rel_data_order'] = 99
+        current_plat_coords_modified = [i[:2] for i in result_coords]
+        current_polygon = Polygon(current_plat_coords_modified)
+        xMin, xMax, yMin, yMax = current_polygon.bounds
+
+        counter = 2
+
+        intersection_segment = LineString(list(zip(well_path['e_offset_delta'], well_path['n_offset_delta'])))
+        while True:
+            print(current_plat_conc)
+            print(current_polygon)
+            polygon_plat = current_polygon
+            pts = [Point(x, y) for x, y in zip(well_path.e_offset_delta, well_path.n_offset_delta)]
+            mask = [polygon_plat.contains(pt) for pt in pts]
+            well_path.loc[mask, 'rel_data_order'] = counter-1
+            print(mask)
+            self.graph_plat_and_well(polygon_plat, list(zip(well_path.e_offset_delta, well_path.n_offset_delta)))
+
+            boundary = polygon_plat.exterior
+            intersection_pt = intersection_segment.intersection(boundary)
+            try:
+                dir_val, index = get_direction((intersection_pt.x, intersection_pt.y), xMin, xMax, yMin, yMax)
+            except AttributeError:
+                all_plats_dict[['x_delta', 'y_delta']] = (
+                    all_plats_dict.apply(lambda row: get_offset_added_delta(row['x'], row['y'], dx_start, dy_start), axis=1,
+                                          result_type='expand'))
+                # print(all_plats_dict)
+
+                return all_plats_dict
+            next_plat_df = self.currently_used_plat_data[self.currently_used_plat_data['range'] == counter]
+            try:
+                next_plat_conc = next_plat_df['conc'].iloc[0]
+            except IndexError:
+                break
+            # next_plat_coords_dict = all_plats_dict[next_plat_conc]
+            next_plat_coords_dict = all_plats_dict[all_plats_dict['conc']==next_plat_conc]
+            # print(next_plat_coords_dict)
+            # next_plat_coords = [tuple(item) for k, v in next_plat_coords_dict.items() for item in v]
+            well_prox_boo = well_path_prox(intersection = intersection_pt, side_dict_all=next_plat_coords_dict, direction=dir_val)
+            rewritten_coords = self.coords_stitcher(next_plat_coords_dict, all_plats_dict[all_plats_dict['conc']==current_plat_conc], dir_val, well_prox_boo)
+            # rewritten_coords = self.coords_stitcher(all_plats_dict[next_plat_conc], all_plats_dict[current_plat_conc], dir_val, well_prox_boo)
+            current_polygon = df_to_polygon(rewritten_coords)
+            xMin, xMax, yMin, yMax = current_polygon.bounds
+            new_dict = pd.DataFrame(data= rewritten_coords.to_dict(orient='list'))
+
+            try:
+                all_plats_dict = update_original_dataframe(all_plats_dict,new_dict)
+                counter += 1
+                current_plat_conc = next_plat_conc
+            except ValueError:
+                all_plats_dict[['x_delta', 'y_delta']] = (
+                    all_plats_dict.apply(lambda row: get_offset_added_delta(row['x'], row['y'], dx_start, dy_start), axis=1,
+                                          result_type='expand'))
+                return all_plats_dict
+
+        # for x, row in well_path.iterrows():
+        #     polygon_plat = Polygon(current_plat_coords_modified)
+        #
+        #     boundary = polygon_plat.exterior
+        #     delta_x, delta_y = float(row['delta_x']) * 0.3048, float(row['delta_y']) * 0.3048
+        #     used_pt = [used_pt[0] + delta_x, used_pt[1] + delta_y]
+        #     dir_val, index = get_direction(used_pt, xMin, xMax, yMin, yMax)
+        #     intersection_pt = intersection_segment.intersection(boundary)
+        #     self.plot_intersection(polygon_plat, intersection_segment)
+        #
+        #     if polygon_plat.contains(Point(used_pt)):
+        #         well_path.at[x, 'rel_plat_conc'] = current_plat_conc
+        #     else:
+        #         try:
+        #             intersection_pt = intersection_segment.intersection(boundary)
+        #             self.plot_intersection(polygon_plat, intersection_segment)
+        #             next_plat_df = self.currently_used_plat_data[self.currently_used_plat_data['range'] == counter]
+        #
+        #             next_plat_conc = next_plat_df['conc'].iloc[0]
+        #             next_plat_coords = all_plats_dict[next_plat_conc]
+        #             self.stitcher_process(next_plat_df, current_plat_df, next_plat_coords, current_plat_coords, next_plat_conc, dir_val)
+        #             counter += 1
+        #         except IndexError as e:
+        #             pass
+            # for i in used_plats:
+            #     used_poly = all_plats_dict[i]
+            #     if Polygon(used_poly).contains(Point(used_pt)):
+            #         well_path.at[x, 'rel_plat_conc'] = conc
+            #     else:
+            #         pass
+            # for k, v in all_plats_dict.items():
+            #     if Polygon(v).contains(Point(used_pt)):
+            #         well_path.at[x, 'rel_plat_conc'] = conc
+            #     else:
+            #
+            #         pass
+
     def extract_coords_and_add_direction(self, used_dict):
-        new_lst = [[[i + [k]] for i in v] for k, v in used_dict.items()]
+        new_lst = [[i + [k] for i in v] for k, v in used_dict.items()]
         # for k, v in used_dict.items():
         #     for i in v:
-        #         print(i + [k])
         #         new_lst.append(i + [k])
 
         return new_lst
-    def coords_stitcher(self, next_plat_dict_out, current_plat_dict_out, direction, direction_boo):
-        next_plat_lst = self.extract_coords_and_add_direction(next_plat_dict_out)
-        current_plat_lst = self.extract_coords_and_add_direction(current_plat_dict_out)
-        for i in next_plat_lst:
-            ModuleAgnostic.printLine(i)
-        for i in current_plat_lst:
-            ModuleAgnostic.printLine(i)
-        # ModuleAgnostic.printLine(current_plat_lst)
 
-        # print(next_plat_lst)
-        # print(current_plat_lst)
+    def coords_stitcher(self, next_coords_df, current_coords_df, direction, direction_boo):
+
+        def get_point_indices():
+            """
+            Determines the correct starting and matched indices based on direction.
+
+            Args:
+                direction (str): The cardinal direction ("W", "N", "E", "S").
+                direction_boo (bool): True to select the first index pair, False for the second.
+
+            Returns:
+                tuple: A tuple containing the (starting_point_index, matched_point_index).
+            """
+            # Consolidate all mappings into a single, clear dictionary.
+            # Format: direction: ([start_indices], [matched_indices])
+            POINT_MAPPING = {
+                "W": ([0, 4], [12, 8]),
+                "N": ([4, 8], [16, 12]),
+                "E": ([8, 12], [4, 0]),
+                "S": ([12, 16], [8, 4]),
+            }
+
+            # Use a simple integer (0 or 1) to select from the lists.
+            selector = 0 if direction_boo else 1
+
+            # Directly look up the lists of options for the given direction.
+            start_options, match_options = POINT_MAPPING[direction]
+
+            # Select the specific index from each list and return the pair.
+            return start_options[selector], match_options[selector]
+
+        def calculate_diff_from_dfs():
+            """
+            Calculates the difference between two coordinates selected from DataFrames.
+
+            The function translates legacy list-based indices into DataFrame locations
+            to select the appropriate points for calculation.
+
+            Args:
+                current_coords_df (pd.DataFrame): DataFrame with 'west', 'north', 'east', 'south' columns.
+                next_coords_df (pd.DataFrame): DataFrame with 'west', 'north', 'east', 'south' columns.
+                starting_pts (int): The legacy index for the point in current_coords_df.
+                matched_pt (int): The legacy index for the point in next_coords_df.
+
+            Returns:
+                tuple: A tuple containing the difference in x and y (diff_x, diff_y).
+            """
+            # Map for converting index to column name
+
+            column_map = {0: 'west', 1: 'north', 2: 'east', 3: 'south'}
+
+            # 1. Get location for the starting point in current_coords_df
+            start_col = column_map[starting_pts // 5]
+            start_row = starting_pts % 5
+            current_point = current_coords_df[(current_coords_df['side'] == start_col) & (current_coords_df['point_i'] == start_row)][['x', 'y']].iloc[0].values.tolist()
+            # current_point = current_coords_df.loc[start_row, start_col]
+            # 2. Get location for the matched point in next_coords_df
+            matched_col = column_map[matched_pt // 5]
+            matched_row = matched_pt % 5
+            next_point = next_coords_df[(next_coords_df['side'] == matched_col) & (next_coords_df['point_i'] == matched_row)][['x', 'y']].iloc[0].values.tolist()
+            # next_point = next_coords_df.loc[matched_row, matched_col]
+
+            # 3. Perform the calculation
+            diff_x_pt = current_point[0] - next_point[0]
+            diff_y_pt = current_point[1] - next_point[1]
+
+            return diff_x_pt, diff_y_pt
+
+        def my_calc(x,y):
+
+
+            return x + diff_x_used, y + diff_y_used
+
+        def round_row(x, y):
+            return round(x,1), round(y,1)
+        # to run this on every cell in every column:
+        # result_df = df.applymap(my_calc)
+        opp_direction_list = {"0": '2', "1": '3', "2": '0', "3": '1'}
+        cols = ['south', 'east', 'north', 'west']
+        # current_coords_df  = pd.DataFrame(data = current_plat_dict_out)
+        # next_coords_df = pd.DataFrame(data = next_plat_dict_out)
+        # next_coords_df_mod = copy.copy(next_coords_df)
+        # current_coords_df_mod = copy.copy(current_coords_df)
+        # idx_w0 = current_coords_df_mod.loc[(current_coords_df_mod.side == 'west') & (current_coords_df_mod.point_i == 0), :].index[0]
+        # idx_sN = current_coords_df_mod.loc[current_coords_df_mod.side == 'south'].nlargest(1, 'point_i').index[0]
+        # current_coords_df_mod.loc[0, ['x', 'y']] = current_coords_df_mod.loc[19, ['x', 'y']].values
+        # current_coords_df_mod = current_coords_df_mod.apply(lambda row: round_row(row['x'], row['y']))
+        # current_coords_df_mod['west'].iloc[0] = current_coords_df_mod['south'].iloc[4]
+        # current_coords_df_mod.loc[0, 'west'] = current_coords_df_mod.loc[4, 'south']
+        # current_coords_df_mod = current_coords_df.applymap(lambda pt:[round(pt[0],1), round(pt[1], 1)])
+        # current_coords_df_zeroed = current_coords_df_mod.apply(lambda col: col.where(~col.map(tuple).duplicated(), other=np.nan))
+        starting_pts, matched_pt = get_point_indices()
+        diff_x_used, diff_y_used = calculate_diff_from_dfs()
+        next_coords_df[['x', 'y']] = next_coords_df.apply(lambda row: my_calc(row['x'], row['y']), axis=1, result_type='expand')
+        # next_coords_df_mod = next_coords_df.applymap(my_calc)
+        return next_coords_df
+        # new_coords_test_organized = [[j[:2] for j in i] for i in new_coords_test_organized]
+        # next_coords_df_mod = next_coords_df_mod.applymap(lambda pt:[round(pt[0],1), round(pt[1], 1)])
+        # next_coords_df_mod_zeroed = next_coords_df_mod.apply(lambda col: col.where(~col.map(tuple).duplicated(), other=np.nan))
+
+        # new_coords_test_organized = [[[round(k, 1) for k in j] for j in i] for i in new_coords_test_organized]
+        # new_coords_test_organized = [ModuleAgnostic.findUniqueListsInListOfLists(i) for i in next_coords_df_mod_zeroed]
+        # new_coords_test_organized[int(opp_direction_list[str(direction)])] = old_data_organized[int(direction)][::-1]
+
+        # next_coords_df_mod= next_coords_df_mod.apply(lambda col: ))
+
+        # diff_x, diff_y = last_coords[starting_pts][0] - new_coords[matched_pt][0], last_coords[starting_pts][1] - new_coords[matched_pt][1]
+
+        # corners = [current_plat_df['south'].iloc[-1], current_plat_df['east'].iloc[-1], current_plat_df['north'].iloc[-1], current_plat_df['west'].iloc[-1]]
+        # current_plat_df = current_plat_df.apply(lambda col: col.where(~col.map(tuple).duplicated(),other=[[None, None]] * len(col)))
+        # current_plat_df = current_plat_df.apply(lambda col: col.map(
+        #     (lambda seen=set(): lambda pt: pt if (tuple(pt) not in seen and not seen.add(tuple(pt))) else [None,
+        #                                                                                                    None])()
+        # ))
+
+        # next_plat_lst = self.extract_coords_and_add_direction(next_plat_dict_out)
+        # current_plat_lst = self.extract_coords_and_add_direction(current_plat_dict_out)
+        # current_plat_lst[0][0] = current_plat_lst[-1][-1]
+        # current_plat_lst_organized = [[j[:2] for j in i] for i in current_plat_lst]
+        # current_plat_lst_organized = [[[round(k, 1) for k in j] for j in i] for i in current_plat_lst_organized]
+        # current_plat_lst_organized = [unique_lists(i) for i in current_plat_lst_organized]
+        # corners = [current_plat_dict_out['south'][-1], current_plat_dict_out['east'][-1], current_plat_dict_out['north'][-1], current_plat_dict_out['west'][-1]]
+
+    def coords_stitcher_3(self, next_plat_dict_out, current_plat_dict_out, direction, direction_boo):
+
+        def get_point_indices():
+            """
+            Determines the correct starting and matched indices based on direction.
+
+            Args:
+                direction (str): The cardinal direction ("W", "N", "E", "S").
+                direction_boo (bool): True to select the first index pair, False for the second.
+
+            Returns:
+                tuple: A tuple containing the (starting_point_index, matched_point_index).
+            """
+            # Consolidate all mappings into a single, clear dictionary.
+            # Format: direction: ([start_indices], [matched_indices])
+            POINT_MAPPING = {
+                "W": ([0, 4], [12, 8]),
+                "N": ([4, 8], [16, 12]),
+                "E": ([8, 12], [4, 0]),
+                "S": ([12, 16], [8, 4]),
+            }
+
+            # Use a simple integer (0 or 1) to select from the lists.
+            selector = 0 if direction_boo else 1
+
+            # Directly look up the lists of options for the given direction.
+            start_options, match_options = POINT_MAPPING[direction]
+
+            # Select the specific index from each list and return the pair.
+            return start_options[selector], match_options[selector]
+
+        def calculate_diff_from_dfs():
+            """
+            Calculates the difference between two coordinates selected from DataFrames.
+
+            The function translates legacy list-based indices into DataFrame locations
+            to select the appropriate points for calculation.
+
+            Args:
+                current_coords_df (pd.DataFrame): DataFrame with 'west', 'north', 'east', 'south' columns.
+                next_coords_df (pd.DataFrame): DataFrame with 'west', 'north', 'east', 'south' columns.
+                starting_pts (int): The legacy index for the point in current_coords_df.
+                matched_pt (int): The legacy index for the point in next_coords_df.
+
+            Returns:
+                tuple: A tuple containing the difference in x and y (diff_x, diff_y).
+            """
+            # Map for converting index to column name
+            column_map = {0: 'west', 1: 'north', 2: 'east', 3: 'south'}
+
+            # 1. Get location for the starting point in current_coords_df
+            start_col = column_map[starting_pts // 5]
+            start_row = starting_pts % 5
+            current_point = current_coords_df.loc[start_row, start_col]
+
+            # 2. Get location for the matched point in next_coords_df
+            matched_col = column_map[matched_pt // 5]
+            matched_row = matched_pt % 5
+            next_point = next_coords_df.loc[matched_row, matched_col]
+
+            # 3. Perform the calculation
+            diff_x_pt = current_point[0] - next_point[0]
+            diff_y_pt = current_point[1] - next_point[1]
+
+            return diff_x_pt, diff_y_pt
+
+        def my_calc(pt):
+            x, y = pt
+            return [x + diff_x, y + diff_y]
+
+        # to run this on every cell in every column:
+        # result_df = df.applymap(my_calc)
+        opp_direction_list = {"0": '2', "1": '3', "2": '0', "3": '1'}
+        cols = ['south', 'east', 'north', 'west']
+        current_coords_df  = pd.DataFrame(data = current_plat_dict_out)
+        next_coords_df = pd.DataFrame(data = next_plat_dict_out)
+        # next_coords_df_mod = copy.copy(next_coords_df)
+        current_coords_df_mod = copy.copy(current_coords_df)
+        current_coords_df_mod.loc[0, 'west'] = current_coords_df_mod.loc[4, 'south']
+        current_coords_df_mod = current_coords_df.applymap(lambda pt:[round(pt[0],1), round(pt[1], 1)])
+        current_coords_df_zeroed = current_coords_df_mod.apply(lambda col: col.where(~col.map(tuple).duplicated(), other=np.nan))
+        starting_pts, matched_pt = get_point_indices()
+        diff_x, diff_y = calculate_diff_from_dfs()
+        next_coords_df_mod = next_coords_df.applymap(my_calc)
+        return next_coords_df_mod
+        # new_coords_test_organized = [[j[:2] for j in i] for i in new_coords_test_organized]
+        # next_coords_df_mod = next_coords_df_mod.applymap(lambda pt:[round(pt[0],1), round(pt[1], 1)])
+        # next_coords_df_mod_zeroed = next_coords_df_mod.apply(lambda col: col.where(~col.map(tuple).duplicated(), other=np.nan))
+
+        # new_coords_test_organized = [[[round(k, 1) for k in j] for j in i] for i in new_coords_test_organized]
+        # new_coords_test_organized = [ModuleAgnostic.findUniqueListsInListOfLists(i) for i in next_coords_df_mod_zeroed]
+        # new_coords_test_organized[int(opp_direction_list[str(direction)])] = old_data_organized[int(direction)][::-1]
+
+        # next_coords_df_mod= next_coords_df_mod.apply(lambda col: ))
+
+        # diff_x, diff_y = last_coords[starting_pts][0] - new_coords[matched_pt][0], last_coords[starting_pts][1] - new_coords[matched_pt][1]
+
+        # corners = [current_plat_df['south'].iloc[-1], current_plat_df['east'].iloc[-1], current_plat_df['north'].iloc[-1], current_plat_df['west'].iloc[-1]]
+        # current_plat_df = current_plat_df.apply(lambda col: col.where(~col.map(tuple).duplicated(),other=[[None, None]] * len(col)))
+        # current_plat_df = current_plat_df.apply(lambda col: col.map(
+        #     (lambda seen=set(): lambda pt: pt if (tuple(pt) not in seen and not seen.add(tuple(pt))) else [None,
+        #                                                                                                    None])()
+        # ))
+
+        # next_plat_lst = self.extract_coords_and_add_direction(next_plat_dict_out)
+        # current_plat_lst = self.extract_coords_and_add_direction(current_plat_dict_out)
+        # current_plat_lst[0][0] = current_plat_lst[-1][-1]
+        # current_plat_lst_organized = [[j[:2] for j in i] for i in current_plat_lst]
+        # current_plat_lst_organized = [[[round(k, 1) for k in j] for j in i] for i in current_plat_lst_organized]
+        # current_plat_lst_organized = [unique_lists(i) for i in current_plat_lst_organized]
+        # corners = [current_plat_dict_out['south'][-1], current_plat_dict_out['east'][-1], current_plat_dict_out['north'][-1], current_plat_dict_out['west'][-1]]
+
 
     def coords_stitcher_2(self, new_coords, last_coords, direction, direction_boo):
 
         new_coords = [list(i) for i in new_coords]
         directions_dict = {"W": '0', "N": '1', "E": "2", "S": "3"}
+
         direction = directions_dict[direction]
         test_corners, old_data_organized = ModuleAgnostic.cornerGeneratorProcess(last_coords)
-        # print('test', test_corners)
-        print('old', test_corners)
-        print(foo)
 
-        old_data_organized = [[j[:2] for j in i] for i in old_data_organized]
-        old_data_organized = [[[round(k, 1) for k in j] for j in i] for i in old_data_organized]
-        old_data_organized = [ModuleAgnostic.findUniqueListsInListOfLists(i) for i in old_data_organized]
+
+        # old_data_organized = [[j[:2] for j in i] for i in old_data_organized]
+        # old_data_organized = [[[round(k, 1) for k in j] for j in i] for i in old_data_organized]
+        # old_data_organized = [ModuleAgnostic.findUniqueListsInListOfLists(i) for i in old_data_organized]
 
         lst_dict = {"0": [0, 4], "1": [4, 8], "2": [8, 12], "3": [12, 16]}
         matched_lst_dict = {"0": [12, 8], "1": [16, 12], "2": [4, 0], "3": [8, 4]}
@@ -1112,13 +1587,14 @@ class SetupRelativeCoordsPage:
 
         new_coords = [list(i) for i in new_coords]
         diff_x, diff_y = last_coords[starting_pts][0] - new_coords[matched_pt][0], last_coords[starting_pts][1] - new_coords[matched_pt][1]
+
         new_coords_test = [[i[0] + diff_x, i[1] + diff_y] for i in new_coords]
 
-        test_corners, new_coords_test_organized = ModuleAgnostic.cornerGeneratorProcess(new_coords_test)
-        new_coords_test_organized = [[j[:2] for j in i] for i in new_coords_test_organized]
-        new_coords_test_organized = [[[round(k, 1) for k in j] for j in i] for i in new_coords_test_organized]
-        new_coords_test_organized = [ModuleAgnostic.findUniqueListsInListOfLists(i) for i in new_coords_test_organized]
-        new_coords_test_organized[int(opp_direction_list[str(direction)])] = old_data_organized[int(direction)][::-1]
+        # test_corners, new_coords_test_organized = ModuleAgnostic.cornerGeneratorProcess(new_coords_test)
+        # new_coords_test_organized = [[j[:2] for j in i] for i in new_coords_test_organized]
+        # new_coords_test_organized = [[[round(k, 1) for k in j] for j in i] for i in new_coords_test_organized]
+        # new_coords_test_organized = [ModuleAgnostic.findUniqueListsInListOfLists(i) for i in new_coords_test_organized]
+        # new_coords_test_organized[int(opp_direction_list[str(direction)])] = old_data_organized[int(direction)][::-1]
 
         return new_coords_test
     def stitcher_process(self, next_plat_df, current_plat_df, next_plat_coords, current_plat_coords, next_plat_conc, dir_val):
@@ -1358,7 +1834,21 @@ class SetupRelativeCoordsPage:
     def gather_new_plat(self, version):
         pass
 
+    def graph_plat_and_well(self, poly, well):
+        print('go')
+        print(well)
+        x, y = poly.exterior.xy
+        x_coords_1 = [point[0] for point in well]
+        y_coords_1 = [point[1] for point in well]
+        fig, ax = plt.subplots()
 
+        # 4. Plot the exterior of the polygon
+        # The '*' unpacks the x and y coordinate lists
+        ax.plot(x, y, color='blue', linewidth=3)
+        ax.plot(x_coords_1, y_coords_1, color='red')
+        # 5. Set aspect ratio and display the plot
+        ax.set_aspect('equal', 'box')
+        plt.show()
 def get_starter_pt(row, current_plat):
     if row['FNL'] < row['FSL']:
         fnsl_val = row['FNL']
