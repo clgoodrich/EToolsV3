@@ -105,7 +105,6 @@ def search_db(path):
 
     conn.close()
 
-    print(tables)
 def timeit(func):
     """
     Decorator: prints elapsed time each time the function is called.
@@ -245,8 +244,7 @@ def profile(func, *args, **kwargs):
 #     sum_self = df['tottime'].sum()
 #
 #     # Print results
-#     print(df)
-#     print(f"\n[profile] total_tt: {total_tt:.6f}s, sum_self: {sum_self:.6f}s")
+#
 #
 #     return df, total_tt, sum_self
 #
@@ -325,7 +323,6 @@ def analyzeTime2(function_call, args_list ):
     filtered_df = df[~df['filename_lineno_function'].str.contains(excluded_location, case=False, regex=False)]
     # filtered_df = filtered_df[
     #     filtered_df['filename_lineno_function'].str.contains(r'C:\Work\RewriteAPD', case=False, regex=False)]
-    print(filtered_df)
 
 
 def insert_row_at_md(df, target_md):
@@ -538,6 +535,7 @@ def clearDatabaseOfDupes():
     # Close the connection
     conn.close()
     print('done')
+
 
 def createFileGDB(plat_df, all_plats_adjacent, base_dx_df_planned_true):
     conn_sample = sqlite3.connect('DX_sample.db')
@@ -919,9 +917,10 @@ def cornerGeneratorProcess(data_lengths):
     corners = removeDupesListOfLists(corners)
     data_lengths = reorganizeLstPointsWithAngle(data_lengths, centroid)
     data_lengths = sorted(data_lengths, key=lambda r: r[-1])
-
+    data_lengths = [list(i) for i in data_lengths]
     corners = [list(i) for i in corners]
-    all_data = regularCornerClass(corners, data_lengths)
+    # all_data = regularCornerClass(corners, data_lengths)
+    # corners_restricted = [i[:2] for i in corners]
 
     nw_pt = data_lengths.index([i for i in corners if 360 > i[-1] > 270][0])
     sw_pt = data_lengths.index([i for i in corners if 90 > i[-1] > 0][0])
@@ -1316,7 +1315,8 @@ def angleFinder(directions):
 
 
 def reorganizeLstPointsWithAngle(lst, centroid):
-    lst_arrange = [i + ((math.degrees(math.atan2(centroid[1] - i[1], centroid[0] - i[0])) + 360) % 360,) for i in lst]
+
+    lst_arrange = [tuple(i) + ((math.degrees(math.atan2(centroid[1] - i[1], centroid[0] - i[0])) + 360) % 360,) for i in lst]
     return lst_arrange
 
 
@@ -3059,7 +3059,6 @@ def convAngleSP(G44, pt):
     AB16, AC16, AD16 = 0.659355482, 0.640578596, 0.612687337
     result = (111.5 - J13) * (AB16 if zone == 1 else (AC16 if zone == 2 else AD16))
     result = (111.5 - J13) * (AB16 if G44 == 1 else (AC16 if G44 == 2 else AD16))
-    print('result', result)
     return result
 
 
@@ -3525,7 +3524,6 @@ def bearingFromPoints(p1, p2):
 #         decimal_degrees = round(deg + (min / 60) + (sec / 3600), 3)
 #         if 'north' in data[i][0].lower() or 'east' in data[i][0].lower():
 #             decimal_degrees = (decimal_degrees - 180) % 360
-#             print(decimal_degrees)
 #         dir_val_str = labels[dir_val]
 #         direction, final_direction = dir_val_str[:1], dir_val_str[1:]
 #         lst.append([data[i][0], f"{direction}{str(decimal_degrees)}{final_direction}"])
@@ -3536,7 +3534,6 @@ def bearingFromPoints(p1, p2):
 #     factors = pd.DataFrame(factors).T
 #     f = df_used['Bearing'].str[0] + df_used['Bearing'].str[-1]
 #     df_used['Azimuth'] = (factors.loc[f, 0].tolist() + (df_used['Bearing'].str.strip('NESW').astype(float) * factors.loc[f, 1].tolist())) % 360
-#     print(df_used)
 
 def translatePlatRelativeMeasurementsToXY(data):
     def runProcessMultiple(output_data, conv_angle):
@@ -3553,11 +3550,8 @@ def translatePlatRelativeMeasurementsToXY(data):
         # Shift the polygon
         shifted_polygon = translate(Polygon(coordinates), xoff=shift_x, yoff=shift_y)
         return list(shifted_polygon.exterior.coords)
-        # printTupleCoords(list(shifted_polygon.exterior.coords))
-    print('relative data')
     labels = {1: 'SE', 2: 'NE', 3: 'SW', 4: 'NW'}
     data = reorderDecimalData(data)
-    print(data)
     conv_angle = 0
     # testerBearings2(data, labels)
 
@@ -3583,13 +3577,9 @@ def translatePlatRelativeMeasurementsToXY(data):
         if overlap_percentage > match_percent:
             match_percent = overlap_percentage
             match_conv_angle = i/10000
-        # print(i/1000)
-        # print(f"Intersection over Union (IoU): {iou:.4f}")
-        # print(f"Overlap percentage: {overlap_percentage:.2f}%")
-        # print(f"Convergence angle: {str(i/20)}")
+
         # used_data.append(runProcessMultiple(output_data, i/20))
     #     # print(i/10)
-    print(match_percent, match_conv_angle)
 
 
     # fig, ax = plt.subplots()
@@ -3618,10 +3608,6 @@ def translatePlatRelativeMeasurementsToXY(data):
 
     # Shift the polygon
     shifted_polygon = translate(Polygon(coordinates), xoff=shift_x, yoff=shift_y)
-    printTupleCoords(list(shifted_polygon.exterior.coords))
-
-
-    print(foo)
 
 
 # 27851741.804064814
@@ -3631,15 +3617,12 @@ def assembleDataFromRelativeToAziLength(data, i, labels):
         data[i] = data[i][6:12]
     side, deg, min, sec, dir_val = float(data[i][1]), float(data[i][2]), float(data[i][3]), float(data[i][4]), int(float(data[i][5]))
     if side != 0:
-        # print(data[i][0])
 
         dir_val_str = labels[dir_val]
         dir_val_str = refineDirectionValue(data[i][0], dir_val_str)
         direction, final_direction = dir_val_str[:1], dir_val_str[1:]
         azi = bearing_to_azimuth(direction, deg, min, sec, final_direction)
-        # print(direction, deg, min, sec, final_direction)
-        # print(azi)
-        # print(azimuth_to_bearing(azi))
+
 
         return [azi, side]
 
@@ -3763,9 +3746,7 @@ def bearing_to_azimuth(direction, degrees, minutes, seconds, final_direction):
         azimuth = decimal_degrees
     # Ensure the azimuth is within 0-360 range
     azimuth = azimuth % 360
-    # print(direction, degrees, minutes, seconds, final_direction, azimuth)
     return azimuth
-    # print(f"The decimal azimuth is: {azimuth:.4f}°")
 
 
 def adjustAzimuthForGridConvergence(is_grid, angle, azimuth):
@@ -3800,8 +3781,7 @@ def findDistances(pt1, pt2, pt3):
     pt2 = decimialify([pt2[0][0],pt2[0][1],pt2[0][2]]), decimialify([pt2[1][0],pt2[1][1],pt2[1][2]])*-1
     # pt1 = [40.28694143805556, -110.16179146666667]
     # pt2 = [40.28701516666667, -110.14321536111111]
-    # print(pt1)
-    # print(pt2)
+
     # pt3 = [40.287290, -110.159837]
     pt1_utm = utm.from_latlon(pt1[0], pt1[1])[:2]
     pt2_utm = utm.from_latlon(pt2[0], pt2[1])[:2]
@@ -3828,4 +3808,3 @@ def findDistances(pt1, pt2, pt3):
 
     # Calculate the shortest distance
     shortest_distance = np.linalg.norm(perpendicular_vec)
-    print(shortest_distance/0.3048)

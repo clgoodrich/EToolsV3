@@ -16,7 +16,9 @@ import ModuleAgnostic
 import regex as re
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-
+from shapely.geometry import Point, LineString, Polygon
+from shapely.geometry.base import BaseGeometry
+import operator
 
 def decimal_converter(side, deg, minutes, sec, dir_val):
     """
@@ -557,9 +559,7 @@ class SetupRelativeCoordsPage:
         self.currently_used_plat_data = self.collect_relative_data()
         consecutive_codes, _ = pd.factorize(self.currently_used_plat_data['order'])
         self.currently_used_plat_data['range'] = consecutive_codes + 1
-        ModuleAgnostic.printDF(self.currently_used_plat_data)
-        # print(self.currently_used_plat_data.to_markdown())
-        # print(self.currently_used_plat_data)
+
         grouped = self.currently_used_plat_data.groupby(['range'])
         all_conc_codes = []
         for x, df in grouped:
@@ -569,17 +569,15 @@ class SetupRelativeCoordsPage:
             all_conc_codes.append(conc)
         all_conc_codes = tuple(all_conc_codes)
         initial_plat_conc = self.currently_used_plat_data[self.currently_used_plat_data['order'] == version]['conc'].iloc[0]
-
         result = {
             key: {direction: [item[:2] for item in group] for direction, group in
                   itertools.groupby(value, key=lambda x: x[2])}
             for key, value in all_plats_dict.items()
         }
         # for key, value in all_plats_dict.items():
-        print('conc', initial_plat_conc)
         # init_plat = convert_to_pts(init_plat_data)
         self.draw_plat_solo(all_plats_dict[initial_plat_conc], version)
-        self.run_plat_well_tracer(current_plat_coords=result[all_conc_codes[0]], current_plat_conc=initial_plat_conc, all_plats_dict=result)
+        self.run_plat_well_tracer(current_plat_coords=result[all_conc_codes[0]], current_plat_conc=all_conc_codes[0], all_plats_dict=result)
 
     def grapher(self, data):
         x_coords = [point[0] for point in data]
@@ -819,7 +817,135 @@ class SetupRelativeCoordsPage:
 
         output.to_sql('tsr_plats_surveys', self.conn, index=False, if_exists='replace')
 
+    def plot_intersection(self, poly: Polygon, line: LineString, *, figsize=(6, 6),
+                          poly_kwargs=None, line_kwargs=None, inter_kwargs=None):
+        """
+        Plots a Polygon and a LineString (or similar), plus their intersection.
+
+        Parameters
+        ----------
+        poly : shapely.geometry.Polygon
+            The polygon to plot.
+        line : shapely.geometry.LineString
+            The line (or multilinestring) to plot.
+        figsize : tuple, optional
+            Figure size passed to plt.subplots.
+        poly_kwargs : dict, optional
+            Styling passed to ax.fill for the polygon.
+        line_kwargs : dict, optional
+            Styling passed to ax.plot for the line.
+        inter_kwargs : dict, optional
+            Styling passed to ax.plot for the intersection geometry.
+        """
+        # default styles
+        poly_kwargs = poly_kwargs or dict(alpha=0.3, fc='lightblue', ec='navy', label='Polygon')
+        line_kwargs = line_kwargs or dict(color='gray', linewidth=2, linestyle='--', label='Line')
+        inter_kwargs = inter_kwargs or dict(color='red', linewidth=3, label='Intersection')
+
+        def _plot_geom(g: BaseGeometry, **kw):
+            """Recursively plot any Shapely geometry."""
+            t = g.geom_type
+            if t == 'Point':
+                plt.plot(g.x, g.y, marker='o', **kw)
+            elif t in ('LineString', 'LinearRing'):
+                x, y = g.xy
+                plt.plot(x, y, **kw)
+            elif t.startswith('Multi') or t == 'GeometryCollection':
+                for part in g.geoms:
+                    _plot_geom(part, **kw)
+            else:
+                raise ValueError(f"Unsupported geometry type: {t!r}")
+
+        # compute intersection
+        inter = poly.intersection(line)
+
+        # build plot
+        fig, ax = plt.subplots(figsize=figsize)
+
+        # polygon (fill)
+        x_poly, y_poly = poly.exterior.xy
+        ax.fill(x_poly, y_poly, **poly_kwargs)
+
+        # line
+        _plot_geom(line, **line_kwargs)
+
+        # intersection
+        _plot_geom(inter, **inter_kwargs)
+
+        # finalize
+        ax.set_aspect('equal', 'box')
+        ax.legend(loc='best')
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_title('Polygon × LineString Intersection')
+        plt.show()
     def run_plat_well_tracer(self, current_plat_coords, current_plat_conc, all_plats_dict):
+        def well_path_prox(intersection, side_dict_all, direction, tol=1e-8):
+            pt = intersection if isinstance(intersection, Point) else Point(intersection)
+
+            # pick just the one side
+            side_key = direction.lower()
+            if side_key == 'n':
+                coords = side_dict_all['north']
+            elif side_key == 's':
+                coords = side_dict_all['south']
+            elif side_key == 'e':
+                coords = side_dict_all['east']
+            elif side_key == 'w':
+                coords = side_dict_all['west']
+            else:
+                raise KeyError(f"Direction must be one of 'n','s','e','w', not {direction!r}")
+
+            # the “start” and “end” of that side’s line
+            p_start = Point(coords[0])  # corner A
+            p_end = Point(coords[-1])  # corner B
+
+            # whichever corner is nearer the intersection…
+            return pt.distance(p_start) < pt.distance(p_end)
+        def well_path_prox2(coordinates, inside_pts, direction):
+            side_bounds = Polygon(coordinates).bounds
+            north_bound, south_bound, east_bound, west_bound = side_bounds[3], side_bounds[1], side_bounds[2], side_bounds[0]
+            inside_pt_ns, inside_pt_ew = inside_pts[-1][1], inside_pts[-1][0]
+            n_diff, s_diff = abs(north_bound - inside_pt_ns), abs(south_bound - inside_pt_ns)
+            e_diff, w_diff = abs(east_bound - inside_pt_ew), abs(west_bound - inside_pt_ew)
+            ns_diffs, ew_diffs = [n_diff, s_diff], [e_diff, w_diff]
+
+            if direction.lower() in ['n', 's']:
+                ew_prox, minDiff = min(enumerate(ew_diffs), key=operator.itemgetter(1))
+                if ew_prox == 0:
+                    side_prox = False
+                    # side_prox = True
+                elif ew_prox == 1:
+                    side_prox = True
+                    # side_prox = False
+                return side_prox
+            elif direction.lower() in ['e', 'w']:
+                ns_prox, minDiff = min(enumerate(ns_diffs), key=operator.itemgetter(1))
+                if ns_prox == 1:
+                    side_prox = False
+                    # side_prox = True
+                elif ns_prox == 0:
+                    side_prox = True
+                    # side_prox = False
+                return side_prox
+            
+            
+        def find_crossing_segments(boundary, well_path):
+            for i in range(len(coords) - 1):
+                seg = LineString([coords[i], coords[i + 1]])
+                if seg.intersects(boundary):
+                    inter = seg.intersection(boundary)
+                    # normalize to a list of Points for consistency
+                    if isinstance(inter, Point):
+                        pts = [inter]
+                    else:
+                        pts = list(inter.geoms) if hasattr(inter, 'geoms') else []
+                    crossings.append((i, seg, pts))
+
+            return crossings
+
+        def get_offset_added_delta(dx, dy):
+            return starter_pt[0] + float(dx) * 0.3048, starter_pt[1] + float(dy) * 0.3048
         def get_dataframe_from_qtableview():
             # Get the model
             model = self.ui.dx_survey_table_mod.model()
@@ -855,35 +981,79 @@ class SetupRelativeCoordsPage:
         well_path = get_dataframe_from_qtableview()
         result_coords = [item[:2] + [k] for k, v in current_plat_coords.items() for item in v]
         starter_pt = get_starter_pt(well_path.iloc[0], result_coords)
-        used_pt = starter_pt
 
+        well_path[['e_offset_delta', 'n_offset_delta']] = (well_path.apply(lambda row: get_offset_added_delta(row['e_offset'], row['n_offset']), axis=1, result_type='expand'))
+        well_path['rel_data_order'] = 99
+        # print(all_plats_dict)
+        # print(current_plat_coords)
         current_plat_coords_modified = [i[:2] for i in result_coords]
+        current_plat_coords_dict = all_plats_dict[current_plat_conc]
         prev_plat_coords = current_plat_coords
         next_plat_coords = None
         current_plat_df = self.currently_used_plat_data[self.currently_used_plat_data['range'] == 1]
+        next_plat_coords_dict = {}
         prev_plat_df = current_plat_df
         next_plat_df = None
-
+        print(current_plat_conc)
         xMin, xMax, yMin, yMax = Polygon(current_plat_coords_modified).bounds
 
         counter = 2
-        # if not current_plat_df.empty:
-        #     print(current_plat_df)
+
+        column_names = ['x', 'y']
+        # test_df = pd.DataFrame(data = current_plat_coords_modified, columns=column_names)
+        # test_df.to_csv('current_plat_coords_modified.csv', index=False)
+        intersection_segment = LineString(list(zip(well_path['e_offset_delta'], well_path['n_offset_delta'])))
+        while True:
+            polygon_plat = Polygon(current_plat_coords_modified)
+            pts = [Point(x, y) for x, y in zip(well_path.e_offset_delta, well_path.n_offset_delta)]
+            mask = [polygon_plat.contains(pt) for pt in pts]
+            well_path.loc[mask, 'rel_data_order'] = counter-1
+            # mask_inside = well_path.apply(lambda w_row: polygon_plat.contains(Point(w_row['e_offset_delta'], w_row['n_offset_delta'])),  axis=1)
+            boundary = polygon_plat.exterior
+            intersection_pt = intersection_segment.intersection(boundary)
+
+            dir_val, index = get_direction((intersection_pt.x, intersection_pt.y), xMin, xMax, yMin, yMax)
+            next_plat_df = self.currently_used_plat_data[self.currently_used_plat_data['range'] == counter]
+            next_plat_conc = next_plat_df['conc'].iloc[0]
+            next_plat_coords_dict = all_plats_dict[next_plat_conc]
+            next_plat_coords = [tuple(item) for k, v in next_plat_coords_dict.items() for item in v]
+
+            well_prox_boo = well_path_prox(intersection = intersection_pt, side_dict_all=next_plat_coords_dict, direction=dir_val)
+            self.coords_stitcher(all_plats_dict[next_plat_conc], all_plats_dict[current_plat_conc], dir_val, well_prox_boo)
+
+            self.coords_stitcher_2(next_plat_coords, current_plat_coords_modified, dir_val, well_prox_boo)
+            print(next_plat_conc, current_plat_conc)
+
+
+            counter += 1
+            current_plat_coords_modified = next_plat_coords
+            current_plat_conc = next_plat_conc
+            # self.plot_intersection(polygon_plat, intersection_segment)
+            print(foo)
+
+        print()
         for x, row in well_path.iterrows():
+            polygon_plat = Polygon(current_plat_coords_modified)
+
+            boundary = polygon_plat.exterior
             delta_x, delta_y = float(row['delta_x']) * 0.3048, float(row['delta_y']) * 0.3048
             used_pt = [used_pt[0] + delta_x, used_pt[1] + delta_y]
             dir_val, index = get_direction(used_pt, xMin, xMax, yMin, yMax)
-            if Polygon(current_plat_coords_modified).contains(Point(used_pt)):
+            intersection_pt = intersection_segment.intersection(boundary)
+            self.plot_intersection(polygon_plat, intersection_segment)
+
+            if polygon_plat.contains(Point(used_pt)):
                 well_path.at[x, 'rel_plat_conc'] = current_plat_conc
             else:
                 try:
+                    intersection_pt = intersection_segment.intersection(boundary)
+                    self.plot_intersection(polygon_plat, intersection_segment)
                     next_plat_df = self.currently_used_plat_data[self.currently_used_plat_data['range'] == counter]
                     if not next_plat_df.empty:
                         print(next_plat_df)
                     next_plat_conc = next_plat_df['conc'].iloc[0]
                     next_plat_coords = all_plats_dict[next_plat_conc]
                     self.stitcher_process(next_plat_df, current_plat_df, next_plat_coords, current_plat_coords, next_plat_conc, dir_val)
-                    print(foo)
                     counter += 1
                 except IndexError as e:
                     pass
@@ -899,12 +1069,61 @@ class SetupRelativeCoordsPage:
             #     else:
             #
             #         pass
+    def extract_coords_and_add_direction(self, used_dict):
+        new_lst = [[[i + [k]] for i in v] for k, v in used_dict.items()]
+        # for k, v in used_dict.items():
+        #     for i in v:
+        #         print(i + [k])
+        #         new_lst.append(i + [k])
 
+        return new_lst
+    def coords_stitcher(self, next_plat_dict_out, current_plat_dict_out, direction, direction_boo):
+        next_plat_lst = self.extract_coords_and_add_direction(next_plat_dict_out)
+        current_plat_lst = self.extract_coords_and_add_direction(current_plat_dict_out)
+        for i in next_plat_lst:
+            ModuleAgnostic.printLine(i)
+        for i in current_plat_lst:
+            ModuleAgnostic.printLine(i)
+        # ModuleAgnostic.printLine(current_plat_lst)
+
+        # print(next_plat_lst)
+        # print(current_plat_lst)
+
+    def coords_stitcher_2(self, new_coords, last_coords, direction, direction_boo):
+
+        new_coords = [list(i) for i in new_coords]
+        directions_dict = {"W": '0', "N": '1', "E": "2", "S": "3"}
+        direction = directions_dict[direction]
+        test_corners, old_data_organized = ModuleAgnostic.cornerGeneratorProcess(last_coords)
+        # print('test', test_corners)
+        print('old', test_corners)
+        print(foo)
+
+        old_data_organized = [[j[:2] for j in i] for i in old_data_organized]
+        old_data_organized = [[[round(k, 1) for k in j] for j in i] for i in old_data_organized]
+        old_data_organized = [ModuleAgnostic.findUniqueListsInListOfLists(i) for i in old_data_organized]
+
+        lst_dict = {"0": [0, 4], "1": [4, 8], "2": [8, 12], "3": [12, 16]}
+        matched_lst_dict = {"0": [12, 8], "1": [16, 12], "2": [4, 0], "3": [8, 4]}
+        opp_direction_list = {"0": '2', "1": '3', "2": '0', "3": '1'}
+        lst_dict_boo = {True: 0, False: 1}
+        starting_pts = lst_dict[str(direction)][lst_dict_boo[direction_boo]]
+        matched_pt = matched_lst_dict[str(direction)][lst_dict_boo[direction_boo]]
+
+        new_coords = [list(i) for i in new_coords]
+        diff_x, diff_y = last_coords[starting_pts][0] - new_coords[matched_pt][0], last_coords[starting_pts][1] - new_coords[matched_pt][1]
+        new_coords_test = [[i[0] + diff_x, i[1] + diff_y] for i in new_coords]
+
+        test_corners, new_coords_test_organized = ModuleAgnostic.cornerGeneratorProcess(new_coords_test)
+        new_coords_test_organized = [[j[:2] for j in i] for i in new_coords_test_organized]
+        new_coords_test_organized = [[[round(k, 1) for k in j] for j in i] for i in new_coords_test_organized]
+        new_coords_test_organized = [ModuleAgnostic.findUniqueListsInListOfLists(i) for i in new_coords_test_organized]
+        new_coords_test_organized[int(opp_direction_list[str(direction)])] = old_data_organized[int(direction)][::-1]
+
+        return new_coords_test
     def stitcher_process(self, next_plat_df, current_plat_df, next_plat_coords, current_plat_coords, next_plat_conc, dir_val):
-        # print(current_plat_coords)
-        # print(next_plat_coords)
+
         coords = [0] * 20
-        print(dir_val)
         if dir_val == "E":
             # aligned = self.glue_plat(
             #     orientation='east',
@@ -912,7 +1131,6 @@ class SetupRelativeCoordsPage:
             #     next_plat_coords=next_plat_coords,
             #     do_scale=True  # or False if you know they are same size
             # )
-            # print(aligned)
             self.directionE(next_plat_df, next_plat_coords, current_plat_coords, next_plat_conc, dir_val)
             # return coords, valsLst
 
@@ -987,7 +1205,7 @@ class SetupRelativeCoordsPage:
         # pts = (pts - p1_new) * scale
         # pts = pts.dot(R.T)
         # pts = pts + p1_orig
-        print('aligned', aligned_new_plat)
+
         # self.grapher_two_plots(old_plat, pts)
         # return [tuple(p) for p in pts]
 
@@ -1013,12 +1231,7 @@ class SetupRelativeCoordsPage:
 
         original_plat = [tuple(item[:2]) for k, v in current_plat_coords.items() for item in v]
         new_plat = [tuple(item[:2]) for k, v in next_plat_coords.items() for item in v]
-        print(current_plat_coords)
-        print(original_plat)
 
-        print("_____________")
-        print(next_plat_coords)
-        print(new_plat)
         old_line_s = current_plat_coords['south']
         old_line_n = current_plat_coords['north']
         old_line_e = current_plat_coords['east']
@@ -1037,7 +1250,6 @@ class SetupRelativeCoordsPage:
         new_line_s = (line_s + [south_pt]).tolist()
         new_line_n = (line_n + [north_pt]).tolist()
         new_line_e = []
-        print(new_line_w)
         # coords = new_line_s + new_line_w
         coords = new_line_w
         # coords[0] = original_plat[4]
@@ -1090,7 +1302,6 @@ class SetupRelativeCoordsPage:
         return coords, valsLst
 
     def intersect_circle_and_line(self, a, b, mr, r, dir):
-        print(a, b, mr, r, dir)
         θ = math.radians(mr)
         dx = r * math.cos(θ)
         dy = r * math.sin(θ)
