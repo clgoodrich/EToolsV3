@@ -1042,10 +1042,6 @@ class SetupRelativeCoordsPage:
             try:
                 dir_val, index = get_direction((intersection_pt.x, intersection_pt.y), xMin, xMax, yMin, yMax)
             except AttributeError:
-                # for k, v in all_plats_dict.items():
-                #     for r,s in v.items()
-                for k, v in all_plats_dict.items():
-                    print(k, v)
                 return all_plats_dict
             next_plat_df = self.currently_used_plat_data[self.currently_used_plat_data['range'] == counter]
             try:
@@ -1101,6 +1097,21 @@ class SetupRelativeCoordsPage:
             #         pass
 
     def run_plat_well_tracer(self, current_plat_coords, current_plat_conc, all_plats_dict):
+        def get_direction_sides():
+            used_df = all_plats_dict[all_plats_dict['conc'] == current_plat_conc]
+            print(used_df)
+            grouped_df = used_df.groupby('side')
+            dict_index = {'e':2, 'w':6, 'n':0, 's': 4}
+
+            for r, group_df in grouped_df:
+                line_string_side = Polygon(group_df[['x','y']].values.tolist())
+                on_line3 = intersection_pt.within(line_string_side.buffer(1e-8))
+                if on_line3:
+                    # print(r[0], dict_index[r[0]])
+
+                    return r[0], dict_index[r[0]]
+                # print('online', on_line3)
+                # intersection_pt, all_plats_dict, current_plat_conc)
         def well_path_prox(intersection, side_dict_all, direction, tol=1e-8):
             pt = intersection if isinstance(intersection, Point) else Point(intersection)
 
@@ -1170,7 +1181,7 @@ class SetupRelativeCoordsPage:
 
             return crossings
         def get_offset_added_delta(x, y, dx, dy):
-            return x + float(dx) * 0.3048, y + float(dy) * 0.3048
+            return x + float(dx), y + float(dy)
         def get_dataframe_from_qtableview():
             # Get the model
             model = self.ui.dx_survey_table_mod.model()
@@ -1227,7 +1238,6 @@ class SetupRelativeCoordsPage:
         # result_coords = [item[:2] + [k] for k, v in current_plat_coords.items() for item in v]
         starter_pt = get_starter_pt(well_path.iloc[0], result_coords)
         dx_start, dy_start = (float(well_path['easting'].iloc[0]) /0.3048) - starter_pt[0], (float(well_path['northing'].iloc[0]) /0.3048) - starter_pt[1]
-
         well_path[['e_offset_delta', 'n_offset_delta']] = (well_path.apply(lambda row: get_offset_added_delta(starter_pt[0], starter_pt[1], row['e_offset'], row['n_offset']), axis=1, result_type='expand'))
         well_path['rel_data_order'] = 99
         current_plat_coords_modified = [i[:2] for i in result_coords]
@@ -1235,22 +1245,22 @@ class SetupRelativeCoordsPage:
         xMin, xMax, yMin, yMax = current_polygon.bounds
 
         counter = 2
-
+        print(all_plats_dict)
         intersection_segment = LineString(list(zip(well_path['e_offset_delta'], well_path['n_offset_delta'])))
         while True:
-            print(current_plat_conc)
-            print(current_polygon)
             polygon_plat = current_polygon
             pts = [Point(x, y) for x, y in zip(well_path.e_offset_delta, well_path.n_offset_delta)]
             mask = [polygon_plat.contains(pt) for pt in pts]
             well_path.loc[mask, 'rel_data_order'] = counter-1
-            print(mask)
+            # print(mask)
             self.graph_plat_and_well(polygon_plat, list(zip(well_path.e_offset_delta, well_path.n_offset_delta)))
 
             boundary = polygon_plat.exterior
             intersection_pt = intersection_segment.intersection(boundary)
             try:
-                dir_val, index = get_direction((intersection_pt.x, intersection_pt.y), xMin, xMax, yMin, yMax)
+                dir_val, index = get_direction_sides()
+                # dir_val, index = get_direction((intersection_pt.x, intersection_pt.y), xMin, xMax, yMin, yMax)
+                print('dir_val', dir_val)
             except AttributeError:
                 all_plats_dict[['x_delta', 'y_delta']] = (
                     all_plats_dict.apply(lambda row: get_offset_added_delta(row['x'], row['y'], dx_start, dy_start), axis=1,
@@ -1263,10 +1273,8 @@ class SetupRelativeCoordsPage:
                 next_plat_conc = next_plat_df['conc'].iloc[0]
             except IndexError:
                 break
-            # next_plat_coords_dict = all_plats_dict[next_plat_conc]
             next_plat_coords_dict = all_plats_dict[all_plats_dict['conc']==next_plat_conc]
-            # print(next_plat_coords_dict)
-            # next_plat_coords = [tuple(item) for k, v in next_plat_coords_dict.items() for item in v]
+
             well_prox_boo = well_path_prox(intersection = intersection_pt, side_dict_all=next_plat_coords_dict, direction=dir_val)
             rewritten_coords = self.coords_stitcher(next_plat_coords_dict, all_plats_dict[all_plats_dict['conc']==current_plat_conc], dir_val, well_prox_boo)
             # rewritten_coords = self.coords_stitcher(all_plats_dict[next_plat_conc], all_plats_dict[current_plat_conc], dir_val, well_prox_boo)
@@ -1345,10 +1353,10 @@ class SetupRelativeCoordsPage:
             # Consolidate all mappings into a single, clear dictionary.
             # Format: direction: ([start_indices], [matched_indices])
             POINT_MAPPING = {
-                "W": ([0, 4], [12, 8]),
-                "N": ([4, 8], [16, 12]),
-                "E": ([8, 12], [4, 0]),
-                "S": ([12, 16], [8, 4]),
+                "w": ([0, 4], [12, 8]),
+                "n": ([4, 8], [16, 12]),
+                "e": ([8, 12], [4, 0]),
+                "s": ([12, 16], [8, 4]),
             }
 
             # Use a simple integer (0 or 1) to select from the lists.
@@ -1356,7 +1364,7 @@ class SetupRelativeCoordsPage:
 
             # Directly look up the lists of options for the given direction.
             start_options, match_options = POINT_MAPPING[direction]
-
+            # print(start_options, match_options)
             # Select the specific index from each list and return the pair.
             return start_options[selector], match_options[selector]
 
@@ -1835,8 +1843,8 @@ class SetupRelativeCoordsPage:
         pass
 
     def graph_plat_and_well(self, poly, well):
-        print('go')
-        print(well)
+        # print('go')
+        # print(well)
         x, y = poly.exterior.xy
         x_coords_1 = [point[0] for point in well]
         y_coords_1 = [point[1] for point in well]
