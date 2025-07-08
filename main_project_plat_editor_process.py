@@ -17,10 +17,10 @@ import ModuleAgnostic
 import regex as re
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from shapely.geometry import Point, LineString, Polygon
+from shapely.geometry import Point, LineString, Polygon, MultiPoint
 from shapely.geometry.base import BaseGeometry
 import operator
-
+from main_project_clearance import ClearanceProcess
 def decimal_converter(side, deg, minutes, sec, dir_val):
     """
     Simplified version with clearer logic (mathematically equivalent to above).
@@ -595,13 +595,14 @@ class SetupRelativeCoordsPage:
         }
         # for key, value in all_plats_dict.items():
         # init_plat = convert_to_pts(init_plat_data)
-        # output_polygons = self.run_plat_well_tracer_4(current_plat_coords=result[all_conc_codes[0]], current_plat_conc=all_conc_codes[0], all_plats_dict=result)
         self.draw_plat_solo(all_plats_dict[initial_plat_conc], version)
 
         plat_df = data_frame_plat_builder()
         plat_df_conc = plat_df['conc'].unique()
         output_polygons = self.run_plat_well_tracer(current_plat_coords=plat_df[plat_df['conc']==plat_df_conc[0]],
                                                     current_plat_conc=plat_df_conc[0], all_plats_dict=plat_df)
+        # print(output_polygons)
+        # output_polygons = self.run_plat_well_tracer_4(current_plat_coords=result[all_conc_codes[0]], current_plat_conc=all_conc_codes[0], all_plats_dict=result)
 
     def grapher(self, data):
         x_coords = [point[0] for point in data]
@@ -1051,7 +1052,7 @@ class SetupRelativeCoordsPage:
             next_plat_coords_dict = all_plats_dict[next_plat_conc]
             next_plat_coords = [tuple(item) for k, v in next_plat_coords_dict.items() for item in v]
             well_prox_boo = well_path_prox(intersection = intersection_pt, side_dict_all=next_plat_coords_dict, direction=dir_val)
-            rewritten_coords = self.coords_stitcher_3(all_plats_dict[next_plat_conc], all_plats_dict[current_plat_conc], dir_val, well_prox_boo)
+            rewritten_coords = self.coords_stitcher_2(all_plats_dict[next_plat_conc], all_plats_dict[current_plat_conc], dir_val, well_prox_boo)
             current_polygon = df_to_polygon(rewritten_coords)
             new_dict = rewritten_coords.to_dict(orient='list')
             all_plats_dict[next_plat_conc] = new_dict
@@ -1098,20 +1099,22 @@ class SetupRelativeCoordsPage:
 
     def run_plat_well_tracer(self, current_plat_coords, current_plat_conc, all_plats_dict):
         def get_direction_sides():
+            # print(intersection_pt)
             used_df = all_plats_dict[all_plats_dict['conc'] == current_plat_conc]
-            print(used_df)
+            # print(used_df)
             grouped_df = used_df.groupby('side')
             dict_index = {'e':2, 'w':6, 'n':0, 's': 4}
+            # for r, group_df in grouped_df:
+            #     line_string_side = Polygon(group_df[['x','y']].values.tolist())
+            #     on_line3 = intersection_pt.within(line_string_side.buffer(1e-8))
+            #     # if on_line3:
 
             for r, group_df in grouped_df:
                 line_string_side = Polygon(group_df[['x','y']].values.tolist())
                 on_line3 = intersection_pt.within(line_string_side.buffer(1e-8))
                 if on_line3:
-                    # print(r[0], dict_index[r[0]])
-
                     return r[0], dict_index[r[0]]
-                # print('online', on_line3)
-                # intersection_pt, all_plats_dict, current_plat_conc)
+
         def well_path_prox(intersection, side_dict_all, direction, tol=1e-8):
             pt = intersection if isinstance(intersection, Point) else Point(intersection)
 
@@ -1233,6 +1236,23 @@ class SetupRelativeCoordsPage:
             df_new = df2.reset_index()
             return df_new
 
+        def check_for_multipoint():
+            # print('prev point', intersection_pt_current)
+            # print('new point', intersection_pt)
+            all_pts = []
+            if not isinstance(intersection_pt, MultiPoint):
+                return intersection_pt
+            elif intersection_pt == Point(0,0):
+                return intersection_pt_current
+            else:
+                for geom in intersection_pt.geoms:
+                    all_pts.append(geom)
+                    # if geom.equals(intersection_pt_current):
+                    #     print('unique point', geom)
+                    #     return geom
+                return all_pts[1]
+
+
         well_path = get_dataframe_from_qtableview()
         result_coords = current_plat_coords[['x', 'y', 'side']].values.tolist()
         # result_coords = [item[:2] + [k] for k, v in current_plat_coords.items() for item in v]
@@ -1245,27 +1265,33 @@ class SetupRelativeCoordsPage:
         xMin, xMax, yMin, yMax = current_polygon.bounds
 
         counter = 2
-        print(all_plats_dict)
         intersection_segment = LineString(list(zip(well_path['e_offset_delta'], well_path['n_offset_delta'])))
+        # print(well_path)
+        intersection_pt_current = Point(0,0)
         while True:
             polygon_plat = current_polygon
             pts = [Point(x, y) for x, y in zip(well_path.e_offset_delta, well_path.n_offset_delta)]
             mask = [polygon_plat.contains(pt) for pt in pts]
             well_path.loc[mask, 'rel_data_order'] = counter-1
-            # print(mask)
-            self.graph_plat_and_well(polygon_plat, list(zip(well_path.e_offset_delta, well_path.n_offset_delta)))
+            # self.graph_plat_and_well(polygon_plat, list(zip(well_path.e_offset_delta, well_path.n_offset_delta)))
 
             boundary = polygon_plat.exterior
             intersection_pt = intersection_segment.intersection(boundary)
+            intersection_pt = check_for_multipoint()
+            intersection_pt_current = intersection_pt
             try:
                 dir_val, index = get_direction_sides()
-                # dir_val, index = get_direction((intersection_pt.x, intersection_pt.y), xMin, xMax, yMin, yMax)
-                print('dir_val', dir_val)
+                rel_data = well_path['rel_data_order'].unique()
+                self.graph_plats_and_well(all_plats_dict, list(zip(well_path.e_offset_delta, well_path.n_offset_delta)))
+                # print(all_plats_dict)
+                # print(well_path[well_path['rel_data_order']==99])
+                # print(rel_data)
+                # # if 99 not in rel_data:
+                # #     print('99 is gone')
             except AttributeError:
                 all_plats_dict[['x_delta', 'y_delta']] = (
                     all_plats_dict.apply(lambda row: get_offset_added_delta(row['x'], row['y'], dx_start, dy_start), axis=1,
                                           result_type='expand'))
-                # print(all_plats_dict)
 
                 return all_plats_dict
             next_plat_df = self.currently_used_plat_data[self.currently_used_plat_data['range'] == counter]
@@ -1277,16 +1303,14 @@ class SetupRelativeCoordsPage:
 
             well_prox_boo = well_path_prox(intersection = intersection_pt, side_dict_all=next_plat_coords_dict, direction=dir_val)
             rewritten_coords = self.coords_stitcher(next_plat_coords_dict, all_plats_dict[all_plats_dict['conc']==current_plat_conc], dir_val, well_prox_boo)
-            # rewritten_coords = self.coords_stitcher(all_plats_dict[next_plat_conc], all_plats_dict[current_plat_conc], dir_val, well_prox_boo)
             current_polygon = df_to_polygon(rewritten_coords)
-            xMin, xMax, yMin, yMax = current_polygon.bounds
             new_dict = pd.DataFrame(data= rewritten_coords.to_dict(orient='list'))
 
             try:
                 all_plats_dict = update_original_dataframe(all_plats_dict,new_dict)
                 counter += 1
                 current_plat_conc = next_plat_conc
-            except ValueError:
+            except ValueError as e:
                 all_plats_dict[['x_delta', 'y_delta']] = (
                     all_plats_dict.apply(lambda row: get_offset_added_delta(row['x'], row['y'], dx_start, dy_start), axis=1,
                                           result_type='expand'))
@@ -1331,14 +1355,10 @@ class SetupRelativeCoordsPage:
 
     def extract_coords_and_add_direction(self, used_dict):
         new_lst = [[i + [k] for i in v] for k, v in used_dict.items()]
-        # for k, v in used_dict.items():
-        #     for i in v:
-        #         new_lst.append(i + [k])
 
         return new_lst
 
     def coords_stitcher(self, next_coords_df, current_coords_df, direction, direction_boo):
-
         def get_point_indices():
             """
             Determines the correct starting and matched indices based on direction.
@@ -1352,18 +1372,27 @@ class SetupRelativeCoordsPage:
             """
             # Consolidate all mappings into a single, clear dictionary.
             # Format: direction: ([start_indices], [matched_indices])
+            # POINT_MAPPING = {
+            #     "w": ([0, 4], [12, 8]),
+            #     "n": ([4, 8], [16, 12]),
+            #     "e": ([8, 12], [4, 0]),
+            #     "s": ([12, 16], [8, 4]),
+            # }
             POINT_MAPPING = {
-                "w": ([0, 4], [12, 8]),
-                "n": ([4, 8], [16, 12]),
-                "e": ([8, 12], [4, 0]),
-                "s": ([12, 16], [8, 4]),
+                "w": ([0, 4], [14, 10]),
+                "n": ([5, 9], [19, 15]),
+                "e": ([10, 14], [4, 0]),
+                "s": ([15, 19], [9, 5]),
             }
-
+            lst_dict = {"0": [0, 4], "1": [4, 8], "2": [8, 12], "3": [12, 16]}
+            matched_lst_dict = {"0": [12, 8], "1": [16, 12], "2": [4, 0], "3": [8, 4]}
             # Use a simple integer (0 or 1) to select from the lists.
             selector = 0 if direction_boo else 1
 
             # Directly look up the lists of options for the given direction.
             start_options, match_options = POINT_MAPPING[direction]
+            # print('new', direction, direction_boo)
+            # print('new', start_options, match_options)
             # print(start_options, match_options)
             # Select the specific index from each list and return the pair.
             return start_options[selector], match_options[selector]
@@ -1390,13 +1419,21 @@ class SetupRelativeCoordsPage:
 
             # 1. Get location for the starting point in current_coords_df
             start_col = column_map[starting_pts // 5]
-            start_row = starting_pts % 5
+
+            start_row = (starting_pts % 5)
+            # print('start', start_col)
+            # print(start_row)
+            # print(current_coords_df)
             current_point = current_coords_df[(current_coords_df['side'] == start_col) & (current_coords_df['point_i'] == start_row)][['x', 'y']].iloc[0].values.tolist()
+            # print(current_point)
             # current_point = current_coords_df.loc[start_row, start_col]
             # 2. Get location for the matched point in next_coords_df
             matched_col = column_map[matched_pt // 5]
             matched_row = matched_pt % 5
+            # print('start', matched_col)
+            # print(matched_row)
             next_point = next_coords_df[(next_coords_df['side'] == matched_col) & (next_coords_df['point_i'] == matched_row)][['x', 'y']].iloc[0].values.tolist()
+            # print(next_point)
             # next_point = next_coords_df.loc[matched_row, matched_col]
 
             # 3. Perform the calculation
@@ -1406,12 +1443,31 @@ class SetupRelativeCoordsPage:
             return diff_x_pt, diff_y_pt
 
         def my_calc(x,y):
-
-
             return x + diff_x_used, y + diff_y_used
 
-        def round_row(x, y):
-            return round(x,1), round(y,1)
+        def update_original_dataframe(df_o, df_new):
+            dir_dict = {'n':['north', 'south'],
+                        's':['south', 'north'],
+                        'e':['west','east'],
+                        'w':['east','west']}
+            dir_lst = dir_dict[direction]
+            north_coords = df_o[df_o['side'] == dir_lst[0]][['x', 'y']].iloc[::-1].reset_index(drop=True)
+            south_indices = df_new[df_new['side'] == dir_lst[1]].index
+            df_new.loc[south_indices, ['x', 'y']] = north_coords.values
+            #
+            # df2 = df_o.set_index(['conc', 'side', 'point_i'])
+            # repl2 = df_new.set_index(['conc', 'side', 'point_i'])
+            #
+            # # 2) restrict repl2 to just the columns you want to overwrite
+            # #    (here: 'x' and 'y')
+            # repl2 = repl2[['x', 'y']]
+            #
+            # # 3) update df2 in place
+            # df2.update(repl2)
+            #
+            # # 4) (optionally) drop the index back to columns
+            # df_new = df2.reset_index()
+            return df_new
         # to run this on every cell in every column:
         # result_df = df.applymap(my_calc)
         opp_direction_list = {"0": '2', "1": '3', "2": '0', "3": '1'}
@@ -1429,8 +1485,15 @@ class SetupRelativeCoordsPage:
         # current_coords_df_mod = current_coords_df.applymap(lambda pt:[round(pt[0],1), round(pt[1], 1)])
         # current_coords_df_zeroed = current_coords_df_mod.apply(lambda col: col.where(~col.map(tuple).duplicated(), other=np.nan))
         starting_pts, matched_pt = get_point_indices()
+        print(starting_pts, matched_pt)
         diff_x_used, diff_y_used = calculate_diff_from_dfs()
+
         next_coords_df[['x', 'y']] = next_coords_df.apply(lambda row: my_calc(row['x'], row['y']), axis=1, result_type='expand')
+        # output = update_original_dataframe(current_coords_df, next_coords_df)
+
+
+        print(current_coords_df)
+        print(next_coords_df)
         # next_coords_df_mod = next_coords_df.applymap(my_calc)
         return next_coords_df
         # new_coords_test_organized = [[j[:2] for j in i] for i in new_coords_test_organized]
@@ -1475,13 +1538,18 @@ class SetupRelativeCoordsPage:
             """
             # Consolidate all mappings into a single, clear dictionary.
             # Format: direction: ([start_indices], [matched_indices])
+            # POINT_MAPPING = {
+            #     "W": ([0, 4], [12, 8]),
+            #     "N": ([4, 8], [16, 12]),
+            #     "E": ([8, 12], [4, 0]),
+            #     "S": ([12, 16], [8, 4]),
+            # }
             POINT_MAPPING = {
-                "W": ([0, 4], [12, 8]),
-                "N": ([4, 8], [16, 12]),
-                "E": ([8, 12], [4, 0]),
-                "S": ([12, 16], [8, 4]),
+                "W": ([0, 4], [14, 10]),
+                "N": ([5, 9], [19, 15]),
+                "E": ([10, 14], [4, 0]),
+                "S": ([15, 19], [9, 5]),
             }
-
             # Use a simple integer (0 or 1) to select from the lists.
             selector = 0 if direction_boo else 1
 
@@ -1577,10 +1645,8 @@ class SetupRelativeCoordsPage:
 
         new_coords = [list(i) for i in new_coords]
         directions_dict = {"W": '0', "N": '1', "E": "2", "S": "3"}
-
         direction = directions_dict[direction]
-        test_corners, old_data_organized = ModuleAgnostic.cornerGeneratorProcess(last_coords)
-
+        # test_corners, old_data_organized = ModuleAgnostic.cornerGeneratorProcess(last_coords)
 
         # old_data_organized = [[j[:2] for j in i] for i in old_data_organized]
         # old_data_organized = [[[round(k, 1) for k in j] for j in i] for i in old_data_organized]
@@ -1618,87 +1684,87 @@ class SetupRelativeCoordsPage:
             self.directionE(next_plat_df, next_plat_coords, current_plat_coords, next_plat_conc, dir_val)
             # return coords, valsLst
 
-    def glue_plat(self,
-                  orientation: str,
-                  current_plat_coords: dict,
-                  next_plat_coords: dict,
-                  do_scale: bool = True
-                  ) -> list[tuple[float, float]]:
-        """Return a new_plat vertex list, rigidly‐transformed so that
-           its 'join side' sits exactly on the specified side of the
-           current plat, with no gap."""
-        # map orientation → which sides to align
-        new_plat = [tuple(item[:2]) for k, v in next_plat_coords.items() for item in v]
-        old_plat = [tuple(item[:2]) for k, v in current_plat_coords.items() for item in v]
-        side_map = {
-            'north': ('north', 'south'),
-            'south': ('south', 'north'),
-            'east': ('east', 'west'),
-            'west': ('west', 'east'),
-        }
-        base_name, new_name = side_map[orientation]
-        base = np.array(current_plat_coords[base_name])
-        new = np.array(next_plat_coords[new_name])
-        # endpoints
-        p1_orig, p2_orig = base[0], base[-1]
-        p1_new, p2_new = new[0], new[-1]
-        # side‐vectors
-        v_orig = p2_orig - p1_orig
-        v_new = p2_new - p1_new
+    # def glue_plat(self,
+    #               orientation: str,
+    #               current_plat_coords: dict,
+    #               next_plat_coords: dict,
+    #               do_scale: bool = True
+    #               ) -> list[tuple[float, float]]:
+    #     """Return a new_plat vertex list, rigidly‐transformed so that
+    #        its 'join side' sits exactly on the specified side of the
+    #        current plat, with no gap."""
+    #     # map orientation → which sides to align
+    #     new_plat = [tuple(item[:2]) for k, v in next_plat_coords.items() for item in v]
+    #     old_plat = [tuple(item[:2]) for k, v in current_plat_coords.items() for item in v]
+    #     side_map = {
+    #         'north': ('north', 'south'),
+    #         'south': ('south', 'north'),
+    #         'east': ('east', 'west'),
+    #         'west': ('west', 'east'),
+    #     }
+    #     base_name, new_name = side_map[orientation]
+    #     base = np.array(current_plat_coords[base_name])
+    #     new = np.array(next_plat_coords[new_name])
+    #     # endpoints
+    #     p1_orig, p2_orig = base[0], base[-1]
+    #     p1_new, p2_new = new[0], new[-1]
+    #     # side‐vectors
+    #     v_orig = p2_orig - p1_orig
+    #     v_new = p2_new - p1_new
+    #
+    #     # lengths
+    #     L_orig = np.linalg.norm(v_orig)
+    #     L_new = np.linalg.norm(v_new)
+    #
+    #     # optional uniform scale if L_new != L_orig
+    #     scale = 1.0
+    #     if abs(L_orig - L_new) > 1e-6:
+    #         scale = L_orig / L_new
+    #
+    #     # rotation angle to carry v_new → v_orig
+    #     ang_new = np.arctan2(v_new[1], v_new[0])
+    #     ang_orig = np.arctan2(v_orig[1], v_orig[0])
+    #     theta = ang_orig - ang_new
+    #
+    #     # rotation matrix
+    #     R = np.array([[np.cos(theta), -np.sin(theta)],
+    #                   [np.sin(theta), np.cos(theta)]])
+    #
+    #     # your full list of new‐plat vertices:
+    #     coords_new = np.array(new_plat)  # shape (N,2)
+    #     # 1) move so p1_new sits at (0,0)
+    #     coords0 = coords_new - p1_new[np.newaxis, :]
+    #     # 2) scale
+    #     coords1 = coords0 * scale
+    #     # 3) rotate
+    #     coords2 = coords1.dot(R.T)
+    #     # 4) translate so (0,0) → p1_orig
+    #     aligned_new_plat = coords2 + p1_orig[np.newaxis, :]
+    #
+    #     #
+    #     # # optional scale
+    #     # scale = (np.linalg.norm(v_orig) / np.linalg.norm(v_new)) if do_scale else 1.0
+    #     # # rotation
+    #     # ang_new = np.arctan2(v_new[1], v_new[0])
+    #     # ang_orig = np.arctan2(v_orig[1], v_orig[0])
+    #     # theta = ang_orig - ang_new
+    #     # R = np.array([[np.cos(theta), -np.sin(theta)],
+    #     #               [np.sin(theta), np.cos(theta)]])
+    #     # # apply to all new_plat pts
+    #     # pts = np.array(new_plat)
+    #     # pts = (pts - p1_new) * scale
+    #     # pts = pts.dot(R.T)
+    #     # pts = pts + p1_orig
+    #
+    #     # self.grapher_two_plots(old_plat, pts)
+    #     # return [tuple(p) for p in pts]
 
-        # lengths
-        L_orig = np.linalg.norm(v_orig)
-        L_new = np.linalg.norm(v_new)
-
-        # optional uniform scale if L_new != L_orig
-        scale = 1.0
-        if abs(L_orig - L_new) > 1e-6:
-            scale = L_orig / L_new
-
-        # rotation angle to carry v_new → v_orig
-        ang_new = np.arctan2(v_new[1], v_new[0])
-        ang_orig = np.arctan2(v_orig[1], v_orig[0])
-        theta = ang_orig - ang_new
-
-        # rotation matrix
-        R = np.array([[np.cos(theta), -np.sin(theta)],
-                      [np.sin(theta), np.cos(theta)]])
-
-        # your full list of new‐plat vertices:
-        coords_new = np.array(new_plat)  # shape (N,2)
-        # 1) move so p1_new sits at (0,0)
-        coords0 = coords_new - p1_new[np.newaxis, :]
-        # 2) scale
-        coords1 = coords0 * scale
-        # 3) rotate
-        coords2 = coords1.dot(R.T)
-        # 4) translate so (0,0) → p1_orig
-        aligned_new_plat = coords2 + p1_orig[np.newaxis, :]
-
-        #
-        # # optional scale
-        # scale = (np.linalg.norm(v_orig) / np.linalg.norm(v_new)) if do_scale else 1.0
-        # # rotation
-        # ang_new = np.arctan2(v_new[1], v_new[0])
-        # ang_orig = np.arctan2(v_orig[1], v_orig[0])
-        # theta = ang_orig - ang_new
-        # R = np.array([[np.cos(theta), -np.sin(theta)],
-        #               [np.sin(theta), np.cos(theta)]])
-        # # apply to all new_plat pts
-        # pts = np.array(new_plat)
-        # pts = (pts - p1_new) * scale
-        # pts = pts.dot(R.T)
-        # pts = pts + p1_orig
-
-        # self.grapher_two_plots(old_plat, pts)
-        # return [tuple(p) for p in pts]
-
-    def stitcher_process2(self, newPlat, section, direction, path, coordLst, valsLstTot):
-        valsLst = getPlatVals(newPlat, section, path)
-        coords = [0] * 20
-        if direction == "E":
-            coords, valsLst = self.directionE(coords, coordLst, valsLst, valsLstTot)
-            return coords, valsLst
+    # def stitcher_process2(self, newPlat, section, direction, path, coordLst, valsLstTot):
+    #     valsLst = getPlatVals(newPlat, section, path)
+    #     coords = [0] * 20
+    #     if direction == "E":
+    #         coords, valsLst = self.directionE(coords, coordLst, valsLst, valsLstTot)
+    #         return coords, valsLst
         # elif direction == 'W':
         #     coords, valsLst = ExcelGetNewCoords.directionW(coords, coordLst, valsLst, valsLstTot)
         #     return coords, valsLst
@@ -1843,8 +1909,7 @@ class SetupRelativeCoordsPage:
         pass
 
     def graph_plat_and_well(self, poly, well):
-        # print('go')
-        # print(well)
+
         x, y = poly.exterior.xy
         x_coords_1 = [point[0] for point in well]
         y_coords_1 = [point[1] for point in well]
@@ -1857,6 +1922,21 @@ class SetupRelativeCoordsPage:
         # 5. Set aspect ratio and display the plot
         ax.set_aspect('equal', 'box')
         plt.show()
+
+    def graph_plats_and_well(self, polygons, well):
+        grouped = polygons.groupby("conc")
+        fig, ax = plt.subplots()
+        x = [point[0] for point in well]
+        y = [point[1] for point in well]
+        ax.plot(x, y, color='blue', linewidth=3)
+
+        for i, k in grouped:
+            x_coords_1 = k['x'].values.tolist()
+            y_coords_1 = k['y'].values.tolist()
+            ax.plot(x_coords_1, y_coords_1, color='red')
+        ax.set_aspect('equal', 'box')
+        plt.show()
+        pass
 def get_starter_pt(row, current_plat):
     if row['FNL'] < row['FSL']:
         fnsl_val = row['FNL']

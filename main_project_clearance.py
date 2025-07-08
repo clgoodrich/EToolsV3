@@ -879,25 +879,24 @@ class ClearanceProcess:
             TypeError: If geometry objects are not properly formatted
         """
         # Store input DataFrames
-        self.df = df_used
-        self.plats = df_plat
+        # self.df = df_used
+        # self.plats = df_plat
         # Calculate concentrations for each survey point
-        self.df = self.fnd_conc2(self.plats, self.df)
+        df_used = self.fnd_conc2(df_plat, df_used)
 
         # Extract unique concentration values
-        self.all_polygons_concs = self.df['label'].unique()
+        # all_polygons_concs = df_used['label'].unique()
 
         # Initialize empty DataFrame for complete dataset
         self.whole_df = pd.DataFrame()
 
         # Process clearance data
-
-        self.clearance_data = self._main_clearance()
+        self.clearance_data = self.main_clearance(df_plat, df_used)
 
         # Extract used concentration values
         self.used_conc = self.clearance_data['label'].unique().tolist()
 
-    def _main_clearance(self) -> pd.DataFrame:
+    def main_clearance(self, df_plat, df_used) -> pd.DataFrame:
         """Processes clearance calculations for well trajectories against plat boundaries.
 
         Calculates distances from well trajectory points to the boundaries of their
@@ -924,7 +923,7 @@ class ClearanceProcess:
             IndexError: When plat geometry is missing for a concentration
         """
         # Process each unique concentration
-        self.whole_df = self._loop_through_list()
+        self.whole_df = self._loop_through_list(df_plat, df_used)
         self.whole_df = self.whole_df.sort_values(by=self.whole_df.columns[0])
         self.whole_df = self.whole_df.rename(
             columns={
@@ -937,7 +936,7 @@ class ClearanceProcess:
 
         # Extract relevant columns and merge with original data
         edited_df = self.whole_df[['point_index', 'FNL', 'FSL', 'FEL', "FWL"]]
-        result = pd.merge(self.df, edited_df, on='point_index')
+        result = pd.merge(df_used, edited_df, on='point_index')
 
         return result
 
@@ -1002,45 +1001,16 @@ class ClearanceProcess:
         combined_df.reset_index(inplace=True)
         return combined_df
 
-    def _loop_through_list(self) -> pd.DataFrame:
-        """Processes well trajectory points to calculate clearance distances from plat boundaries
-        for each concentration zone.
-
-        This function groups trajectory points by concentration zones, calculates clearance
-        distances to cardinal direction boundaries (FEL, FWL, FNL, FSL), and combines results
-        with original trajectory data.
-
-        Returns:
-            pd.DataFrame: Combined results containing original trajectory data plus:
-                - FEL (float): Distance to East line in feet
-                - FWL (float): Distance to West line in feet
-                - FNL (float): Distance to North line in feet
-                - FSL (float): Distance to South line in feet
-                - closest_surface_point_{dir} (List[float]): [x,y] coordinates of closest points
-                - intersection_angle_{dir} (float): Angles between trajectory and boundaries
-                - segments_{dir} (List[List[float]]): Coordinates of closest boundary segments
-
-        Notes:
-            - Groups data by concentration zones for efficient processing
-            - Pre-computes boundary segments for each geometry
-            - Handles missing geometries gracefully with warning
-            - Uses vectorized operations for performance
-            - Preserves original trajectory point ordering
-            - Supports complex plat geometries
-            - All distances are in feet
-
-        Example:
-            >>> clearance = ClearanceProcess(trajectory_df, plat_df, adjacent_df)
-            >>> results = clearance._loop_through_list()
-            >>> print(f"Minimum FEL: {results['FEL'].min():.1f} ft")
+    def _loop_through_list(self, df_plat, df_used) -> pd.DataFrame:
+        """
         """
         # Group trajectory points by concentration zone
-        grouped: pd.core.groupby.DataFrameGroupBy = self.df.groupby('label')
+        grouped: pd.core.groupby.DataFrameGroupBy = df_used.groupby('label')
 
         # Pre-compute geometry coordinates dictionary
         conc_geometries: Dict[str, List[Tuple[float, float]]] = {
             conc: list(geom.exterior.coords)
-            for conc, geom in self.plats.set_index('label')['geometry'].items()
+            for conc, geom in df_plat.set_index('label')['geometry'].items()
         }
 
         # Pre-compute directional boundary segments
