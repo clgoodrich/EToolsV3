@@ -8810,7 +8810,7 @@ class Ui_Dialog(object):
         self.well_viz_page_tabs.setCurrentIndex(2)
         self.well_viz_tabs_2d3d.setCurrentIndex(3)
         self.coords_all_sections_tabs.setCurrentIndex(1)
-        self.rel_all_sections_tabs.setCurrentIndex(1)
+        self.rel_all_sections_tabs.setCurrentIndex(0)
         self.wcr_tabs.setCurrentIndex(1)
         QtCore.QMetaObject.connectSlotsByName(Dialog)
         Dialog.setTabOrder(self.check_pt_e, self.check_pt_n)
