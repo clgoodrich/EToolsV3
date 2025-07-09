@@ -1,3 +1,4 @@
+import traceback
 from functools import partial
 import sqlite3
 
@@ -11,6 +12,7 @@ import os
 import pandas as pd
 import ModuleAgnostic as ma
 import numpy as np
+import copy
 
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QLineEdit, QSpinBox,
                              QCheckBox,
@@ -125,7 +127,7 @@ class SQLConnector:
     def _create_connection_string(self):
         """Create connection string with caching."""
         credentials = self._get_credentials()
-        credentials = {}
+        # credentials = {}
         if credentials:
             # Production connection
             params = {
@@ -373,6 +375,9 @@ class ETools(QMainWindow):
         choice = QMessageBox.warning(self, "Attention", "No directional survey detected in database!",
                                      QMessageBox.Ok)
 
+    def imported_dx_survey(self):
+        choice = QMessageBox.warning(self, "Attention", "Imported a new DX Survey!",
+                                     QMessageBox.Ok)
     def retrieve_well_parameters(self):
         query = f"""SELECT APDNo, Well_Nm FROM [dbo].[tblAPD] WHERE API_WellNo = '{self.api_val}{self.lateral}'"""
         # output = self.db.f(query)
@@ -587,13 +592,26 @@ class ETools(QMainWindow):
         self.ui.load_planned_survey_box.blockSignals(True)
 
         def loader():
-            filter = "pdf(*.pdf)"
+            # filter = "pdf(*.pdf)"
+            # current_dir = os.getcwd()
+            # file_path = QFileDialog.getOpenFileName(None, 'Open file', current_dir, filter)
+            # print('Loading: ', file_path)
+            # while '.pdf' not in file_path[0] and file_path != ('', ''):
+            #     file_path = QFileDialog.getOpenFileName(None, 'Open file', current_dir, filter)
+            # self.file_path_dict[label] = file_path[0]
+            file_path = ('', '')
             current_dir = os.getcwd()
-            file_path = QFileDialog.getOpenFileName(None, 'Open file', current_dir, filter)
-            print('Loading: ', file_path)
-            while '.pdf' not in file_path[0] and file_path != ('', ''):
-                file_path = QFileDialog.getOpenFileName(None, 'Open file', current_dir, filter)
+            file_path = QFileDialog.getOpenFileName(None, 'Open file', current_dir)
+            if file_path[0] == '':
+                print("User canceled file selection")
+                return False  # Indicate operation was canceled
+            print(file_path)
+            # print('Loading: ', file_path)
+            # while file_path != ('', ''):
+            #     print(file_path)
+            #     file_path = QFileDialog.getOpenFileName(None, 'Open file', current_dir)
             self.file_path_dict[label] = file_path[0]
+            return True  # Indicate successful file selection
 
         def filter_out_same_citing():
             new_label = 'Planned' if label == 'planned' else 'AsDrilled'
@@ -603,30 +621,39 @@ class ETools(QMainWindow):
 
             new_df = pd.concat([current_df, df]).reset_index(drop=True)
             return new_df
+        try:
+            result_boo = loader()
+            if result_boo:  # If file was successfully selected
+                df, north_ref = self.survey_importer.load_and_process_data(label, self.db, self.api_val,
+                                                                                        self.file_path_dict)
+                well_elevation = df['SurveySurfaceElevation'].iloc[0]
+                df = df.sort_values(by=['measured_depth'])
+                df = df.drop(['SurveySurfaceElevation'], axis=1)
+                df['LateralName'] = self.lateral
+                output_new_df = filter_out_same_citing()
+                # test_combo = pd.concat([self.well.plat_df, _]).drop_duplicates()
+                test_combo = copy.copy(self.well.plat_df)
 
-        loader()
-        df, north_ref, extra_plats = self.survey_importer.load_and_process_data(label, self.db, self.api_val,
-                                                                                self.file_path_dict)
-        well_elevation = df['SurveySurfaceElevation'].iloc[0]
-        df = df.sort_values(by=['measured_depth'])
-        df = df.drop(['SurveySurfaceElevation'], axis=1)
-        df['LateralName'] = self.lateral
-        output_new_df = filter_out_same_citing()
-        test_combo = pd.concat([self.well.plat_df, extra_plats]).drop_duplicates()
-        self.well.set_survey(output_new_df)
-        self.well.set_north_ref(north_ref)
-        self.well.set_well_elevation(well_elevation)
-        self.well.set_plat_data(test_combo)
-        # self.well.reprocess_with_current_plat()
-        # self.well.etools_process(preserve_plat=True)
-        self.well.rerun_surveys()
-        self.writer.set_clear_survey(self.well.cl_dx_dict)
-        self.writer.set_spec_surveys(self.well.spec_surveys_dict)
-        self.main_processes_program(north_ref)
-        self.write_radio_buttons(self.well.cl_dx_dict, self.well.spec_surveys_dict)
-        self.ui.load_as_drilled_survey_box.blockSignals(False)
-        self.ui.load_planned_survey_box.blockSignals(False)
-        print('ended')
+                self.well.set_survey(output_new_df)
+                self.well.set_north_ref(north_ref)
+                self.well.set_well_elevation(well_elevation)
+                self.well.set_plat_data(test_combo)
+                self.well.rerun_surveys()
+                self.writer.set_clear_survey(self.well.cl_dx_dict)
+                self.writer.set_spec_surveys(self.well.spec_surveys_dict)
+                self.main_processes_program(north_ref)
+                self.write_radio_buttons(self.well.cl_dx_dict, self.well.spec_surveys_dict)
+                self.ui.load_as_drilled_survey_box.blockSignals(False)
+                self.ui.load_planned_survey_box.blockSignals(False)
+                self.imported_dx_survey()
+            else:
+                pass
+        except (TypeError, ValueError, AttributeError, KeyError, FileNotFoundError) as e:
+            print(e, 'import canceled')
+            error_traceback = traceback.format_exc()
+            print(f"Error details:\n{error_traceback}")
+            pass
+
 
     def find_more_sections_and_report(self):
         def sql_find_section_data():

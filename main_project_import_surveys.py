@@ -1,3 +1,4 @@
+import csv
 import sys
 from pdfminer.pdfinterp import PDFResourceManager, PDFPageInterpreter
 from pdfminer.converter import PDFPageAggregator
@@ -19,6 +20,7 @@ import numpy as np
 from sklearn.cluster import OPTICS
 import numpy as np
 from scipy.spatial import Delaunay
+
 
 class PandasModel(QAbstractTableModel):
     def __init__(self, data):
@@ -102,7 +104,6 @@ class PDFPageDetailedAggregator(PDFPageAggregator):
         self.result = ltpage
 
 
-
 class SurveyImporter:
     def __init__(self, name):
         self.well_name = name
@@ -112,31 +113,73 @@ class SurveyImporter:
         # Create the thread as an instance variable
 
     def load_and_process_data(self, label, db, api, file_path_dict):
-        print('loading and processing')
         self.db = db
         self.api = api
-        parsed_text_data = self.text_box_data_gather(file_path_dict[label])
+        used_file = file_path_dict[label]
+        _, extension = os.path.splitext(used_file)
+        extension = extension.lower()
+        df, north_ref, extra_plats = pd.DataFrame(), "", None
+        if extension == '.pdf':
+            try:
+                return self.process_pdf_data(used_file, label)
+            except NameError as nm:
+                pass
+        elif extension == '.csv':
+            return self.process_table_data(used_file, label, 'csv')
+        elif extension in ['.xls', '.xlsx', '.xlsm', '.xlsb']:
+            return self.process_table_data(used_file, label, 'xl')
+        else:
+            return df, north_ref, extra_plats
+        # if extension == '.pdf' or file_mime == 'application/pdf':
+        #     return "PDF"
+        #     self.process_pdf_data(used_file)
 
+    def process_table_data(self, directory, label, table_doc_type):
+        header_dict = {}
+        north_ref_dict = {'t': 'true', 'g': 'grid'}
+        header_info, data_table = pd.DataFrame(), pd.DataFrame()
+        if table_doc_type == 'xl':
+            header_info = pd.read_excel(directory, nrows=6, header=None)
+            data_table = pd.read_excel(directory, skiprows=6)
+            header_dict = {header_info.iloc[i, 0]: header_info.iloc[i, 1] for i in range(len(header_info))}
+
+
+        elif table_doc_type == 'csv':
+            with open(directory, 'r') as file:
+                csv_reader = csv.reader(file)
+                header_rows = [next(csv_reader) for _ in range(6)]
+            header_dict = {row[0]: row[1] if len(row) > 1 else None for row in header_rows}
+            data_table = pd.read_csv(directory, skiprows=6)
+        data_table['SurfaceLatitude'] = header_dict['surface_latitude']
+        data_table['SurfaceLongitude'] = header_dict['surface_longitude']
+        data_table['SurveySurfaceElevation'] = header_dict['surface_elevation']
+        data_table['CitingType'] = 'Planned' if label == 'planned' else 'AsDrilled'
+
+        # north_ref =
+        return data_table, north_ref_dict[header_dict['north_ref'].lower()]
+
+    def process_pdf_data(self, directory, label):
+        parsed_text_data = self.text_box_data_gather(directory)
         # Handle case where processing was cancelled
         if parsed_text_data is None:
             return None
-
         returned_data = self.gather_process(parsed_text_data)
-        shl = self.processSHL(parsed_text_data)
+        shl = self.process_shl(parsed_text_data)
         elevation = self.find_elevation()
         if elevation is None:
             elevation = self.gather_elevation(parsed_text_data, shl)
-
         output_data = [{"measured_depth": i[0], "inclination": i[1], "azimuth": i[2]} for i in returned_data]
         df = pd.DataFrame(data=output_data, columns=["measured_depth", "inclination", "azimuth"])
         df['SurfaceLatitude'] = shl[0]
         df['SurfaceLongitude'] = shl[1]
         df['SurveySurfaceElevation'] = elevation
         df['CitingType'] = 'Planned' if label == 'planned' else 'AsDrilled'
-        north_ref = self.processNorthReference(parsed_text_data)
+        north_ref = self.process_north_reference(parsed_text_data)
         df = df.drop_duplicates(keep="first")
-        extra_plats = self.load_new_data_locations(df)
-        return df, north_ref, extra_plats
+        # extra_plats = self.load_new_data_locations(df)
+        df = df.sort_values(by=['CitingType', 'measured_depth'])
+        return df, north_ref
+        # return df, north_ref, extra_plats
 
     def load_new_data_locations(self, df):
 
@@ -221,7 +264,10 @@ class SurveyImporter:
 
     def text_box_data_gather(self, path):
         # Open and setup PDF
-        fp = open(path, 'rb')
+        try:
+            fp = open(path, 'rb')
+        except FileNotFoundError:
+            return
         rsrcmgr = PDFResourceManager()
         laparams = LAParams(char_margin=0.1)
         device = PDFPageDetailedAggregator(rsrcmgr, laparams=laparams)
@@ -335,7 +381,7 @@ class SurveyImporter:
                     azi_edited[i][1].strip()
             return azi_edited
 
-        def comparePageCoordinates():
+        def compare_page_coordinates():
             def create_dataframe(lst, columns):
                 return pd.DataFrame(lst, columns=['page', 'text'] + columns)
 
@@ -488,7 +534,7 @@ class SurveyImporter:
         md_lst = find_md_data()
         inc_lst = find_inc_data()
         azi_lst = find_azi_data()
-        md_inc_azi, page_lst, inc_azi_lst = comparePageCoordinates()
+        md_inc_azi, page_lst, inc_azi_lst = compare_page_coordinates()
         page_lst = sorted(list(page_lst))
         returned_data = grouper_process()
         md_lst = [float(i[0]) for i in returned_data]
@@ -520,10 +566,8 @@ class SurveyImporter:
                             except ValueError:
                                 pass
 
-
-    def processNorthReference(self, parsed_data):
+    def process_north_reference(self, parsed_data):
         n_lst = self.parse_and_find(parsed_data, 'north reference', [''])
-
         for i in range(len(parsed_data)):
             for j in range(len(parsed_data[i])):
                 text = parsed_data[i][j][4].lower().strip().replace("\n", " ").replace(",", "")
@@ -532,12 +576,12 @@ class SurveyImporter:
                     if i == n_lst[k][0]:
                         x3, y3, x4, y4 = n_lst[k][2], n_lst[k][3], n_lst[k][4], n_lst[k][5]
                         o_text = n_lst[k][1]
-                        value_ret_d = self.findProximalValuesNorthRef(x1, y1, x2, y2, text, x3, y3, x4, y4, o_text)
+                        value_ret_d = self.find_proximal_values_north_ref(x1, y1, x2, y2, text, x3, y3, x4, y4, o_text)
                         if value_ret_d != -1:
                             return value_ret_d
 
-    def findProximalValuesNorthRef(self, x1, y1, x2, y2, input_text, x3, y3, x4, y4, reference_text):
-        y4 = self.modifyNorthRefForIncompleteData(reference_text, input_text, y3, y4, y1, y2)
+    def find_proximal_values_north_ref(self, x1, y1, x2, y2, input_text, x3, y3, x4, y4, reference_text):
+        y4 = self.modify_north_ref_for_incomplete_data(reference_text, input_text, y3, y4, y1, y2)
         value_ret = -1
         type_lst = ['magnetic', 'true', 'grid']
         if x3 < x4 < x1 < x2 and abs(y1 - y3) < 2 and abs(y2 - y4) < 4:  # index == str_lst[0]:
@@ -554,7 +598,7 @@ class SurveyImporter:
                     return value_ret
         return value_ret
 
-    def modifyNorthRefForIncompleteData(self, reference_text, input_text, y3, y4, y1, y2):
+    def modify_north_ref_for_incomplete_data(self, reference_text, input_text, y3, y4, y1, y2):
         re_text = re.search(r"\b{}\b".format('local co-ordinate reference'), reference_text, re.IGNORECASE)
         re_text2 = re.search(r"\b{}\b".format('md reference'), reference_text, re.IGNORECASE)
         if re_text is None and re_text2 is not None:
@@ -564,13 +608,13 @@ class SurveyImporter:
                     return y4
         return y4
 
-    def processSHL(self, parsed_data):
+    def process_shl(self, parsed_data):
         lat_lst_o = self.parse_and_find(parsed_data, 'latitude', [''])
         lon_lst_o = self.parse_and_find(parsed_data, 'longitude', [''])
         latRange = ['35', '36', '37', '38', '39', '40', '41', '42', '43', '44']
         lonRange = ['115', '114', '113', '112', '111', '110', '109', '108']
         lat_lon_value = [0, 0]
-        page_no = self.findBoundingYCoordinates(parsed_data)
+        page_no = self.find_bounding_y_coordinates(parsed_data)
         page_no = list(set(page_no))
         for k in page_no:
             lat_lst = [i for i in lat_lst_o if i[0] == k]
@@ -581,20 +625,20 @@ class SurveyImporter:
                 text = parsed_data[k][j][4].lower().strip().replace("\n", " ").replace(",", "")
                 for r in range(len(lat_lst)):
                     val_left, val_down, val_right, val_up = lat_lst[r][2], lat_lst[r][3], lat_lst[r][4], lat_lst[r][5]
-                    output = self.findProximalValues(parse_left, parse_down, parse_right, parse_up, text, val_left,
-                                                     val_down, val_right, val_up, latRange, 'lat')
+                    output = self.find_proximal_values(parse_left, parse_down, parse_right, parse_up, text, val_left,
+                                                       val_down, val_right, val_up, latRange, 'lat')
                     if output is not None:
                         lat_lon_value[0] = output
                 for r in range(len(lon_lst)):
                     val_left, val_down, val_right, val_up = lon_lst[r][2], lon_lst[r][3], lon_lst[r][4], lon_lst[r][5]
-                    output = self.findProximalValues(parse_left, parse_down, parse_right, parse_up, text, val_left,
-                                                     val_down, val_right, val_up, lonRange, 'lon')
+                    output = self.find_proximal_values(parse_left, parse_down, parse_right, parse_up, text, val_left,
+                                                       val_down, val_right, val_up, lonRange, 'lon')
                     if output is not None:
                         lat_lon_value[1] = str(abs(float(output)) * -1)
 
         return lat_lon_value
 
-    def findBoundingYCoordinates(self, parsed_data):
+    def find_bounding_y_coordinates(self, parsed_data):
         y_values_limit = []
         well_page = []
         for i in range(len(parsed_data)):
@@ -609,28 +653,28 @@ class SurveyImporter:
 
         return well_page
 
-    def findProximalValues(self, parse_left, parse_down, parse_right, parse_up, text, val_left, val_down, val_right,
-                           val_up, range_data, coord_type):
+    def find_proximal_values(self, parse_left, parse_down, parse_right, parse_up, text, val_left, val_down, val_right,
+                             val_up, range_data, coord_type):
         val_x_avg, val_y_avg = st.mean([val_right, val_left]), st.mean([val_down, val_up])
         parse_x_avg, parse_y_avg = st.mean([parse_right, parse_left]), st.mean([parse_down, parse_up])
         if val_x_avg < parse_x_avg and abs(val_y_avg - parse_y_avg) < 5 or abs(
                 val_x_avg - parse_x_avg) < 5 and val_y_avg > parse_y_avg:
-            output_dec = self.latLonRegExDec(range_data, text)
-            output_deg = self.latLonRegExDeg(range_data, text, coord_type)
+            output_dec = self.lat_lon_reg_ex_dec(range_data, text)
+            output_deg = self.lat_lon_reg_ex_deg(range_data, text, coord_type)
             if output_dec is not None:
                 return output_dec
             elif output_deg is not None:
 
                 return output_deg
 
-    def latLonRegExDec(self, range_data, line):
+    def lat_lon_reg_ex_dec(self, range_data, line):
         for k in range_data:
             regExDecimal = re.compile(re.escape(k) + r"\.\d{4,6}")
             searchDec = regExDecimal.search(line)
             if searchDec is not None:
                 return searchDec.group()
 
-    def latLonRegExDeg(self, range_data, line, coord_type):
+    def lat_lon_reg_ex_deg(self, range_data, line, coord_type):
         for k in range_data:
             if coord_type == 'lat':
                 regExDegree = re.compile(
@@ -641,7 +685,7 @@ class SurveyImporter:
             searchLatDeg = regExDegree.search(line)
             if searchLatDeg is not None:
                 try:
-                    value = self.convertDegreeToDecimal(searchLatDeg.group())
+                    value = self.convert_degree_to_decimal(searchLatDeg.group())
                 except ValueError:
                     return 0
                 return value
@@ -649,10 +693,9 @@ class SurveyImporter:
                 regExDegree = re.compile(
                     re.escape(k) + r"[\°]?[\s]?" + r"\d{1,2}[\']?[\s]?" + r"[\d]{1,2}[\.]?[\d]{2,5}?")
 
-    def convertDegreeToDecimal(self, value):
+    def convert_degree_to_decimal(self, value):
         test = re.sub("[^0-9.]+", " ", value)
         degreeValue, hourValue, minuteValue = float(test.split()[0]), float(test.split()[1]), float(test.split()[2])
         finalValue = round(degreeValue + hourValue / 60 + minuteValue / 3600, 6)
 
         return finalValue
-

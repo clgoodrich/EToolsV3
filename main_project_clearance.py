@@ -66,33 +66,7 @@ def _reorganize_lst_points_with_angle(
         lst: List[List[float]],
         centroid: List[float]
 ) -> List[List[float]]:
-    """Reorganizes a list of points by calculating angles relative to a centroid.
-
-    Takes a list of 2D points and adds an angle component calculated from the
-    point's position relative to the centroid. The angle is calculated as the
-    arctangent of the vector from centroid to point, converted to degrees and
-    normalized to [0,360].
-
-    Args:
-        lst: List of points where each point is [x,y]
-        centroid: Reference point [x,y] for angle calculations
-
-    Returns:
-        List of points with appended angles where each element is [x,y,angle]
-        Angles are in degrees, normalized to [0,360] range
-
-    Notes:
-        - Uses atan2 for stable angle calculations in all quadrants
-        - Adds 360 and takes modulo 360 to ensure positive angles
-        - Preserves original point coordinates
-        - Point order is maintained, only angles are appended
-
-    Example:
-        >>> points = [[1,1], [2,2]]
-        >>> centroid = [0,0]
-        >>> result = _reorganize_lst_points_with_angle(points, centroid)
-        >>> print(result)
-        [[1, 1, 45.0], [2, 2, 45.0]]
+    """
     """
     # Calculate angles relative to centroid and append to points
     lst_arrange = [
@@ -111,40 +85,7 @@ def _calculate_well_to_line_clearance_detailed(
         well_trajectory: Union[List[List[float]], npt.NDArray],
         line_points: Union[List[List[float]], npt.NDArray]
 ) -> List[Dict[str, Any]]:
-    """Calculates detailed clearance metrics between well trajectory points and a line segment
-    using vectorized operations.
-
-    Computes minimum distances, intersection angles, and closest points on a line segment
-    for an entire well trajectory using numpy vectorization for improved performance.
-
-    Args:
-        well_trajectory: Array-like of shape (n, 2) or (n, 3) containing well trajectory points.
-            Each point should be [x, y] or [x, y, z]
-        line_points: Array-like of shape (2, 2) or (2, 3) containing line segment endpoints.
-            Should be two points [[x1, y1], [x2, y2]] or [[x1, y1, z1], [x2, y2, z2]]
-
-    Returns:
-        List of dictionaries containing detailed results for each trajectory point:
-            - point_index: Index of the well trajectory point
-            - well_point: Coordinates of the well point
-            - distance: Minimum distance to line segment
-            - closest_surface_point: Point on line segment closest to well point
-            - intersection_angle: Acute angle between well-to-closest vector and line segment
-            - original_segment: Original line segment coordinates
-
-    Notes:
-        - Uses vectorized numpy operations for improved performance
-        - Projects points onto line segment using vector math
-        - Clamps projection points to line segment bounds
-        - Handles numerical stability with epsilon value
-        - Returns acute angles (≤ 90°)
-        - Uses L2 norm for distance calculations
-
-    Example:
-        >>> trajectory = [[0,0], [1,1], [2,2]]
-        >>> line = [[0,2], [2,2]]
-        >>> results = _calculate_well_to_line_clearance_detailed(trajectory, line)
-        >>> print(f"Distance to first point: {results[0]['distance']:.2f}")
+    """
     """
     # Convert inputs to numpy arrays
     well_trajectory = np.array(well_trajectory)
@@ -204,42 +145,7 @@ def _calculate_well_to_line_clearance_detailed(
 def _optimized_corner_process(
         trajectory: Union[List[List[float]], npt.NDArray]
 ) -> List[List[float]]:
-    """Process a trajectory to identify and sort corner points using convex hull and RDP simplification.
-
-    Takes a trajectory of points and identifies corner vertices through angle analysis,
-    simplification, and centroid-based angle calculations for ordering.
-
-    Args:
-        trajectory: Array-like of shape (n, 2) containing trajectory points
-            Each point should be [x, y] coordinates
-
-    Returns:
-        List of corner points with centroid angles where each element is [x, y, angle]
-        Angles are in degrees normalized to [0,360] range
-
-    Notes:
-        - Uses ConvexHull for initial clockwise point ordering
-        - Applies Ramer-Douglas-Peucker (RDP) algorithm for trajectory simplification
-        - Epsilon value for RDP varies based on coordinate magnitudes:
-            * 0.002 for coordinates between 35-55
-            * 200 otherwise
-        - Corner detection uses angle difference threshold of π/35 radians
-        - Centroid angles calculated relative to positive x-axis
-        - Points are ordered clockwise around centroid
-
-    Implementation Details:
-        1. Converts input to numpy array
-        2. Calculates centroid using Shapely Polygon
-        3. Orders points using ConvexHull
-        4. Simplifies trajectory using adaptive RDP
-        5. Detects corners through vector angle analysis
-        6. Calculates centroid-relative angles
-        7. Returns corners with angle information
-
-    Example:
-        >>> traj = [[0,0], [1,0], [1,1], [0,1]]
-        >>> corners = _optimized_corner_process(traj)
-        >>> print(f"Found {len(corners)} corners")
+    """
     """
     # Convert to numpy array for vector operations
     trajectory = np.array(trajectory)
@@ -281,32 +187,7 @@ def _optimized_corner_process(
 
 
 def _remove_dupes_list_of_lists(lst: List[List[T]]) -> List[List[T]]:
-    """Removes duplicate sublists while preserving the original order.
-
-    Takes a list of lists and removes any duplicate sublists by converting each
-    sublist to a tuple for hashing, maintaining the order of first occurrence.
-
-    Args:
-        lst: List of lists where each sublist contains hashable elements
-            Example: [[1,2], [3,4], [1,2]] or [['a','b'], ['c','d']]
-
-    Returns:
-        A new list with duplicate sublists removed, preserving original order
-        of first occurrence
-
-    Notes:
-        - Uses a set for O(1) lookup of previously seen items
-        - Converts sublists to tuples for hashability
-        - Maintains original sublist type in output
-        - Memory usage is O(n) where n is number of unique sublists
-
-    Example:
-        >>> data = [[1,2], [3,4], [1,2], [5,6]]
-        >>> result = _remove_dupes_list_of_lists(data)
-        >>> print(result)  # [[1,2], [3,4], [5,6]]
-
-    Raises:
-        TypeError: If sublists contain unhashable elements
+    """
     """
     # Initialize data structures for tracking duplicates
     dup_free: List[List[T]] = []
@@ -506,43 +387,7 @@ def _results_finder(
         dir_val: str,
         well_trajectory: NDArray[np.float64]
 ) -> pd.DataFrame:
-    """Calculates minimum clearance distances and geometric relationships between well trajectory
-    points and boundary line segments for a given cardinal direction.
-
-    This function performs vectorized calculations to find the closest points, distances, and
-    intersection angles between well trajectory points and boundary segments. Results are
-    converted to engineering units and formatted into a DataFrame.
-
-    Args:
-        segments (List[List[float]]): List of line segments defining boundary lines, where each
-            segment is defined by two points [[x1,y1], [x2,y2]].
-        dir_val (str): Cardinal direction identifier ('North', 'South', 'East', 'West').
-        well_trajectory (np.ndarray): Array of shape (n,3) containing well trajectory points:
-            - Columns 0,1: x,y coordinates
-            - Column 2: point indices
-
-    Returns:
-        pd.DataFrame: Results containing for each trajectory point:
-            - point_index (int): Original trajectory point index
-            - distance_{dir_val} (float): Minimum clearance distance in feet
-            - closest_surface_point_{dir_val} (List[float]): [x,y] of closest point on boundary
-            - intersection_angle_{dir_val} (float): Acute angle in degrees between well-to-closest
-              vector and boundary segment
-            - segments_{dir_val} (List[List[float]]): Coordinates of the closest boundary segment
-
-    Notes:
-        - Uses vectorized numpy operations for performance optimization
-        - Distances are converted from meters to feet (divide by 0.3048)
-        - Handles projection clamping to segment endpoints
-        - Converts obtuse angles to acute angles (<=90°)
-        - Uses epsilon (1e-10) for numerical stability in angle calculations
-        - All segments are processed against all trajectory points
-
-    Example:
-        >>> segments = [[[0,0], [1,0]], [[1,0], [2,0]]]  # Two connected segments
-        >>> trajectory = np.array([[0.5, 1, 0], [1.5, 1, 1]])  # Two points with indices
-        >>> results = _results_finder(segments, 'North', trajectory)
-        >>> print(f"Clearance at first point: {results['distance_North'].iloc[0]:.1f} ft")
+    """
     """
     # Extract trajectory components for vectorized operations
     well_indices: NDArray = well_trajectory[:, 2]
@@ -726,31 +571,7 @@ def _regular_corner_class(
 def _corner_generator_process(
         data_lengths: List[List[float]]
 ) -> Tuple[List[List[float]], List[List[List[float]]]]:
-    """Processes polygon points to identify and classify corners.
-
-    Takes a list of polygon points, identifies corners, calculates angles relative
-    to centroid, and organizes points into directional sides.
-
-    Args:
-        data_lengths: List of polygon points, each containing [x, y] coordinates
-
-    Returns:
-        Tuple containing:
-            - List of identified corner points with format [x, y, angle]
-            - List of four lists representing polygon sides (west, north, east, south)
-              where each side contains its constituent points
-
-    Notes:
-        - Uses Shapely Polygon centroid for angle calculations
-        - Angles are measured clockwise from 0-360 degrees
-        - Duplicate points are removed while preserving order
-        - Corner optimization is performed before angle calculations
-
-    Example:
-        >>> points = [[0,0], [1,0], [1,1], [0,1]]
-        >>> corners, sides = _corner_generator_process(points)
-        >>> print(len(corners))  # Number of detected corners
-        4
+    """
     """
     # Optimize corner point detection
     corner_arrange = _optimized_corner_process(data_lengths)
@@ -860,7 +681,8 @@ class ClearanceProcess:
     def __init__(
             self,
             df_used: pd.DataFrame,
-            df_plat: pd.DataFrame
+            df_plat: pd.DataFrame,
+            bypass_db: bool = False
     ) -> None:
         """Initialize the ClearanceProcess with survey and plat data.
 
@@ -879,11 +701,21 @@ class ClearanceProcess:
             TypeError: If geometry objects are not properly formatted
         """
         # Store input DataFrames
-        # self.df = df_used
-        # self.plats = df_plat
-        # Calculate concentrations for each survey point
 
-        df_used = self.fnd_conc(df_plat, df_used)
+        # Calculate concentrations for each survey point
+        self.used_conc = []
+
+        if bypass_db:
+            # For second process - use df_plat directly as test_plat
+            # print(df_used)
+
+            df_used = self.find_conc_part2(df_plat, df_used)
+            # print(len(df_used))
+        else:
+            # For first process - normal database lookup
+            df_used = self.fnd_conc(df_plat, df_used)
+            # print(df_used)
+
 
         # Extract unique concentration values
         # all_polygons_concs = df_used['label'].unique()
@@ -896,12 +728,9 @@ class ClearanceProcess:
         self.clearance_data = self.main_clearance(df_plat, df_used)
 
         # Extract used concentration values
-        self.used_conc = self.clearance_data['label'].unique().tolist()
 
-    def main_clearance_for_relative_data(self, df_plat, df_used):
-        pass
+
     def main_clearance(self, df_plat, df_used) -> pd.DataFrame:
-        print(df_plat)
         """Processes clearance calculations for well trajectories against plat boundaries.
 
         Calculates distances from well trajectory points to the boundaries of their
@@ -942,16 +771,21 @@ class ClearanceProcess:
         # Extract relevant columns and merge with original data
         edited_df = self.whole_df[['point_index', 'FNL', 'FSL', 'FEL', "FWL"]]
         result = pd.merge(df_used, edited_df, on='point_index')
-        # result['conc_rel'] = None
-        # result['label_rel'] = None
-        # result['fnl_rel'] = None
-        # result['fsl_rel'] = None
-        # result['fel_rel'] = None
-        # result['fwl_rel'] = None
+        self.used_conc = result['label'].unique().tolist()
+
         return result
 
     def load_relative_clearance(self, df_plat, df_used):
-        pass
+        rel_df = self._loop_through_list(df_plat, df_used)
+        rel_df = rel_df.sort_values(by=rel_df.columns[0])
+        rel_df = rel_df.rename(
+            columns={
+                'distance_East': 'rel_fel',
+                'distance_West': 'rel_fwl',
+                'distance_North': 'rel_fnl',
+                'distance_South': 'rel_fsl'
+            }
+        )
 
     def find_single_point(self, pt):
         def find_if_contained():
@@ -977,7 +811,6 @@ class ClearanceProcess:
         }
         conc = [i for i, v in boundary_segments.items()]
         well_trajectory = np.array([[pt[0], pt[1], 1]])
-        # well_trajectory: NDArray = group[['easting', 'northing', 'point_index']].values
 
         # Get boundary segments for current concentration
         segments = boundary_segments.get(conc[0])
@@ -1019,7 +852,6 @@ class ClearanceProcess:
         """
         # Group trajectory points by concentration zone
         grouped: pd.core.groupby.DataFrameGroupBy = df_used.groupby('label')
-
         # Pre-compute geometry coordinates dictionary
         conc_geometries: Dict[str, List[Tuple[float, float]]] = {
             conc: list(geom.exterior.coords)
@@ -1163,6 +995,7 @@ class ClearanceProcess:
         query = f"""select * from BaseData where Conc IN ({concs})"""
         filtered_data = pd.read_sql(query, conn_db)
         test_plat = self.geo_transform(filtered_data)
+
         return self.find_conc_part2(test_plat, point_df)
 
     def find_conc_part2(self, test_plat, point_df):
@@ -1170,7 +1003,6 @@ class ClearanceProcess:
             test_plat_gdf = gpd.GeoDataFrame(test_plat, geometry='geometry')
         else:
             test_plat_gdf = test_plat
-        # Convert plat_df to a GeoDataFrame with Point geometries
         plat_gdf = gpd.GeoDataFrame(
             point_df,
             geometry=point_df['shp_pt'],

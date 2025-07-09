@@ -527,14 +527,16 @@ class PlatCoordEditor:
         if i not in self._all_original_points_for_plats:
             self._all_original_points_for_plats.loc[len(self._all_original_points_for_plats)] = [i, Polygon(points)]
         self._program_changes = True
-        main_table = getattr(self.ui, f"table_coords_{i}")
+        try:
+            main_table = getattr(self.ui, f"table_coords_{i}")
+        except AttributeError:
+            return
         model = getattr(self, f"plat_table_model_coords_{i}")
 
         model.setRowCount(0)  # Clear existing rows efficiently
         model.setHorizontalHeaderLabels(['X', 'Y'])
         main_table.setModel(model)
         main_table.setUpdatesEnabled(False)
-        print(i)
         self._all_points_for_plats.loc[len(self._all_points_for_plats)] = [i, Polygon(points)]
         for val, (x, y) in enumerate(points):
             model.setItem(val, 0, QStandardItem(f"{x:.3f}"))
