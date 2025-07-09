@@ -882,7 +882,8 @@ class ClearanceProcess:
         # self.df = df_used
         # self.plats = df_plat
         # Calculate concentrations for each survey point
-        df_used = self.fnd_conc2(df_plat, df_used)
+
+        df_used = self.fnd_conc(df_plat, df_used)
 
         # Extract unique concentration values
         # all_polygons_concs = df_used['label'].unique()
@@ -891,12 +892,16 @@ class ClearanceProcess:
         self.whole_df = pd.DataFrame()
 
         # Process clearance data
+
         self.clearance_data = self.main_clearance(df_plat, df_used)
 
         # Extract used concentration values
         self.used_conc = self.clearance_data['label'].unique().tolist()
 
+    def main_clearance_for_relative_data(self, df_plat, df_used):
+        pass
     def main_clearance(self, df_plat, df_used) -> pd.DataFrame:
+        print(df_plat)
         """Processes clearance calculations for well trajectories against plat boundaries.
 
         Calculates distances from well trajectory points to the boundaries of their
@@ -937,8 +942,16 @@ class ClearanceProcess:
         # Extract relevant columns and merge with original data
         edited_df = self.whole_df[['point_index', 'FNL', 'FSL', 'FEL', "FWL"]]
         result = pd.merge(df_used, edited_df, on='point_index')
-
+        # result['conc_rel'] = None
+        # result['label_rel'] = None
+        # result['fnl_rel'] = None
+        # result['fsl_rel'] = None
+        # result['fel_rel'] = None
+        # result['fwl_rel'] = None
         return result
+
+    def load_relative_clearance(self, df_plat, df_used):
+        pass
 
     def find_single_point(self, pt):
         def find_if_contained():
@@ -1085,7 +1098,6 @@ class ClearanceProcess:
             part4 = s[-1]
 
             return f"{part1} {part2} {part3} {part4}"
-
         df['geometry'] = df.apply(lambda row: Point(row['Easting'], row['Northing']), axis=1)
         used_fields = df[['Conc', 'Easting', 'Northing', 'geometry']]
         used_fields['geometry'] = used_fields.apply(lambda row: Point(row['Easting'], row['Northing']), axis=1)
@@ -1100,7 +1112,7 @@ class ClearanceProcess:
 
         return df_new
 
-    def fnd_conc2(self, plat_df, point_df):
+    def fnd_conc(self, plat_df, point_df):
         path_used_db = r'C:\Work\Databases'
         apd_data_dir = os.path.join(path_used_db, 'Board_DB_Plss_Sections.db')
         conn_db = sqlite3.connect(apd_data_dir)
@@ -1151,12 +1163,13 @@ class ClearanceProcess:
         query = f"""select * from BaseData where Conc IN ({concs})"""
         filtered_data = pd.read_sql(query, conn_db)
         test_plat = self.geo_transform(filtered_data)
+        return self.find_conc_part2(test_plat, point_df)
 
+    def find_conc_part2(self, test_plat, point_df):
         if not isinstance(test_plat, gpd.GeoDataFrame):
             test_plat_gdf = gpd.GeoDataFrame(test_plat, geometry='geometry')
         else:
             test_plat_gdf = test_plat
-
         # Convert plat_df to a GeoDataFrame with Point geometries
         plat_gdf = gpd.GeoDataFrame(
             point_df,

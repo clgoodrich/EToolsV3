@@ -40,10 +40,12 @@ from main_project_drawer import DataDrawer
 from main_project_wcr import WCR_Main
 from main_project_import_surveys import SurveyImporter
 from main_project_plat_coord_editor import PlatCoordEditor
-from main_project_plat_editor_process import PlatEditorProcess, SetupRelativeCoordsPage
+from main_project_plat_editor_process import SetupRelativeCoordsPage
 from shapely.geometry import Point, LineString, MultiPoint, Polygon
 from main_project_plat_editor_process import convert_to_pts
 import pyproj
+
+
 # self.colors = ["#000000", "#004949", "#009292", "#ff6db6", "#ffb6db",
 #                "#490092", "#006ddb", "#b66dff", "#6db6ff", "#b6dbff",
 #                "#920000", "#924900", "#db6d00", "#24ff24", "#ffff6d",
@@ -278,14 +280,13 @@ class ETools(QMainWindow):
         self.ui = Ui_Dialog()
         self.ui.setupUi(self)
         self.conn = setup_db()
-        self.rel_plats = SetupRelativeCoordsPage(conn = self.conn, ui = self.ui)
         self.points_checker = PointChecker(ui=self.ui)
         # State 36 Rose, Dobby, Elkhorn
         # 4303950011
         # 4301354306
         # 4301950099
         # 4304757090
-        #4304757728
+        # 4304757728
         self.ui.well_api_val.setText('4304757090')
 
         self.button_group = QButtonGroup(self.ui.survey_type_widget)
@@ -363,6 +364,7 @@ class ETools(QMainWindow):
         if variables:
             self.button_group.button(0).setChecked(True)
             self.writer.survey_writer(self.ui, variables[0])
+
     def bad_api_popup(self):
         choice = QMessageBox.warning(self, "Attention", "Invalid API Detected! Fix it! (Possibly a string?)",
                                      QMessageBox.Ok)
@@ -483,6 +485,40 @@ class ETools(QMainWindow):
                     return dict_return[k]
 
         def filter_by_citing_type():
+            def interpolate_azimuth():
+                """
+                Interpolates azimuth angles, handling the circular wrap-around.
+
+                Args:
+                    md (float): The measured depth for which to interpolate the azimuth.
+                    lower_row (dict): A dictionary-like object with 'measured_depth' and 'azimuth'.
+                    upper_row (dict): A dictionary-like object with 'measured_depth' and 'azimuth'.
+
+                Returns:
+                    float: The interpolated azimuth in degrees.
+                """
+                md_range = [float(lower_row['measured_depth']), float(upper_row['measured_depth'])]
+                azimuth_range = [float(lower_row['azimuth']), float(upper_row['azimuth'])]
+
+                # Convert degrees to radians for trigonometric functions
+                azimuth_rad = np.deg2rad(azimuth_range)
+
+                # Convert the angles to Cartesian coordinates
+                x = np.cos(azimuth_rad)
+                y = np.sin(azimuth_rad)
+
+                # Interpolate the x and y components
+                interp_x = np.interp(md, md_range, x)
+                interp_y = np.interp(md, md_range, y)
+
+                # Convert the interpolated Cartesian coordinates back to an angle in radians
+                interp_azimuth_rad = np.arctan2(interp_y, interp_x)
+
+                # Convert the result back to degrees and ensure it's within the 0-360 range
+                interp_azimuth_deg = np.rad2deg(interp_azimuth_rad) % 360
+
+                return interp_azimuth_deg
+
             lst_data = [survey]
             for citing, group in survey.groupby('CitingType'):
                 try:
@@ -493,13 +529,19 @@ class ETools(QMainWindow):
                                                        [float(lower_row['measured_depth']),
                                                         float(upper_row['measured_depth'])],
                                                        [float(lower_row['inclination']), float(upper_row['inclination'])])
-                    new_row['azimuth'] = np.interp(md,
-                                                   [float(lower_row['measured_depth']), float(upper_row['measured_depth'])],
-                                                   [float(lower_row['azimuth']), float(upper_row['azimuth'])])
+                    new_row['azimuth'] = interpolate_azimuth()
+                    # new_row['azimuth'] = np.degrees(np.interp(md,
+                    #                                           [float(lower_row['measured_depth']), float(upper_row['measured_depth'])],
+                    #                                           [np.radians(float(lower_row['azimuth'])), np.radians(float(upper_row['azimuth']))]))
+                    print(lower_row)
+                    print(new_row)
+                    print(upper_row)
+                    print()
                     new_row['CitingType'] = lower_row['CitingType']
                     new_row['SurfaceLatitude'] = lower_row['SurfaceLatitude']
                     new_row['SurfaceLongitude'] = lower_row['SurfaceLongitude']
                     new_row['LateralName'] = lower_row['LateralName']
+
                     lst_data.append(pd.DataFrame([new_row]))
                 except IndexError:
                     pass
@@ -507,12 +549,11 @@ class ETools(QMainWindow):
 
         md = float(self.ui.new_md_survey_box.text())
 
-        # survey = get_citing_type()
-        # row = interpolate_row(df=survey, new_md=md)
         survey = self.well.get_survey()
         output = filter_by_citing_type()
         survey = pd.concat(output, ignore_index=True)
         survey = survey.sort_values(by=['CitingType', 'measured_depth'])
+        print(survey)
         self.well.set_survey(survey)
         self.well.reprocess_with_current_plat()
         self.main_processes_program(self.ui.dx_survey_north_ref_line.text())
@@ -525,16 +566,12 @@ class ETools(QMainWindow):
         first_button.clicked.emit()
 
     def process_with_new_shl(self):
-        print('new shl')
-        x, y = float(self.ui.shl_lat_easting.text()), float(self.ui.shl_lon_northing.text())
         pt = self.determine_coord_system(float(self.ui.shl_lat_easting.text()), float(self.ui.shl_lon_northing.text()))
         self.well.set_starting_point(pt)
         self.main_processes_program(self.ui.dx_survey_north_ref_line.text())
         self.writer.set_clear_survey(self.well.cl_dx_dict)
         self.writer.set_spec_surveys(self.well.spec_surveys_dict)
-        # self.well.etools_process()
         self.well.load_surveys()
-        # self.writer.write_new_survey_line_to_display(return_well_survey(), md)
 
     def etools_process_with_new_coords(self, north_ref):
         self.well.process_plat_editor()
@@ -651,6 +688,8 @@ class EToolsWell:
         self.well_name = well_name
         self.lateral = lateral
         self.survey_dx = survey_dx
+        self.rel_plats = SetupRelativeCoordsPage(conn=self.conn, ui=self.ui)
+
         first_pt = survey_dx.head(1)
         self.starting_point = [first_pt['SurfaceLatitude'].iloc[0], first_pt['SurfaceLongitude'].iloc[0]]
         self.well_elevation = well_elevation
@@ -727,6 +766,7 @@ class EToolsWell:
             baseline = translations.get('baseline', {}).get(baseline, baseline).upper()
 
             return "".join([section, township, ts_dir, rng, rng_dir, baseline])
+
         def find_relevant_datasets():
             first_plat = self.loc_df[self.loc_df['zone_name'].str.contains('Surface')]
             first_plat['conc'] = first_plat.apply(
@@ -746,7 +786,6 @@ class EToolsWell:
         type_map = {'planned': 'pln_df',
                     'asdrilled': 'drl_df'}
         first_plat_rel = find_relevant_datasets()
-        print(first_plat_rel.first())
 
         _, first_plat_rel_out = next(iter(first_plat_rel))
         first_plat_coords = convert_to_pts(first_plat_rel_out)
@@ -757,7 +796,7 @@ class EToolsWell:
                 for ref in ref_lst:
                     attr_name = f"plat_editor_process_{key}{ref}"
                     used_data = self.cl_dx_dict[f"{key}{ref}"].clearance_data
-                    setattr(self, attr_name, PlatEditorProcess(conn=self.conn, plat_df=first_plat_rel,plat_coords =first_plat_coords,  shl=shl_latlon, well_df=used_data))
+                    setattr(self, attr_name, PlatEditorProcess(conn=self.conn, plat_df=first_plat_rel, plat_coords=first_plat_coords, shl=shl_latlon, well_df=used_data))
 
         # citing_types = self.survey_dx['CitingType'].unique() #asdrilled or planned
         # shl_latlon = list(self.survey_dx.head(1)[['SurfaceLatitude', 'SurfaceLongitude']].iloc[0])
@@ -817,22 +856,13 @@ class EToolsWell:
         """User changed survey inputs: find *new* plats then merge and re‐clearance."""
         # 1) Recompute surveys
         self._run_survey_logic()
-
-        # 2) Pull whatever plats & locs come from the *new* survey set
         new_plats, new_locs = self.retrieve_location_data(self.surveys_dict)
-        # 3) MERGE these into your existing DataFrames
-        # after concatenating…
         df = pd.concat([self.plat_df, new_plats])
         first_col = df.columns[0]
         df = df.drop_duplicates(subset=[first_col], keep='first')
         self.plat_df = df.reset_index(drop=True)
-
-        # self.plat_df = pd.concat([self.plat_df, new_plats]).drop_duplicates().reset_index(drop=True)
         self.loc_df = pd.concat([self.loc_df, new_locs]).drop_duplicates().reset_index(drop=True)
-        # 4) ***Rebuild the UI editor*** so the newly discovered plats show up for editing
         self.plat_editor = PlatCoordEditor(self.plat_df, self.ui, self.conn)
-        # self.recreate_survey_objects()
-        # 5) Recalculate clearance
         self._run_clearance()
 
         # ——————— Re-run Plats ———————
@@ -875,6 +905,8 @@ class EToolsWell:
             self.surveys_dict,
             self.plat_df
         )
+        print(self.cl_dx_dict)
+        self.rel_plats.set_well_path_dict(self.cl_dx_dict)
 
     def etools_process(self, *, preserve_plat=False, new_plat=False):
         # 1) coerce column types, retrieve surveys always
@@ -935,6 +967,7 @@ class EToolsWell:
     def clearance_process(self, df, plat_df):
         return ClearanceProcess(df, plat_df)
 
+
 # (590632.8649118496, 4450524.732002878)(592236.7912223932, 4450548.389611623)
 class PointChecker:
     def __init__(self, ui):
@@ -989,7 +1022,6 @@ class PointChecker:
 
     def gather_deg_pts(self):
         def converter(label, id):
-
             deg_text = getattr(self.ui, f"{label}_deg_{id}").text().strip()
             min_text = getattr(self.ui, f"{label}_min_{id}").text().strip()
             sec_text = getattr(self.ui, f"{label}_sec_{id}").text().strip()
@@ -1013,7 +1045,6 @@ class PointChecker:
         output_b = utm.from_latlon(lat_dec_b, lon_dec_b)[:2]
         output_pt = self.check_if_utm_or_latlon(e_dec_pt, n_dec_pt)
         return output_a, output_b, output_pt
-
 
     def gather_pts(self):
         fields = [
@@ -1064,7 +1095,7 @@ class PointChecker:
         try:
             x = float(x_coord)
             y = float(y_coord)
-            print('xy', x,y)
+            print('xy', x, y)
             if (-180 <= y <= 180) and (-90 <= x <= 90):
                 print('xy2', x, y)
                 if (-114 <= y <= -109) and (37 <= x <= 42):
