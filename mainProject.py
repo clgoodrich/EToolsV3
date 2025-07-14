@@ -19,8 +19,8 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout
                              QDialog, QTabWidget, QTextBrowser, QTableWidget, QLabel, QTableView, QRadioButton,
                              QGraphicsView,
                              QComboBox, QMessageBox, QFileDialog, QButtonGroup)
-
-from PyQt5.QtGui import QDesktopServices
+from PyQt5.QtCore import QRegExp
+from PyQt5.QtGui import QDesktopServices, QDoubleValidator, QRegExpValidator
 from PyQt5.QtWidgets import QApplication, QMainWindow
 from EToolsLimited import Ui_Dialog
 
@@ -46,12 +46,133 @@ from main_project_plat_editor_process import SetupRelativeCoordsPage
 from shapely.geometry import Point, LineString, MultiPoint, Polygon
 from main_project_plat_editor_process import convert_to_pts
 import pyproj
-
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QDialog,
+                             QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit,
+                             QDialogButtonBox, QLabel)
 
 # self.colors = ["#000000", "#004949", "#009292", "#ff6db6", "#ffb6db",
 #                "#490092", "#006ddb", "#b66dff", "#6db6ff", "#b6dbff",
 #                "#920000", "#924900", "#db6d00", "#24ff24", "#ffff6d",
 #                "#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442"]
+class SingleInputDialog(QDialog):
+    def __init__(self, title="Input", label="Value:", placeholder="Enter value", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(250, 120)
+
+        # Create form layout for label and line edit
+        form_layout = QFormLayout()
+
+        # Create line edit
+        self.value_edit = QLineEdit()
+        self.value_edit.setPlaceholderText(placeholder)
+
+        # Add field to form layout
+        form_layout.addRow(label, self.value_edit)
+
+        # Add standard buttons (OK and Cancel)
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+
+        # Create main layout and add the form layout and button box
+        main_layout = QVBoxLayout(self)
+        main_layout.addLayout(form_layout)
+        main_layout.addWidget(button_box)
+
+    def get_value(self):
+        """Return the value entered by the user"""
+        return self.value_edit.text()
+
+    def set_validator(self, validator):
+        """Set a validator for the input field"""
+        self.value_edit.setValidator(validator)
+class InputDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Add Survey Point")
+        self.resize(300, 200)
+
+        # Create form layout for labels and line edits
+        form_layout = QFormLayout()
+
+        # Create line edits with validators
+        self.measured_depth_edit = QLineEdit()
+        self.inclination_edit = QLineEdit()
+        self.azimuth_edit = QLineEdit()
+
+        # Set validators
+        # Positive numbers only for measured depth
+        positive_validator = QRegExpValidator(QRegExp(r"[0-9]*\.?[0-9]+"))
+        self.measured_depth_edit.setValidator(positive_validator)
+
+        # -180 to +180 for inclination
+        inclination_validator = QDoubleValidator(-180.0, 180.0, 5)
+        self.inclination_edit.setValidator(inclination_validator)
+
+        # 0 to 360 for azimuth
+        azimuth_validator = QDoubleValidator(0.0, 360.0, 5)
+        self.azimuth_edit.setValidator(azimuth_validator)
+
+        # Add placeholder text
+        self.measured_depth_edit.setPlaceholderText("Positive number")
+        self.inclination_edit.setPlaceholderText("Range: -180 to 180")
+        self.azimuth_edit.setPlaceholderText("Range: 0 to 360")
+
+        # Add fields to form layout
+        form_layout.addRow("Measured Depth:", self.measured_depth_edit)
+        form_layout.addRow("Inclination:", self.inclination_edit)
+        form_layout.addRow("Azimuth:", self.azimuth_edit)
+
+        # Add standard buttons (OK and Cancel)
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.validate_and_accept)
+        button_box.rejected.connect(self.reject)
+
+        # Create main layout and add the form layout and button box
+        main_layout = QVBoxLayout(self)
+        main_layout.addLayout(form_layout)
+        main_layout.addWidget(button_box)
+
+    def validate_and_accept(self):
+        """Validate inputs before accepting the dialog"""
+        try:
+            # Check if all fields have values
+            if not self.measured_depth_edit.text() or not self.inclination_edit.text() or not self.azimuth_edit.text():
+                QMessageBox.warning(self, "Validation Error", "All fields must be filled.")
+                return
+
+            # Parse values
+            measured_depth = float(self.measured_depth_edit.text())
+            inclination = float(self.inclination_edit.text())
+            azimuth = float(self.azimuth_edit.text())
+
+            # Additional validation
+            if measured_depth <= 0:
+                QMessageBox.warning(self, "Validation Error", "Measured Depth must be positive.")
+                return
+
+            if inclination < -180 or inclination > 180:
+                QMessageBox.warning(self, "Validation Error", "Inclination must be between -180 and 180.")
+                return
+
+            if azimuth < 0 or azimuth > 360:
+                QMessageBox.warning(self, "Validation Error", "Azimuth must be between 0 and 360.")
+                return
+
+            # If all validations pass, accept the dialog
+            self.accept()
+
+        except ValueError:
+            QMessageBox.warning(self, "Validation Error", "All values must be valid numbers.")
+
+    def get_inputs(self):
+        """Return the values entered by the user"""
+        return {
+            "measured_depth": float(self.measured_depth_edit.text()),
+            "inclination": float(self.inclination_edit.text()),
+            "azimuth": float(self.azimuth_edit.text())
+        }
 class DatabaseManager:
     def __init__(self):
         # Initialize the connection
@@ -127,7 +248,7 @@ class SQLConnector:
     def _create_connection_string(self):
         """Create connection string with caching."""
         credentials = self._get_credentials()
-        # credentials = {}
+        credentials = {}
         if credentials:
             # Production connection
             params = {
@@ -297,6 +418,8 @@ class ETools(QMainWindow):
         self.ui.lateral_name_line_edit.returnPressed.connect(self.run_api_when_entered)
         self.ui.add_dx_data_pushbutton.pressed.connect(self.recalculate_data_with_new_md_input)
         self.ui.locate_more_wells_push_button.pressed.connect(self.find_more_sections_and_report)
+        self.ui.dx_new_row_pushbutton.clicked.connect(self.open_dialog_new_row)
+        self.ui.dx_delete_row_pushbutton.clicked.connect(self.open_dialog_delete)
 
         self.ui.plat_searcher_combo_box.activated.connect(self.plat_searcher_combo_process)
         self.ui.data_return_box.anchorClicked.connect(QDesktopServices.openUrl)
@@ -304,6 +427,42 @@ class ETools(QMainWindow):
         self.ui.data_return_box.setOpenLinks(False)
         self.run_api_when_entered()
 
+
+    def open_dialog_new_row(self):
+        dialog = InputDialog(None)  # Using None as parent
+
+        if dialog.exec_() == QDialog.Accepted:
+            inputs = dialog.get_inputs()
+            # Process the inputs here
+            measured_depth = inputs["measured_depth"]
+            inclination = inputs["inclination"]
+            azimuth = inputs["azimuth"]
+            self.recalculate_with_new_row(measured_depth, inclination, azimuth)
+            # Do something with the data
+            # self.process_data(name, email, phone)
+
+    def open_dialog_delete(self):
+        dialog = SingleInputDialog(
+            title="Enter Row",
+            label="Value:",
+            placeholder="Enter a row"
+        )
+
+        if dialog.exec_() == QDialog.Accepted:
+            value = dialog.get_value()
+            try:
+                # Convert to appropriate type if needed
+                numeric_value = float(value)
+                # Process the value
+                self.delete_row_and_recalculate(numeric_value)
+            except ValueError:
+                QMessageBox.warning(None, "Error", "Please enter a valid number.")
+
+    # def process_value(self, row):
+    #     print('ROW')
+        # Handle the input data
+        # print(f"Processing: {name}, {email}, {phone}")
+        # Your data processing logic here
     def clear_checkboxes(self):
         """
         Clears all checkboxes from the layout.
@@ -477,6 +636,103 @@ class ETools(QMainWindow):
         if 166000 <= x <= 834000 and 0 <= y <= 10000000:
             return utm.to_latlon(x, y, 12, 'T')
 
+
+    def delete_row_and_recalculate(self, row):
+        def return_well_survey():
+            dict_return = {'AsDrilled - True': self.well.cl_dx_dict['drl_df_true_dx'].clearance_data,
+                           'AsDrilled - Grid': self.well.cl_dx_dict['drl_df_grid_dx'].clearance_data,
+                           'Planned - True': self.well.cl_dx_dict['pln_df_true_dx'].clearance_data,
+                           'Planned - Grid': self.well.cl_dx_dict['pln_df_grid_dx'].clearance_data}
+            checked_button = self.button_group.checkedButton()
+            checked_button_text = checked_button.text()
+            for k, v in dict_return.items():
+                if k.lower() in checked_button_text.lower():
+                    return dict_return[k]
+
+        def filter_by_citing_type():
+            lst_data = []
+            checked_button = self.button_group.checkedButton().text()
+            dict_return = {'AsDrilled - True': 'AsDrilled',
+                           'AsDrilled - Grid': 'AsDrilled',
+                           'Planned - True': 'Planned',
+                           'Planned - Grid': 'Planned'}
+            current_citing = dict_return[checked_button]
+            print(checked_button)
+            # for citing, group in survey.groupby('CitingType'):
+            new_df = copy.copy(survey)
+            new_df = new_df[new_df['CitingType'] == current_citing]
+            try:
+                new_df.insert(0, 'row', new_df.index + 1)
+                new_df = new_df[new_df['row'] != row]
+                print(new_df)
+                new_df = new_df.drop(['row'], axis=1)
+                lst_data.append(new_df)
+
+                # lst_data.append(pd.DataFrame([new_row]))
+            except IndexError:
+                pass
+            return lst_data
+        survey = self.well.get_survey()
+        output = filter_by_citing_type()
+        survey = pd.concat(output, ignore_index=True)
+        survey = survey.sort_values(by=['CitingType', 'measured_depth'])
+        print(survey)
+        self.well.set_survey(survey)
+        self.well.reprocess_with_current_plat()
+        self.main_processes_program(self.ui.dx_survey_north_ref_line.text())
+        self.writer.set_clear_survey(self.well.cl_dx_dict)
+        self.writer.set_spec_surveys(self.well.spec_surveys_dict)
+
+        # self.writer.write_new_survey_line_to_display(return_well_survey(), md)
+        first_button = self.button_group.button(self.button_group.checkedId())
+        # first_button.setChecked(True)
+        # first_button.clicked.emit()
+        print(output)
+    def recalculate_with_new_row(self, md, inc, azi):
+        def return_well_survey():
+            dict_return = {'AsDrilled - True': self.well.cl_dx_dict['drl_df_true_dx'].clearance_data,
+                           'AsDrilled - Grid': self.well.cl_dx_dict['drl_df_grid_dx'].clearance_data,
+                           'Planned - True': self.well.cl_dx_dict['pln_df_true_dx'].clearance_data,
+                           'Planned - Grid': self.well.cl_dx_dict['pln_df_grid_dx'].clearance_data}
+            checked_button = self.button_group.checkedButton()
+            checked_button_text = checked_button.text()
+            for k, v in dict_return.items():
+                if k.lower() in checked_button_text.lower():
+                    return dict_return[k]
+
+        def filter_by_citing_type():
+            lst_data = [survey]
+            for citing, group in survey.groupby('CitingType'):
+                try:
+                    new_row = {'measured_depth': md,
+                               'inclination': inc,
+                               'azimuth': azi,
+                               'CitingType': citing,
+                               'SurfaceLatitude': group['SurfaceLatitude'].iloc[0],
+                               'SurfaceLongitude': group['SurfaceLongitude'].iloc[0],
+                               'LateralName': group['LateralName'].iloc[0]}
+
+                    lst_data.append(pd.DataFrame([new_row]))
+                except IndexError:
+                    pass
+            return lst_data
+
+        # md = float(self.ui.new_md_survey_box.text())
+        survey = self.well.get_survey()
+        output = filter_by_citing_type()
+        survey = pd.concat(output, ignore_index=True)
+        survey = survey.sort_values(by=['CitingType', 'measured_depth'])
+        self.well.set_survey(survey)
+        self.well.reprocess_with_current_plat()
+        self.main_processes_program(self.ui.dx_survey_north_ref_line.text())
+        self.writer.set_clear_survey(self.well.cl_dx_dict)
+        self.writer.set_spec_surveys(self.well.spec_surveys_dict)
+
+        self.writer.write_new_survey_line_to_display(return_well_survey(), md)
+        first_button = self.button_group.button(self.button_group.checkedId())
+        first_button.setChecked(True)
+        first_button.clicked.emit()
+
     def recalculate_data_with_new_md_input(self):
         def return_well_survey():
             dict_return = {'AsDrilled - True': self.well.cl_dx_dict['drl_df_true_dx'].clearance_data,
@@ -529,23 +785,15 @@ class ETools(QMainWindow):
                 try:
                     lower_row = group[group['measured_depth'].astype(float) < md].iloc[-1]
                     upper_row = group[group['measured_depth'].astype(float) > md].iloc[0]
-                    new_row = {'measured_depth': md}
-                    new_row['inclination'] = np.interp(md,
-                                                       [float(lower_row['measured_depth']),
-                                                        float(upper_row['measured_depth'])],
-                                                       [float(lower_row['inclination']), float(upper_row['inclination'])])
-                    new_row['azimuth'] = interpolate_azimuth()
-                    # new_row['azimuth'] = np.degrees(np.interp(md,
-                    #                                           [float(lower_row['measured_depth']), float(upper_row['measured_depth'])],
-                    #                                           [np.radians(float(lower_row['azimuth'])), np.radians(float(upper_row['azimuth']))]))
-                    print(lower_row)
-                    print(new_row)
-                    print(upper_row)
-                    print()
-                    new_row['CitingType'] = lower_row['CitingType']
-                    new_row['SurfaceLatitude'] = lower_row['SurfaceLatitude']
-                    new_row['SurfaceLongitude'] = lower_row['SurfaceLongitude']
-                    new_row['LateralName'] = lower_row['LateralName']
+                    new_row = {'measured_depth': md, 'inclination': np.interp(md,
+                                                                              [float(lower_row['measured_depth']),
+                                                                               float(upper_row['measured_depth'])],
+                                                                              [float(lower_row['inclination']), float(upper_row['inclination'])]),
+                               'azimuth': interpolate_azimuth(),
+                               'CitingType': lower_row['CitingType'],
+                               'SurfaceLatitude': lower_row['SurfaceLatitude'],
+                               'SurfaceLongitude': lower_row['SurfaceLongitude'],
+                               'LateralName': lower_row['LateralName']}
 
                     lst_data.append(pd.DataFrame([new_row]))
                 except IndexError:
@@ -558,7 +806,6 @@ class ETools(QMainWindow):
         output = filter_by_citing_type()
         survey = pd.concat(output, ignore_index=True)
         survey = survey.sort_values(by=['CitingType', 'measured_depth'])
-        print(survey)
         self.well.set_survey(survey)
         self.well.reprocess_with_current_plat()
         self.main_processes_program(self.ui.dx_survey_north_ref_line.text())
