@@ -27,7 +27,7 @@ from EToolsLimited import Ui_Dialog
 import matplotlib.pyplot as plt
 
 import math
-
+import sqlalchemy
 from sqlalchemy import create_engine
 from urllib.parse import quote_plus
 from functools import lru_cache
@@ -49,6 +49,7 @@ import pyproj
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QDialog,
                              QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit,
                              QDialogButtonBox, QLabel)
+
 
 # self.colors = ["#000000", "#004949", "#009292", "#ff6db6", "#ffb6db",
 #                "#490092", "#006ddb", "#b66dff", "#6db6ff", "#b6dbff",
@@ -87,6 +88,8 @@ class SingleInputDialog(QDialog):
     def set_validator(self, validator):
         """Set a validator for the input field"""
         self.value_edit.setValidator(validator)
+
+
 class InputDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -173,6 +176,8 @@ class InputDialog(QDialog):
             "inclination": float(self.inclination_edit.text()),
             "azimuth": float(self.azimuth_edit.text())
         }
+
+
 class DatabaseManager:
     def __init__(self):
         # Initialize the connection
@@ -248,7 +253,7 @@ class SQLConnector:
     def _create_connection_string(self):
         """Create connection string with caching."""
         credentials = self._get_credentials()
-        credentials = {}
+        # credentials = {}
         if credentials:
             # Production connection
             params = {
@@ -375,7 +380,6 @@ def calculate_convergence_angle(latitude, longitude):
 # noinspection PyTestUnpassedFixture
 def setup_db():
     path_used_db = r'C:\Work\Databases'
-    path_used_db = r'C:\Work\Databases'
     apd_data_dir = os.path.join(path_used_db, 'Board_DB_Plss_Sections.db')
     return sqlite3.connect(apd_data_dir)
 
@@ -398,7 +402,11 @@ class ETools(QMainWindow):
         self.file_path_dict = {'planned': self.file_path_planned, 'drilled': self.file_path_drilled}
         self.well = None
         self.survey_type_lst = []
-        self.db = DatabaseManager()
+        try:
+            self.db = DatabaseManager()
+        except sqlalchemy.exc.OperationalError:
+            pass
+        self.survey_importer = SurveyImporter()
 
         self.ui = Ui_Dialog()
         self.ui.setupUi(self)
@@ -417,16 +425,18 @@ class ETools(QMainWindow):
         self.ui.well_api_val.returnPressed.connect(self.run_api_when_entered)
         self.ui.lateral_name_line_edit.returnPressed.connect(self.run_api_when_entered)
         self.ui.add_dx_data_pushbutton.pressed.connect(self.recalculate_data_with_new_md_input)
+        self.ui.runDXSurveyPushbutton.pressed.connect(self.process_when_dx_button_pushed)
+
         self.ui.locate_more_wells_push_button.pressed.connect(self.find_more_sections_and_report)
         self.ui.dx_new_row_pushbutton.clicked.connect(self.open_dialog_new_row)
         self.ui.dx_delete_row_pushbutton.clicked.connect(self.open_dialog_delete)
 
         self.ui.plat_searcher_combo_box.activated.connect(self.plat_searcher_combo_process)
         self.ui.data_return_box.anchorClicked.connect(QDesktopServices.openUrl)
-
+        self.ui.load_as_drilled_survey_box.clicked.connect(lambda: self.press_new_survey_button('drilled'))
+        self.ui.load_planned_survey_box.clicked.connect(lambda: self.press_new_survey_button('planned'))
         self.ui.data_return_box.setOpenLinks(False)
-        self.run_api_when_entered()
-
+        # self.run_api_when_entered()
 
     def open_dialog_new_row(self):
         dialog = InputDialog(None)  # Using None as parent
@@ -460,9 +470,9 @@ class ETools(QMainWindow):
 
     # def process_value(self, row):
     #     print('ROW')
-        # Handle the input data
-        # print(f"Processing: {name}, {email}, {phone}")
-        # Your data processing logic here
+    # Handle the input data
+    # print(f"Processing: {name}, {email}, {phone}")
+    # Your data processing logic here
     def clear_checkboxes(self):
         """
         Clears all checkboxes from the layout.
@@ -537,6 +547,7 @@ class ETools(QMainWindow):
     def imported_dx_survey(self):
         choice = QMessageBox.warning(self, "Attention", "Imported a new DX Survey!",
                                      QMessageBox.Ok)
+
     def retrieve_well_parameters(self):
         query = f"""SELECT APDNo, Well_Nm FROM [dbo].[tblAPD] WHERE API_WellNo = '{self.api_val}{self.lateral}'"""
         # output = self.db.f(query)
@@ -564,7 +575,6 @@ class ETools(QMainWindow):
             return survey_dx, well_elevation, north_ref
         except IndexError:
             self.no_dx_popup()
-            sys.exit(app.exec_())
 
     def run_api_when_entered(self):
         print('run api')
@@ -589,33 +599,35 @@ class ETools(QMainWindow):
 
         self.api_val = api_val
         self.lateral = lateral_name
-        print('api', api_val, lateral_name)
         self.retrieve_well_parameters()
-        # ma.search_db(r"C:\Users\coltongoodrich\Documents\GitHub\RewriteAPD2\APD_Data.db")
-        # ma.search_db(r'C:\Work\Databases\Board_DB_Plss_Sections.db')
 
-        survey_dx, well_elevation, north_ref = self.sql_query_survey(self.db, self.api_val, self.lateral)
-        self.well = EToolsWell(db=self.db, api=self.api_val, apd_num=self.apd_num, well_name=self.well_name,
-                               lateral=self.lateral, survey_dx=survey_dx, well_elevation=well_elevation,
-                               north_ref=north_ref, ui=self.ui, conn=self.conn)
-        self.find_more_sections_combo_box()
-        self.main_processes_program(north_ref)
-        self.writer = DataWriter(ui=self.ui,
-                                 surveys=self.well.cl_dx_dict,
-                                 spec_surveys=self.well.spec_surveys_dict,
-                                 parameters=self.well.survey_parameters,
-                                 plat_df=self.well.plat_df)
-        self.write_radio_buttons(self.well.cl_dx_dict, self.well.spec_surveys_dict)
-        self.ui.load_as_drilled_survey_box.clicked.connect(lambda: self.press_new_survey_button('drilled'))
-        self.ui.load_planned_survey_box.clicked.connect(lambda: self.press_new_survey_button('planned'))
-        self.ui.calc_new_dx_with_new_shl_pushbutton.clicked.connect(self.process_with_new_shl)
-        self.ui.pushbutton_rerun_coords.pressed.connect(lambda: self.etools_process_with_new_coords(north_ref))
 
+    def process_when_dx_button_pushed(self):
+        print('pressed!')
+        try:
+            survey_dx, well_elevation, north_ref = self.sql_query_survey(self.db, self.api_val, self.lateral)
+            self.ui.dx_survey_elevation.setText(str(well_elevation))
+            self.well = EToolsWell(db=self.db, api=self.api_val, apd_num=self.apd_num, well_name=self.well_name,
+                                   lateral=self.lateral, survey_dx=survey_dx, well_elevation=well_elevation,
+                                   north_ref=north_ref, ui=self.ui, conn=self.conn)
+            self.find_more_sections_combo_box()
+            self.main_processes_program(north_ref)
+            self.writer = DataWriter(ui=self.ui,
+                                     surveys=self.well.cl_dx_dict,
+                                     spec_surveys=self.well.spec_surveys_dict,
+                                     parameters=self.well.survey_parameters,
+                                     plat_df=self.well.plat_df)
+            self.write_radio_buttons(self.well.cl_dx_dict, self.well.spec_surveys_dict)
+
+            self.ui.calc_new_dx_with_new_shl_pushbutton.clicked.connect(self.process_with_new_shl)
+            self.ui.pushbutton_rerun_coords.pressed.connect(lambda: self.etools_process_with_new_coords(north_ref))
+        except:
+            error_traceback = traceback.format_exc()
+            print(f"Error details:\n{error_traceback}")
         # self.clear_survey_page()
 
     def main_processes_program(self, north_ref):
         self.ui.well_name.setText(self.well.well_name)
-        self.survey_importer = SurveyImporter(self.well.well_name)
         self.drawer = DataDrawer(ui=self.ui, df_survey=self.well.cl_dx_dict)
         self.drawer.draw_2d_data(df_plat=self.well.plat_df, df_survey=self.well.cl_dx_dict)
         self.drawer.draw_3d_process(df=self.well.cl_dx_dict)
@@ -635,7 +647,6 @@ class ETools(QMainWindow):
         # Check if the point falls within typical UTM ranges.
         if 166000 <= x <= 834000 and 0 <= y <= 10000000:
             return utm.to_latlon(x, y, 12, 'T')
-
 
     def delete_row_and_recalculate(self, row):
         def return_well_survey():
@@ -672,6 +683,7 @@ class ETools(QMainWindow):
             except IndexError:
                 pass
             return lst_data
+
         survey = self.well.get_survey()
         output = filter_by_citing_type()
         survey = pd.concat(output, ignore_index=True)
@@ -688,6 +700,7 @@ class ETools(QMainWindow):
         # first_button.setChecked(True)
         # first_button.clicked.emit()
         print(output)
+
     def recalculate_with_new_row(self, md, inc, azi):
         def return_well_survey():
             dict_return = {'AsDrilled - True': self.well.cl_dx_dict['drl_df_true_dx'].clearance_data,
@@ -839,42 +852,38 @@ class ETools(QMainWindow):
         self.ui.load_planned_survey_box.blockSignals(True)
 
         def loader():
-            # filter = "pdf(*.pdf)"
-            # current_dir = os.getcwd()
-            # file_path = QFileDialog.getOpenFileName(None, 'Open file', current_dir, filter)
-            # print('Loading: ', file_path)
-            # while '.pdf' not in file_path[0] and file_path != ('', ''):
-            #     file_path = QFileDialog.getOpenFileName(None, 'Open file', current_dir, filter)
-            # self.file_path_dict[label] = file_path[0]
-            file_path = ('', '')
             current_dir = os.getcwd()
             file_path = QFileDialog.getOpenFileName(None, 'Open file', current_dir)
             if file_path[0] == '':
                 print("User canceled file selection")
+                self.ui.load_as_drilled_survey_box.blockSignals(False)
+                self.ui.load_planned_survey_box.blockSignals(False)
                 return False  # Indicate operation was canceled
-            print(file_path)
-            # print('Loading: ', file_path)
-            # while file_path != ('', ''):
-            #     print(file_path)
-            #     file_path = QFileDialog.getOpenFileName(None, 'Open file', current_dir)
             self.file_path_dict[label] = file_path[0]
             return True  # Indicate successful file selection
 
         def filter_out_same_citing():
             new_label = 'Planned' if label == 'planned' else 'AsDrilled'
-            current_df = self.well.survey_dx
-            current_df = current_df[current_df['CitingType'] != new_label]
-            current_df = current_df.sort_values(by=['measured_depth'])
+            try:
+                current_df = self.well.survey_dx
+                current_df = current_df[current_df['CitingType'] != new_label]
+                current_df = current_df.sort_values(by=['measured_depth'])
+                new_df = pd.concat([current_df, df]).reset_index(drop=True)
+                return new_df
+            except AttributeError:
+                return df
 
-            new_df = pd.concat([current_df, df]).reset_index(drop=True)
-            return new_df
         try:
             result_boo = loader()
             if result_boo:  # If file was successfully selected
+                print(label)
+                print(self.file_path_dict)
                 df, north_ref = self.survey_importer.load_and_process_data(label, self.db, self.api_val,
-                                                                                        self.file_path_dict)
+                                                                           self.file_path_dict)
                 well_elevation = df['SurveySurfaceElevation'].iloc[0]
                 df = df.sort_values(by=['measured_depth'])
+                self.ui.dx_survey_elevation.setText(str(well_elevation))
+
                 df = df.drop(['SurveySurfaceElevation'], axis=1)
                 df['LateralName'] = self.lateral
                 output_new_df = filter_out_same_citing()
@@ -899,8 +908,9 @@ class ETools(QMainWindow):
             print(e, 'import canceled')
             error_traceback = traceback.format_exc()
             print(f"Error details:\n{error_traceback}")
+            self.ui.load_as_drilled_survey_box.blockSignals(False)
+            self.ui.load_planned_survey_box.blockSignals(False)
             pass
-
 
     def find_more_sections_and_report(self):
         def sql_find_section_data():

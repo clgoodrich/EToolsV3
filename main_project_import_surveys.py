@@ -105,14 +105,15 @@ class PDFPageDetailedAggregator(PDFPageAggregator):
 
 
 class SurveyImporter:
-    def __init__(self, name):
-        self.well_name = name
+    def __init__(self):
+        # self.well_name = None
         self.api = None
         self.db = None
         self.file_path = None
         # Create the thread as an instance variable
 
     def load_and_process_data(self, label, db, api, file_path_dict):
+        # self.well_name = name
         self.db = db
         self.api = api
         used_file = file_path_dict[label]
@@ -130,9 +131,6 @@ class SurveyImporter:
             return self.process_table_data(used_file, label, 'xl')
         else:
             return df, north_ref, extra_plats
-        # if extension == '.pdf' or file_mime == 'application/pdf':
-        #     return "PDF"
-        #     self.process_pdf_data(used_file)
 
     def process_table_data(self, directory, label, table_doc_type):
         header_dict = {}
@@ -340,8 +338,8 @@ class SurveyImporter:
             white_lst = {"azimuth", "inclination"}
             line = line.replace("\n", " ").lower()
             words = set(re.findall(r'\b\w+\b', line))
-            if self.well_name.lower() in line:
-                return True
+            # if self.well_name.lower() in line:
+            #     return True
             if black_lst.intersection(words) and not white_lst.intersection(words):
                 return True
             data = re.sub(r'[^0-9. ]+', '', line)

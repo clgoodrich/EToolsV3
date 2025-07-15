@@ -154,7 +154,7 @@ class DataWriter:
         spec_data = spec_survey_found[spec_survey_found['type'] == survey_label]
 
         # Step 3: Display complete survey trajectory in main table
-        self.write_survey_to_table(survey, ui)
+        self.write_survey_to_table(survey, ui, survey_label)
 
         # Step 4: Extract and process footage data for key depth points
         footage_lst = _isolate_footage_depths(survey, spec_data)
@@ -165,7 +165,10 @@ class DataWriter:
         # Step 6: Display clearance footages in dedicated table
         self.write_clearance_footages(footage_lst, ui)
 
-    def write_survey_to_table(self, survey: pd.DataFrame, ui: Any) -> None:
+    def write_survey_to_table(self, survey: pd.DataFrame, ui: Any, survey_label) -> None:
+        def printer_process(df):
+            new_df_edited = df[['measured_depth', 'inclination', 'azimuth']]
+            # new_df_edited.to_csv(f"{survey_label}.csv")
         """Display complete survey trajectory data in main table view with formatting.
 
         Populates the main survey data table with trajectory points, clearance calculations,
@@ -179,7 +182,6 @@ class DataWriter:
         # Step 1: Clear coordinate display fields for fresh data presentation
         self.ui.shl_lat_easting.setText("")
         self.ui.shl_lon_northing.setText("")
-
         # Step 2: Reset table model and prepare for new data
         self.dx_survey_model.setRowCount(0)
         self.ui.dx_survey_table_mod.setModel(self.dx_survey_model)
@@ -193,6 +195,7 @@ class DataWriter:
         # Step 4: Convert angular measurements from radians to degrees for display
         for col in ['azimuth', 'inclination']:
             survey[col] = np.degrees(survey[col])
+        printer_process(survey)
 
         # Step 5: Convert DataFrame to list format for table population
         data = survey.values.tolist()
