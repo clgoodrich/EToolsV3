@@ -1382,7 +1382,7 @@ class DataDrawer:
         try:
             # Apply Western Hemisphere longitude sign convention
             data[1] = abs(data[1]) * -1
-            print('data', data)  # Debug output for coordinate verification
+            # print('data', data)  # Debug output for coordinate verification
             # Perform UTM conversion using standard algorithms
             utm_pts = utm.from_latlon(data[0], data[1])[:2]
         except utm.error.OutOfRangeError:

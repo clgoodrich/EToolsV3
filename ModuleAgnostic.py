@@ -456,6 +456,22 @@ def get_dataframe_from_qtableview(table_view):
     # Create pandas DataFrame
     df = pd.DataFrame(data, columns=headers)
     return df
+
+
+def get_data_from_qtableview(table_view):
+    """Uses data() method which is slightly faster than item().text()"""
+    model = table_view.model()
+    if not isinstance(model, QStandardItemModel):
+        return None
+
+    rows = model.rowCount()
+    columns = model.columnCount()
+
+    return [[model.data(model.index(row, col)) or ""
+             for col in range(columns)]
+            for row in range(rows)]
+
+
 def get_all_data_from_qtableview(table_view):
     # Get the model
     model = table_view.model()

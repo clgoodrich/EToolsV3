@@ -53,6 +53,7 @@ from PyQt5.QtGui import QStandardItem, QStandardItemModel
 # noinspection PyTestUnpassedFixture
 class WCR_Main:
     def __init__(self, df, ui, db, loc_df, spec_surveys, north_ref):
+
         self.perf_date = None
         self.perf_mods = None
         self.wcr_result_df = None

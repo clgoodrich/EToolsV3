@@ -1,9 +1,13 @@
+import traceback
+
 import pandas as pd
 from main_project_dx_survey import SurveyProcess
 import main_project_detect_kop
 from PyQt5.QtWidgets import QHeaderView, QAbstractItemView
 from typing import Dict, Any, List, Tuple, Union
 
+import numpy as np
+from kop_predictor import predict_kickoff_point, analyze_survey, determine_well_type
 
 class SurveyProcessBase:
     """Base class for processing well survey data with coordinate transformations and trajectory calculations.
@@ -76,6 +80,48 @@ class SurveyProcessBase:
 
     def reprocess_survey(self, survey_dx: pd.DataFrame, relabel: str, i: str, well_elevation: float,
                          north_ref: List[str]) -> Tuple['SurveyProcess', pd.DataFrame, float]:
+
+        def kop_test(survey_df, label):
+            try:
+                # Load survey data
+                # print(f"Loaded {len(survey_df)} survey points")
+                # print(f"Depth range: {survey_df['measured_depth'].min():.0f} - {survey_df['measured_depth'].max():.0f} ft")
+
+                # Convert inclination and azimuth to radians if they're in degrees
+                if survey_df['inclination'].max() > 10:  # Likely in degrees
+                    survey_df['inclination'] = np.radians(survey_df['inclination'])
+                    survey_df['azimuth'] = np.radians(survey_df['azimuth'])
+
+                # Perform complete analysis
+                results = analyze_survey(survey_df)
+
+
+                if results['kop']:
+                    kop = results['kop']
+                    kop_df = pd.DataFrame([kop])
+                    kop_df['Point'] = 'KOP'
+                    kop_df['type'] = f"{sot}{label}"
+
+                    # Landing point analysis for all directional/horizontal wells
+                    if results['landing_point']:
+                        lp = results['landing_point']
+                        lp_df = pd.DataFrame([lp])
+                        lp_df['Point'] = 'LP'
+                        lp_df['type'] = f"{sot}{label}"
+                        return kop_df, lp_df
+                    else:
+                        # print(f"\nNo clear landing point detected")
+                        if results['well_type'] == 'directional':
+                            print("  (Well may still be building or have irregular profile)")
+                        return kop_df, pd.DataFrame()
+                else:
+                    print("\nNo kickoff point detected - likely a vertical well")
+                    return 0, 0
+
+            except Exception as e:
+                print(f"Error processing file: {e}")
+                error_traceback = traceback.format_exc()
+                print(f"Error details:\n{error_traceback}")
         """Process individual survey citing type with trajectory calculations and special point identification.
 
         Creates trajectory calculations for both true north and grid north reference systems,
@@ -120,42 +166,48 @@ class SurveyProcessBase:
         bhl_true['type'] = f"{sot}_true_dx"
 
         # Step 7: Process kick-off point and landing point identification
-        output.find_kop_and_lp_process(output.true_dx)
-        lp_true = output.find_landing_point(output.true_dx)
+        # output.find_kop_and_lp_process(output.true_dx)
+        # lp_true = output.find_landing_point(output.true_dx)
 
         # Step 8: Attempt standard kick-off point detection with fallback to advanced algorithm
-        try:
-            kop_true = output.find_kick_off_point(output.true_dx)
-        except IndexError:
-            # Step 8a: Use advanced KOP detection algorithm when standard method fails
-            kop_result = main_project_detect_kop.determine_kickoff_point(output.true_dx)
-            kop_true = output.true_dx[output.true_dx['measured_depth'] == kop_result['kop_md']][
-                ['measured_depth', 'inclination', 'azimuth']]
-            kop_true['Point'] = 'KOP'
+        kop_true,lp_true = kop_test(output.true_dx, '_true_dx')
+        kop_grid,lp_grid = kop_test(output.grid_dx,'_grid_dx')
 
-        # Step 9: Label true north trajectory points with type information
-        kop_true['type'] = f"{sot}_true_dx"
-        lp_true['type'] = f"{sot}_true_dx"
+        # print(kop_true_2)
+        # # print(filter_by_citing_type(kop_true_2, output.true_dx))
+        # try:
+        #     kop_true = output.find_kick_off_point(output.true_dx)
+        # except IndexError:
+        #     # Step 8a: Use advanced KOP detection algorithm when standard method fails
+        #     kop_result = main_project_detect_kop.determine_kickoff_point(output.true_dx)
+        #     print('kop result', kop_result)
+        #     kop_true = output.true_dx[output.true_dx['measured_depth'] == kop_result['kop_md']][
+        #         ['measured_depth', 'inclination', 'azimuth']]
+        #     kop_true['Point'] = 'KOP'
+        # # Step 9: Label true north trajectory points with type information
+        # kop_true['type'] = f"{sot}_true_dx"
+        # lp_true['type'] = f"{sot}_true_dx"
+        #
+        # # Step 10: Process grid north trajectory points (parallel processing to true north)
+        # bhl_grid = output.grid_dx.iloc[-1][['measured_depth', 'inclination', 'azimuth']]
+        # bhl_grid['Point'] = 'BHL'
+        # bhl_grid['type'] = f"{sot}_grid_dx"
+        # lp_grid = output.find_landing_point(output.grid_dx)
+        #
+        # # Step 11: Grid north KOP detection with same fallback logic
+        # try:
+        #     kop_grid = output.find_kick_off_point(output.grid_dx)
+        # except IndexError:
+        #     # Step 11a: Apply advanced algorithm for grid north trajectory
+        #     kop_result = main_project_detect_kop.determine_kickoff_point(output.grid_dx)
+        #     kop_grid = output.grid_dx[output.grid_dx['measured_depth'] == kop_result['kop_md']][
+        #         ['measured_depth', 'inclination', 'azimuth']]
+        #     kop_grid['Point'] = 'KOP'
 
-        # Step 10: Process grid north trajectory points (parallel processing to true north)
-        bhl_grid = output.grid_dx.iloc[-1][['measured_depth', 'inclination', 'azimuth']]
-        bhl_grid['Point'] = 'BHL'
-        bhl_grid['type'] = f"{sot}_grid_dx"
-        lp_grid = output.find_landing_point(output.grid_dx)
-
-        # Step 11: Grid north KOP detection with same fallback logic
-        try:
-            kop_grid = output.find_kick_off_point(output.grid_dx)
-        except IndexError:
-            # Step 11a: Apply advanced algorithm for grid north trajectory
-            kop_result = main_project_detect_kop.determine_kickoff_point(output.grid_dx)
-            kop_grid = output.grid_dx[output.grid_dx['measured_depth'] == kop_result['kop_md']][
-                ['measured_depth', 'inclination', 'azimuth']]
-            kop_grid['Point'] = 'KOP'
-
-        # Step 12: Complete grid north trajectory labeling
-        kop_grid['type'] = f"{sot}_grid_dx"
-        lp_grid['type'] = f"{sot}_grid_dx"
+        # # Step 12: Complete grid north trajectory labeling
+        # kop_grid['type'] = f"{sot}_grid_dx"
+        # lp_grid['type'] = f"{sot}_grid_dx"
+        # print('kop', kop_true)
 
         # Step 13: Combine all special depth points into comprehensive DataFrame
         spec_vals = pd.concat([kop_true, kop_grid, lp_true, lp_grid])

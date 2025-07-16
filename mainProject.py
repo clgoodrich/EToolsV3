@@ -49,12 +49,28 @@ import pyproj
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QDialog,
                              QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit,
                              QDialogButtonBox, QLabel)
+from PyQt5.QtGui import QStandardItemModel, QStandardItem
 
 
 # self.colors = ["#000000", "#004949", "#009292", "#ff6db6", "#ffb6db",
 #                "#490092", "#006ddb", "#b66dff", "#6db6ff", "#b6dbff",
 #                "#920000", "#924900", "#db6d00", "#24ff24", "#ffff6d",
 #                "#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442"]
+
+def _get_data_from_qtableview(table_view):
+    """Uses data() method which is slightly faster than item().text()"""
+    model = table_view.model()
+    if not isinstance(model, QStandardItemModel):
+        return None
+
+    rows = model.rowCount()
+    columns = model.columnCount()
+
+    return [[model.data(model.index(row, col)) or ""
+             for col in range(columns)]
+            for row in range(rows)]
+
+
 class SingleInputDialog(QDialog):
     def __init__(self, title="Input", label="Value:", placeholder="Enter value", parent=None):
         super().__init__(parent)
@@ -253,7 +269,7 @@ class SQLConnector:
     def _create_connection_string(self):
         """Create connection string with caching."""
         credentials = self._get_credentials()
-        # credentials = {}
+        credentials = {}
         if credentials:
             # Production connection
             params = {
@@ -418,7 +434,8 @@ class ETools(QMainWindow):
         # 4301950099
         # 4304757090
         # 4304757728
-        self.ui.well_api_val.setText('4304757090')
+        #4304757633
+        self.ui.well_api_val.setText('4301354659')
 
         self.button_group = QButtonGroup(self.ui.survey_type_widget)
         self.button_group.setExclusive(True)
@@ -606,24 +623,29 @@ class ETools(QMainWindow):
         print('pressed!')
         try:
             survey_dx, well_elevation, north_ref = self.sql_query_survey(self.db, self.api_val, self.lateral)
-            self.ui.dx_survey_elevation.setText(str(well_elevation))
-            self.well = EToolsWell(db=self.db, api=self.api_val, apd_num=self.apd_num, well_name=self.well_name,
-                                   lateral=self.lateral, survey_dx=survey_dx, well_elevation=well_elevation,
-                                   north_ref=north_ref, ui=self.ui, conn=self.conn)
-            self.find_more_sections_combo_box()
-            self.main_processes_program(north_ref)
-            self.writer = DataWriter(ui=self.ui,
-                                     surveys=self.well.cl_dx_dict,
-                                     spec_surveys=self.well.spec_surveys_dict,
-                                     parameters=self.well.survey_parameters,
-                                     plat_df=self.well.plat_df)
-            self.write_radio_buttons(self.well.cl_dx_dict, self.well.spec_surveys_dict)
-
-            self.ui.calc_new_dx_with_new_shl_pushbutton.clicked.connect(self.process_with_new_shl)
-            self.ui.pushbutton_rerun_coords.pressed.connect(lambda: self.etools_process_with_new_coords(north_ref))
+            print(survey_dx)
         except:
+            well_elevation = self.ui.dx_survey_elevation.text()
+            north_ref = self.ui.dx_survey_north_ref_line.text()
+            _get_data_from_qtableview(self.ui.dx_survey_table_mod)
             error_traceback = traceback.format_exc()
             print(f"Error details:\n{error_traceback}")
+            pass
+        self.ui.dx_survey_elevation.setText(str(well_elevation))
+        self.well = EToolsWell(db=self.db, api=self.api_val, apd_num=self.apd_num, well_name=self.well_name,
+                               lateral=self.lateral, survey_dx=survey_dx, well_elevation=well_elevation,
+                               north_ref=north_ref, ui=self.ui, conn=self.conn)
+        self.find_more_sections_combo_box()
+        self.main_processes_program(north_ref)
+        self.writer = DataWriter(ui=self.ui,
+                                 surveys=self.well.cl_dx_dict,
+                                 spec_surveys=self.well.spec_surveys_dict,
+                                 parameters=self.well.survey_parameters,
+                                 plat_df=self.well.plat_df)
+        self.write_radio_buttons(self.well.cl_dx_dict, self.well.spec_surveys_dict)
+
+        self.ui.calc_new_dx_with_new_shl_pushbutton.clicked.connect(self.process_with_new_shl)
+        self.ui.pushbutton_rerun_coords.pressed.connect(lambda: self.etools_process_with_new_coords(north_ref))
         # self.clear_survey_page()
 
     def main_processes_program(self, north_ref):
@@ -631,6 +653,7 @@ class ETools(QMainWindow):
         self.drawer = DataDrawer(ui=self.ui, df_survey=self.well.cl_dx_dict)
         self.drawer.draw_2d_data(df_plat=self.well.plat_df, df_survey=self.well.cl_dx_dict)
         self.drawer.draw_3d_process(df=self.well.cl_dx_dict)
+        # print(self.well.spec_surveys_dict)
         self.wcr_process = WCR_Main(df=self.well.cl_dx_dict, ui=self.ui, db=self.db, loc_df=self.well.loc_df,
                                     spec_surveys=self.well.spec_surveys_dict, north_ref=north_ref)
         self.wcr_process.process_wcr()
