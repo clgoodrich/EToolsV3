@@ -141,7 +141,6 @@ class SurveyImporter:
             data_table = pd.read_excel(directory, skiprows=6)
             header_dict = {header_info.iloc[i, 0]: header_info.iloc[i, 1] for i in range(len(header_info))}
 
-
         elif table_doc_type == 'csv':
             with open(directory, 'r') as file:
                 csv_reader = csv.reader(file)
@@ -149,11 +148,10 @@ class SurveyImporter:
             header_dict = {row[0]: row[1] if len(row) > 1 else None for row in header_rows}
             data_table = pd.read_csv(directory, skiprows=6)
         data_table['SurfaceLatitude'] = header_dict['surface_latitude']
-        data_table['SurfaceLongitude'] = header_dict['surface_longitude']
+        data_table['SurfaceLongitude'] = abs(float(header_dict['surface_longitude'])) * -1
         data_table['SurveySurfaceElevation'] = header_dict['surface_elevation']
         data_table['CitingType'] = 'Planned' if label == 'planned' else 'AsDrilled'
 
-        # north_ref =
         return data_table, north_ref_dict[header_dict['north_ref'].lower()]
 
     def process_pdf_data(self, directory, label):

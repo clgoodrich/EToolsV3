@@ -707,14 +707,11 @@ class ClearanceProcess:
 
         if bypass_db:
             # For second process - use df_plat directly as test_plat
-            # print(df_used)
 
             df_used = self.find_conc_part2(df_plat, df_used)
-            # print(len(df_used))
         else:
             # For first process - normal database lookup
             df_used = self.fnd_conc(df_plat, df_used)
-            # print(df_used)
 
 
         # Extract unique concentration values

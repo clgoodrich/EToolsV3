@@ -1,7 +1,7 @@
 import traceback
 from functools import partial
 import sqlite3
-
+import main_project_drawer
 import utm
 from pyproj import Geod, Proj, CRS
 import cProfile
@@ -13,12 +13,16 @@ import pandas as pd
 import ModuleAgnostic as ma
 import numpy as np
 import copy
-
+from PyQt5.QtCore import QTimer
+import weakref
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QLineEdit, QSpinBox,
                              QCheckBox,
                              QDialog, QTabWidget, QTextBrowser, QTableWidget, QLabel, QTableView, QRadioButton,
                              QGraphicsView,
-                             QComboBox, QMessageBox, QFileDialog, QButtonGroup)
+                             QComboBox, QMessageBox, QFileDialog, QButtonGroup, QLineEdit, QTextEdit, QPlainTextEdit, QComboBox,
+                             QSpinBox, QDoubleSpinBox, QTableWidget, QListWidget,
+                             QCheckBox, QRadioButton, QDateEdit, QTimeEdit,
+                             QDateTimeEdit, QTableView, QTreeWidget)
 from PyQt5.QtCore import QRegExp
 from PyQt5.QtGui import QDesktopServices, QDoubleValidator, QRegExpValidator
 from PyQt5.QtWidgets import QApplication, QMainWindow
@@ -70,6 +74,93 @@ def _get_data_from_qtableview(table_view):
              for col in range(columns)]
             for row in range(rows)]
 
+
+class UltraFastClearer:
+    """Optimized for maximum performance with hundreds of widgets"""
+
+    def __init__(self, dialog, trigger_textbox):
+        self.dialog = dialog
+        self.trigger_textbox = trigger_textbox
+        self.line_edits = []
+        self.combo_boxes = []
+        self.check_boxes = []
+        self.radio_buttons = []
+        self.spin_boxes = []
+        self.tables = []
+        self.q_table_views = []
+        # Pre-sort widgets by type for faster clearing
+        self._categorize_widgets()
+
+        # Connect trigger with debouncing
+        self.clear_timer = QTimer()
+        self.clear_timer.timeout.connect(self.execute_clear)
+        self.clear_timer.setSingleShot(True)
+
+        # trigger_textbox.textChanged.returnPressed(self._on_text_changed)
+
+    def _categorize_widgets(self):
+        """Pre-sort widgets by type for batch operations"""
+        for widget in self.dialog.findChildren(QWidget):
+            if widget == self.trigger_textbox:
+                continue
+
+            if isinstance(widget, QLineEdit):
+                self.line_edits.append(widget)
+            elif isinstance(widget, QComboBox):
+                self.combo_boxes.append(widget)
+            elif isinstance(widget, QCheckBox):
+                self.check_boxes.append(widget)
+            elif isinstance(widget, QRadioButton):
+                self.radio_buttons.append(widget)
+            elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+                self.spin_boxes.append(widget)
+            elif isinstance(widget, QTableWidget):
+                self.tables.append(widget)
+            elif isinstance(widget, QTableView):
+                self.q_table_views.append(widget)
+                # model = widget.model()
+                # if isinstance(model, QStandardItemModel):
+                #     self.q_table_views.append(widget)
+
+        print(self.q_table_views)
+    def _on_text_changed(self, text):
+        """Debounce clearing to avoid multiple rapid clears"""
+        if text:
+            self.clear_timer.stop()
+            self.clear_timer.start(50)  # 50ms debounce
+
+    def execute_clear(self):
+        print('execute')
+        """Execute batch clearing operations"""
+        # Batch clear QLineEdits (fastest operation)
+        for widget in self.line_edits:
+            widget.clear()
+
+        # Batch clear ComboBoxes
+        for widget in self.combo_boxes:
+            widget.setCurrentIndex(-1)
+
+        # Batch clear CheckBoxes
+        for widget in self.check_boxes:
+            widget.setChecked(False)
+
+        # Batch clear RadioButtons
+        for widget in self.radio_buttons:
+            widget.setChecked(False)
+
+        # Batch clear SpinBoxes
+        for widget in self.spin_boxes:
+            widget.setValue(widget.minimum())
+
+        # Clear tables (more expensive operation)
+        for widget in self.tables:
+            name = widget.objectName()
+            if 'labels' not in name and 'plat_table_coords_' not in name:
+                widget.clearContents()
+        for widget in self.q_table_views:
+            model = widget.model()
+            if isinstance(model, QStandardItemModel):
+                model.clear()
 
 class SingleInputDialog(QDialog):
     def __init__(self, title="Input", label="Value:", placeholder="Enter value", parent=None):
@@ -269,7 +360,7 @@ class SQLConnector:
     def _create_connection_string(self):
         """Create connection string with caching."""
         credentials = self._get_credentials()
-        credentials = {}
+        # credentials = {}
         if credentials:
             # Production connection
             params = {
@@ -435,11 +526,13 @@ class ETools(QMainWindow):
         # 4304757090
         # 4304757728
         #4304757633
-        self.ui.well_api_val.setText('4301354659')
-
+        # self.ui.well_api_val.setText('4301354659')
         self.button_group = QButtonGroup(self.ui.survey_type_widget)
         self.button_group.setExclusive(True)
+        self.clearer = UltraFastClearer(self, self.ui.well_api_val)
+
         self.ui.well_api_val.returnPressed.connect(self.run_api_when_entered)
+
         self.ui.lateral_name_line_edit.returnPressed.connect(self.run_api_when_entered)
         self.ui.add_dx_data_pushbutton.pressed.connect(self.recalculate_data_with_new_md_input)
         self.ui.runDXSurveyPushbutton.pressed.connect(self.process_when_dx_button_pushed)
@@ -556,7 +649,9 @@ class ETools(QMainWindow):
     def bad_api_popup(self):
         choice = QMessageBox.warning(self, "Attention", "Invalid API Detected! Fix it! (Possibly a string?)",
                                      QMessageBox.Ok)
-
+    def api_loaded(self):
+        choice = QMessageBox.warning(self, "Attention", "API Loaded!",
+                                     QMessageBox.Ok)
     def no_dx_popup(self):
         choice = QMessageBox.warning(self, "Attention", "No directional survey detected in database!",
                                      QMessageBox.Ok)
@@ -594,6 +689,17 @@ class ETools(QMainWindow):
             self.no_dx_popup()
 
     def run_api_when_entered(self):
+
+        self.clearer.execute_clear()
+        main_project_drawer.clear_widget(self.ui.well_viz_display)
+        main_project_drawer.clear_layout(self.ui.well_viz_display_general)
+        main_project_drawer.clear_layout(self.ui.well_viz_display_tsr)
+        for i in range(8):
+            ui_viz = getattr(self.ui, f"well_graphic_coords_{i + 1}")
+            ui_viz_2 = getattr(self.ui, f"well_graphic_mp_individual_{i + 1}")
+            main_project_drawer.clear_layout(ui_viz)
+            main_project_drawer.clear_layout(ui_viz_2)
+
         print('run api')
         self.file_path_planned = None
         self.file_path_drilled = None
@@ -605,8 +711,11 @@ class ETools(QMainWindow):
             lateral_name = '0000'
             self.ui.lateral_name_line_edit.setText('0000')
         if len(api_val) > 10:
-            self.bad_api_popup()
-            return
+            api_val = api_val[:10]
+            self.ui.well_api_val.setText(api_val)
+
+            # self.bad_api_popup()
+            # return
         try:
             int(float(api_val))
         except ValueError:
@@ -617,6 +726,7 @@ class ETools(QMainWindow):
         self.api_val = api_val
         self.lateral = lateral_name
         self.retrieve_well_parameters()
+        self.api_loaded()
 
 
     def process_when_dx_button_pushed(self):
@@ -900,7 +1010,6 @@ class ETools(QMainWindow):
             result_boo = loader()
             if result_boo:  # If file was successfully selected
                 print(label)
-                print(self.file_path_dict)
                 df, north_ref = self.survey_importer.load_and_process_data(label, self.db, self.api_val,
                                                                            self.file_path_dict)
                 well_elevation = df['SurveySurfaceElevation'].iloc[0]

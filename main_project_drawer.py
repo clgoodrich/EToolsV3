@@ -17,6 +17,34 @@ import numpy as np
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 
 
+def clear_widget(widget: Any) -> None:
+    """Remove all child widgets from a container to prevent memory leaks.
+
+    Iterates through container layout in reverse order to safely remove
+    all child widgets. Reverse iteration prevents index shifting issues
+    that can cause widgets to be skipped during removal process.
+
+    Args:
+        widget: Qt widget container with layout containing child widgets
+    """
+    for i in reversed(range(widget.layout().count())):
+        widget.layout().itemAt(i).widget().setParent(None)
+
+
+def clear_layout(layout: Any) -> None:
+    """Clear all items from a layout and properly dispose of widgets.
+
+    Performs comprehensive cleanup by removing layout items and explicitly
+    deleting associated widgets. This prevents memory leaks and ensures
+    clean slate for new visualizations.
+
+    Args:
+        layout: Qt layout object containing items to be removed
+    """
+    while layout.count():
+        child = layout.takeAt(0)
+        if child.widget():
+            child.widget().deleteLater()
 class ZoomPan:
     """Handles interactive zoom and pan functionality for matplotlib plots.
 
@@ -349,33 +377,7 @@ class DataDrawer:
             * Zoom/pan setup provides industry-standard navigation controls
         """
 
-        def clear_widget(widget: Any) -> None:
-            """Remove all child widgets from a container to prevent memory leaks.
 
-            Iterates through container layout in reverse order to safely remove
-            all child widgets. Reverse iteration prevents index shifting issues
-            that can cause widgets to be skipped during removal process.
-
-            Args:
-                widget: Qt widget container with layout containing child widgets
-            """
-            for i in reversed(range(widget.layout().count())):
-                widget.layout().itemAt(i).widget().setParent(None)
-
-        def clear_layout(layout: Any) -> None:
-            """Clear all items from a layout and properly dispose of widgets.
-
-            Performs comprehensive cleanup by removing layout items and explicitly
-            deleting associated widgets. This prevents memory leaks and ensures
-            clean slate for new visualizations.
-
-            Args:
-                layout: Qt layout object containing items to be removed
-            """
-            while layout.count():
-                child = layout.takeAt(0)
-                if child.widget():
-                    child.widget().deleteLater()
 
         # Store core data references for use throughout class
         self.df_survey = df_survey
