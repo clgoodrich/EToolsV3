@@ -21,6 +21,8 @@ from shapely.geometry import Point, LineString, Polygon, MultiPoint
 from shapely.geometry.base import BaseGeometry
 import operator
 from main_project_clearance import ClearanceProcess
+
+
 def decimal_converter(side, deg, minutes, sec, dir_val):
     """
     Simplified version with clearer logic (mathematically equivalent to above).
@@ -402,8 +404,6 @@ def find_point_from_footages(polygon_coords, ns_distance, ns_type, ew_distance, 
     return None
 
 
-
-
 class SetupRelativeCoordsPage:
     def __init__(self, conn, ui):
         self._rel_models = {}
@@ -426,11 +426,155 @@ class SetupRelativeCoordsPage:
         # self.get_all_rel_wells2()
         self.setup_figs()
         self.well_path_dict = {}
-        all_rel_surveys = self.get_all_rel_wells()
+        all_rel_surveys, self.plat_df = self.get_all_rel_wells()
+        self.currently_used_plat_data = pd.DataFrame()
+        headers = ['section', 'township', 'township_dir', 'range', 'range_dir', 'meridian']
+        base_data_combo_lst = ["", "", "", "", "", ""]
+        data = [base_data_combo_lst, base_data_combo_lst, base_data_combo_lst, base_data_combo_lst, base_data_combo_lst,
+                base_data_combo_lst]
+        self.combo_box_df = pd.DataFrame(data, columns=headers)
         self.setup_combo_boxes(all_rel_surveys)
+        self.setup_section_combo_box()
 
     def set_well_path_dict(self, well_path_dict):
         self.well_path_dict = well_path_dict
+
+    def setup_unique_values_for_combo_boxes(self, df):
+        output_sections = tuple(str(x) for x in sorted(int(x) for x in df['section'].unique()))
+        output_township = tuple(str(x) for x in sorted(int(x) for x in df['township'].unique()))
+        output_township_dirs = tuple(df['township_bearing_str'].unique())
+        output_range = tuple(str(x) for x in sorted(int(x) for x in df['rng'].unique()))
+        output_range_dirs = tuple(df['rng_bearing_str'].unique())
+        output_meridians = tuple(df['baseline_str'].unique())
+        return output_sections, output_township, output_township_dirs, output_range, output_range_dirs, output_meridians
+
+    def setup_section_combo_box(self):
+        def standard_combo_box_setup(cb, lst):
+            lst = tuple([""] + list(lst))
+            cb.blockSignals(True)
+            cb.clear()
+            cb.addItems(lst)
+            cb.activated[int].connect(
+                lambda idx, ver=i + 1, combo=cb: self.run_combo_box_section(ver, idx, combo))
+            cb.blockSignals(False)
+
+        output_sections, output_township, output_township_dirs, output_range, output_range_dirs, output_meridians = self.setup_unique_values_for_combo_boxes(
+            self.plat_df)
+        for i in range(8):
+            try:
+                ui_val = i + 1
+                section_cb = getattr(self.ui, f"section_combo_rel_{ui_val}")
+                township_cb = getattr(self.ui, f"township_combo_rel_{ui_val}")
+                township_dir_cb = getattr(self.ui, f"township_dir_combo_rel_{ui_val}")
+                range_cb = getattr(self.ui, f"range_combo_rel_{ui_val}")
+                range_dir_cb = getattr(self.ui, f"range_dir_combo_rel_{ui_val}")
+                meridian_cb = getattr(self.ui, f"meridian_combo_rel_{ui_val}")
+                standard_combo_box_setup(section_cb, output_sections)
+                standard_combo_box_setup(township_cb, output_township)
+                standard_combo_box_setup(township_dir_cb, output_township_dirs)
+                standard_combo_box_setup(range_cb, output_range)
+                standard_combo_box_setup(range_dir_cb, output_range_dirs)
+                standard_combo_box_setup(meridian_cb, output_meridians)
+
+            except AttributeError:
+                pass
+
+    def run_combo_box_section(self, version: int, index: int, combo: QComboBox):
+        # def direction_to_number(variable, val):
+        #     translations = {
+        #         'rng': {'w': '2', 'e': '1', '':''},
+        #         'township': {'s': '2', 'n': '1', '':''},
+        #         'baseline': {'u': '2', 's': '1', '':''},
+        #     }
+        #     return translations.get(variable, {}).get(val, val)
+
+        def sql_combo_box_process():
+            # Create a mapping of column names to values
+            filters = {
+                'section': section_val,
+                'township': township_val,
+                'township_bearing_str': township_dir_val,
+                'rng': range_val,
+                'rng_bearing_str': range_dir_val,
+                'baseline_str': meridian_val
+            }
+
+            # Filter out empty values
+            active_filters = {col: val for col, val in filters.items() if val != ""}
+
+            # Start with the full dataframe
+            filtered_data = self.plat_df
+            # Apply each non-empty filter
+            for col, val in active_filters.items():
+                if val.isdigit():
+                    filtered_data = filtered_data[filtered_data[col] == int(float(val))]
+                else:
+                    filtered_data = filtered_data[filtered_data[col] == val]
+            return filtered_data
+
+        def update_combo_boxes_with_filtered(filtered_data):
+            output_sections, output_township, output_township_dirs, output_range, output_range_dirs, output_meridians = self.setup_unique_values_for_combo_boxes(
+                filtered_data)
+            current_selections = {
+                'section': section_val,
+                'township': township_val,
+                'township_bearing_str': township_dir_val,
+                'rng': range_val,
+                'rng_bearing_str': range_dir_val,
+                'baseline_str': meridian_val
+            }
+            combo_updates = [
+                (section_cb, output_sections, 'section'),
+                (township_cb, output_township, 'township'),
+                (township_dir_cb, output_township_dirs, 'township_bearing_str'),
+                (range_cb, output_range, 'rng'),
+                (range_dir_cb, output_range_dirs, 'rng_bearing_str'),
+                (meridian_cb, output_meridians, 'baseline_str')
+            ]
+            if not filtered_data.empty:
+                for cb, vals, key in combo_updates:
+                    new_data = tuple([""] + list(vals))
+                    cb.blockSignals(True)
+                    cb.clear()
+                    cb.addItems(new_data)
+
+                    try:
+                        cb.activated[int].disconnect()
+                    except TypeError:
+                        pass  # No connections to disconnect
+                    if current_selections[key] in new_data:
+                        cb.setCurrentText(current_selections[key])
+                    if len(new_data) == 2:
+                        cb.setCurrentText(new_data[1])
+                    # Reconnect signal
+                    cb.activated[int].connect(
+                        lambda idx, ver=version, combo_ref=cb: self.run_combo_box_section(ver, idx, combo_ref))
+
+                    # Unblock signals
+                    cb.blockSignals(False)
+
+        section_cb = getattr(self.ui, f"section_combo_rel_{version}")
+        township_cb = getattr(self.ui, f"township_combo_rel_{version}")
+        township_dir_cb = getattr(self.ui, f"township_dir_combo_rel_{version}")
+        range_cb = getattr(self.ui, f"range_combo_rel_{version}")
+        range_dir_cb = getattr(self.ui, f"range_dir_combo_rel_{version}")
+        meridian_cb = getattr(self.ui, f"meridian_combo_rel_{version}")
+
+        section_val = section_cb.currentText()
+        township_val = township_cb.currentText()
+        township_dir_val = township_dir_cb.currentText()
+        range_val = range_cb.currentText()
+        range_dir_val = range_dir_cb.currentText()
+        meridian_val = meridian_cb.currentText()
+        output_data = sql_combo_box_process()
+        if len(output_data['label'].unique()) == 1:
+            self.fill_tsr_data(output_data, version)
+            self.fill_calls_models(output_data, version)
+            self.fill_calls_data(output_data, version)
+        # update_combo_boxes_with_filtered(output_data)
+
+    def run_sql_search_process(self):
+        pass
 
     def setup_figs(self):
         for i in range(8):
@@ -453,7 +597,6 @@ class SetupRelativeCoordsPage:
     def get_all_rel_wells(self):
         query = f"select * from tsr_plats_surveys"
         output = pd.read_sql(query, self.conn)
-        # now sort by the full key:
         df_sorted = output.sort_values(
             by=[
                 'baseline', 'section',
@@ -462,7 +605,7 @@ class SetupRelativeCoordsPage:
             ascending=[True, True, True, True, True, True, True]
         ).reset_index(drop=True)
         output_labels = tuple(df_sorted['label'].unique())
-        return output_labels
+        return output_labels, df_sorted
 
     def setup_combo_boxes(self, lst):
         for i in range(8):
@@ -470,78 +613,134 @@ class SetupRelativeCoordsPage:
             cb.blockSignals(True)
             cb.clear()
             cb.addItems(lst)
-
             cb.activated[int].connect(lambda idx, ver=i + 1, combo=cb: self.plat_combo_box_fill(ver, idx, combo))
             cb.blockSignals(False)
 
-    def plat_combo_box_fill(self, version: int, index: int, combo: QComboBox):
-        def fill_tsr_data():
-            first_line = output.iloc[0]
-            getattr(self.ui, f"section_input_rel_{version}").setText(str(first_line['section']))
-            getattr(self.ui, f"township_input_rel_{version}").setText(str(first_line['township']))
-            getattr(self.ui, f"township_dir_input_rel_{version}").setText(str(first_line['township_bearing_str']))
-            getattr(self.ui, f"range_input_rel_{version}").setText(str(first_line['rng']))
-            getattr(self.ui, f"range_dir_input_rel_{version}").setText(str(first_line['rng_bearing_str']))
-            getattr(self.ui, f"meridian_input_rel_{version}").setText(str(first_line['baseline_str']))
+    def fill_tsr_data(self, output, version):
+        first_line = output.iloc[0]
+        getattr(self.ui, f"section_input_rel_{version}").setText(str(first_line['section']))
+        getattr(self.ui, f"township_input_rel_{version}").setText(str(first_line['township']))
+        getattr(self.ui, f"township_dir_input_rel_{version}").setText(str(first_line['township_bearing_str']))
+        getattr(self.ui, f"range_input_rel_{version}").setText(str(first_line['rng']))
+        getattr(self.ui, f"range_dir_input_rel_{version}").setText(str(first_line['rng_bearing_str']))
+        getattr(self.ui, f"meridian_input_rel_{version}").setText(str(first_line['baseline_str']))
 
-        def fill_calls_models():
-            if not hasattr(self, "_rel_models"):
-                self._rel_models = {}
-            if not hasattr(self, "_rel_tbls"):
-                self._rel_tbls = {}
-                # define which DataFrame columns you want in your tables
+    def fill_calls_models(self, output, version):
+        if not hasattr(self, "_rel_models"):
+            self._rel_models = {}
+        if not hasattr(self, "_rel_tbls"):
+            self._rel_tbls = {}
+            # define which DataFrame columns you want in your tables
 
-            for side_name, df_side in output.groupby("side"):
-                tbl = getattr(self.ui, f"{side_name}_table_rel_{version}")
-                model = QStandardItemModel(tbl)
-                # … populate model …
-                self._rel_models[(side_name, version)] = model
-                self._rel_tbls[(side_name, version)] = tbl
-            # group your DataFrame by the 'side' field
-            # for side_name, df_side in output.groupby("side"):
-            #     # find the matching QTableView on your UI
-            #     tbl: QTableView = getattr(self.ui,f"{side_name}_table_rel_{version}")
-            #     self._rel_tbls[(side_name, version)] = tbl
-            #     # build a fresh model
-            #     model = QStandardItemModel(tbl)  # parent it to self!
-            #     model.setColumnCount(len(cols))
-            #     model.setHorizontalHeaderLabels(headers)
-            #
-            #     # fill rows
-            #     for r, (_, row) in enumerate(df_side.iterrows()):
-            #         for c, col in enumerate(cols):
-            #             item = QStandardItem(str(row[col]))
-            #             model.setItem(r, c, item)
-            #
-            #     # attach it
-            #     tbl.setModel(model)
-            #     # stash it so Python doesn’t GC it—and so you can update it later if needed
-            #
-            #     self._rel_models[(side_name, version)] = model
-            #     # self._rel_tbls[(side_name, version)] = tbl
+        for side_name, df_side in output.groupby("side"):
+            tbl = getattr(self.ui, f"{side_name}_table_rel_{version}")
+            model = QStandardItemModel(tbl)
+            # … populate model …
+            self._rel_models[(side_name, version)] = model
+            self._rel_tbls[(side_name, version)] = tbl
 
-        def fill_calls_data():
-            for idx, side in enumerate(self.side_names):
-                model = self._rel_models[(side, version)]
-                tbl = self._rel_tbls[(side, version)]
-                model.removeRows(0, model.rowCount())
-                row = output[output["side"] == side].iloc[0]
-                if row.empty:
-                    # nothing to show for this side
-                    tbl.setModel(model)
-                    continue
-                # 3) append one QStandardItem per column
-                for val in (row[col] for col in cols):
-                    item = QStandardItem(str(val))
-                    # store the raw value as user‐data if you like:
-                    item.setData(val)
-                    model.appendRow(item)
+    def fill_calls_data(self, output, version):
+        cols = ["length", "degrees", "minutes", "seconds", "bearing_str"]
+
+        for idx, side in enumerate(self.side_names):
+            model = self._rel_models[(side, version)]
+            tbl = self._rel_tbls[(side, version)]
+            model.removeRows(0, model.rowCount())
+            row = output[output["side"] == side].iloc[0]
+            if row.empty:
+                # nothing to show for this side
                 tbl.setModel(model)
-                tbl.verticalHeader().setVisible(False)
-                tbl.horizontalHeader().setVisible(False)
-                tbl.setShowGrid(True)
-                tbl.show()
+                continue
+            # 3) append one QStandardItem per column
+            for val in (row[col] for col in cols):
+                item = QStandardItem(str(val))
+                # store the raw value as user‐data if you like:
+                item.setData(val)
+                model.appendRow(item)
+            tbl.setModel(model)
+            tbl.verticalHeader().setVisible(False)
+            tbl.horizontalHeader().setVisible(False)
+            tbl.setShowGrid(True)
+            tbl.show()
 
+    def plat_combo_box_fill(self, version: int, index: int, combo: QComboBox):
+        # def fill_tsr_data():
+        #     first_line = output.iloc[0]
+        #     getattr(self.ui, f"section_input_rel_{version}").setText(str(first_line['section']))
+        #     getattr(self.ui, f"township_input_rel_{version}").setText(str(first_line['township']))
+        #     getattr(self.ui, f"township_dir_input_rel_{version}").setText(str(first_line['township_bearing_str']))
+        #     getattr(self.ui, f"range_input_rel_{version}").setText(str(first_line['rng']))
+        #     getattr(self.ui, f"range_dir_input_rel_{version}").setText(str(first_line['rng_bearing_str']))
+        #     getattr(self.ui, f"meridian_input_rel_{version}").setText(str(first_line['baseline_str']))
+        #
+        # def fill_calls_models():
+        #     if not hasattr(self, "_rel_models"):
+        #         self._rel_models = {}
+        #     if not hasattr(self, "_rel_tbls"):
+        #         self._rel_tbls = {}
+        #         # define which DataFrame columns you want in your tables
+        #
+        #     for side_name, df_side in output.groupby("side"):
+        #         tbl = getattr(self.ui, f"{side_name}_table_rel_{version}")
+        #         model = QStandardItemModel(tbl)
+        #         # … populate model …
+        #         self._rel_models[(side_name, version)] = model
+        #         self._rel_tbls[(side_name, version)] = tbl
+        #     # group your DataFrame by the 'side' field
+        #     # for side_name, df_side in output.groupby("side"):
+        #     #     # find the matching QTableView on your UI
+        #     #     tbl: QTableView = getattr(self.ui,f"{side_name}_table_rel_{version}")
+        #     #     self._rel_tbls[(side_name, version)] = tbl
+        #     #     # build a fresh model
+        #     #     model = QStandardItemModel(tbl)  # parent it to self!
+        #     #     model.setColumnCount(len(cols))
+        #     #     model.setHorizontalHeaderLabels(headers)
+        #     #
+        #     #     # fill rows
+        #     #     for r, (_, row) in enumerate(df_side.iterrows()):
+        #     #         for c, col in enumerate(cols):
+        #     #             item = QStandardItem(str(row[col]))
+        #     #             model.setItem(r, c, item)
+        #     #
+        #     #     # attach it
+        #     #     tbl.setModel(model)
+        #     #     # stash it so Python doesn’t GC it—and so you can update it later if needed
+        #     #
+        #     #     self._rel_models[(side_name, version)] = model
+        #     #     # self._rel_tbls[(side_name, version)] = tbl
+        #
+        # def fill_calls_data():
+        #     for idx, side in enumerate(self.side_names):
+        #         model = self._rel_models[(side, version)]
+        #         tbl = self._rel_tbls[(side, version)]
+        #         model.removeRows(0, model.rowCount())
+        #         row = output[output["side"] == side].iloc[0]
+        #         if row.empty:
+        #             # nothing to show for this side
+        #             tbl.setModel(model)
+        #             continue
+        #         # 3) append one QStandardItem per column
+        #         for val in (row[col] for col in cols):
+        #             item = QStandardItem(str(val))
+        #             # store the raw value as user‐data if you like:
+        #             item.setData(val)
+        #             model.appendRow(item)
+        #         tbl.setModel(model)
+        #         tbl.verticalHeader().setVisible(False)
+        #         tbl.horizontalHeader().setVisible(False)
+        #         tbl.setShowGrid(True)
+        #         tbl.show()
+
+        cols = ["length", "degrees", "minutes", "seconds", "bearing_str"]
+        current_label = combo.itemText(index)
+        query = f"select * from tsr_plats_surveys where label = '{current_label}'"
+        output = pd.read_sql(query, self.conn)
+        self.fill_tsr_data(output, version)
+        self.fill_calls_models(output, version)
+        self.fill_calls_data(output, version)
+        self.rel_plat_data_filler(version)
+
+    def rel_plat_data_filler(self, version):
         def data_frame_plat_builder():
             rows = []
             for _rng, df_build in grouped:
@@ -555,45 +754,23 @@ class SetupRelativeCoordsPage:
             plat_df = plat_df[['conc', 'side', 'point_i', 'x', 'y']]
             return plat_df
 
-
         all_plats_dict = {}
-        self.currently_used_plat_data = pd.DataFrame()
-
-        cols = ["length", "degrees", "minutes", "seconds", "bearing_str"]
-        current_label = combo.itemText(index)
-        query = f"select * from tsr_plats_surveys where label = '{current_label}'"
-        output = pd.read_sql(query, self.conn)
-        fill_tsr_data()
-        fill_calls_models()
-        fill_calls_data()
         self.currently_used_plat_data = self.collect_relative_data()
         consecutive_codes, _ = pd.factorize(self.currently_used_plat_data['order'])
         self.currently_used_plat_data['range'] = consecutive_codes + 1
-        initial_plat_conc = self.currently_used_plat_data[self.currently_used_plat_data['order'] == version]['conc'].iloc[0]
-
+        initial_plat_conc = \
+        self.currently_used_plat_data[self.currently_used_plat_data['order'] == version]['conc'].iloc[0]
         grouped = self.currently_used_plat_data.groupby(['range'])
-
-
         all_conc_codes = []
-
         for x, df in grouped:
             plat_coords = convert_to_pts(df)
             conc = df['conc'].iloc[0]
             all_plats_dict[conc] = plat_coords
             all_conc_codes.append(conc)
-        all_conc_codes = tuple(all_conc_codes)
-        result = {
-            key: {direction: [item[:2] for item in group] for direction, group in
-                  itertools.groupby(value, key=lambda x: x[2])}
-            for key, value in all_plats_dict.items()
-        }
-        # for key, value in all_plats_dict.items():
-        # init_plat = convert_to_pts(init_plat_data)
         self.draw_plat_solo(all_plats_dict[initial_plat_conc], version)
-
         plat_df = data_frame_plat_builder()
         plat_df_conc = plat_df['conc'].unique()
-        output_polygons = self.run_plat_well_tracer(current_plat_coords=plat_df[plat_df['conc']==plat_df_conc[0]],
+        output_polygons = self.run_plat_well_tracer(current_plat_coords=plat_df[plat_df['conc'] == plat_df_conc[0]],
                                                     current_plat_conc=plat_df_conc[0], original_all_plats_dict=plat_df)
         # ClearanceProcess(df, plat_df)
         print("OUTPUT")
@@ -629,6 +806,7 @@ class SetupRelativeCoordsPage:
         plt.grid(True, alpha=0.3)
         plt.axis('equal')
         plt.show()
+
     def graph_one_polygon(self, poly):
         x, y = poly.exterior.xy
 
@@ -646,18 +824,14 @@ class SetupRelativeCoordsPage:
         plt.show()
 
     def draw_plat_solo(self, plat, version):
-        # dict_used = getattr(self, f"dict_{coord_type_label}")[version]
         canvas_used = getattr(self, f"dict_canvas")[version]
         ax_used = getattr(self, f"dict_ax")[version]
-        # mp = getattr(self.ui, f"well_graphic_mp_individual_{version}")
-        # object = getattr(self.ui, f"well_graphic_section_all_layout_8{version}")
         line_collection_used = self.dict_plats_lines[version]
         pts_collection_used = self.dict_plats_pts[version]
         x = [point[0] for point in plat]
         y = [point[1] for point in plat]
 
         pts_collection_used.set_offsets([i[:2] for i in plat])
-        # x, y = np.array(dict_used.exterior.coords).T
         line_collection_used.set_data(x, y)
         ax_used.relim()
         ax_used.autoscale_view()
@@ -742,7 +916,9 @@ class SetupRelativeCoordsPage:
             lambda row: convert_conc(row['section'], row['township'], row['township_bearing_str'],
                                      row['rng'],
                                      row['rng_bearing_str'], row['baseline_str']), axis=1)
-        df['decimal_azimuth'] = df.apply(lambda row: decimal_converter(row['side'], row['degrees'], row['minutes'], row['seconds'], row['baseline_str']), axis=1)
+        df['decimal_azimuth'] = df.apply(
+            lambda row: decimal_converter(row['side'], row['degrees'], row['minutes'], row['seconds'],
+                                          row['baseline_str']), axis=1)
         return df
 
     # def get_all_rel_wells2(self):
@@ -1053,9 +1229,6 @@ class SetupRelativeCoordsPage:
     #         counter += 1
     #         current_plat_conc = next_plat_conc
 
-
-
-
     def main_tracer_process(self, current_plat_coords, current_plat_conc, original_all_plats_dict, well_path, title):
         def get_direction_sides():
             used_df = all_plats_dict[all_plats_dict['conc'] == current_plat_conc]
@@ -1167,28 +1340,33 @@ class SetupRelativeCoordsPage:
                     if not geom.equals(intersection_pt_current):
                         return geom
                 # return all_pts[1]
+
         well_paths_lst = [k for k, v in self.well_path_dict.items()]
         all_plats_dict = original_all_plats_dict
         # well_path = self.well_path_dict[i].clearance_data
         result_coords = current_plat_coords[['x', 'y', 'side']].values.tolist()
         starter_pt = get_starter_pt(well_path.iloc[0], result_coords)
         starter_utm = well_path.iloc[0][['easting', 'northing']].values.tolist()
-        dx_start, dy_start = (float(well_path['easting'].iloc[0])) - starter_pt[0]*0.3048, (float(well_path['northing'].iloc[0])) - starter_pt[1]*0.3048
-        print(dx_start, dy_start)
-        well_path[['e_offset_delta', 'n_offset_delta']] = (well_path.apply(lambda row: get_offset_added_delta(starter_pt[0], starter_pt[1], row['e_offset'], row['n_offset']), axis=1, result_type='expand'))
+        dx_start, dy_start = (float(well_path['easting'].iloc[0])) - starter_pt[0] * 0.3048, (
+            float(well_path['northing'].iloc[0])) - starter_pt[1] * 0.3048
+        well_path[['e_offset_delta', 'n_offset_delta']] = (well_path.apply(
+            lambda row: get_offset_added_delta(starter_pt[0], starter_pt[1], row['e_offset'], row['n_offset']), axis=1,
+            result_type='expand'))
         well_path['rel_data_order'] = 99
-
         current_plat_coords_modified = [i[:2] for i in result_coords]
         current_polygon = Polygon(current_plat_coords_modified)
         counter = 2
         intersection_pt_current = Point(0, 0)
         while True:
+            print('counter', counter)
             polygon_plat = current_polygon
             pts = [Point(x, y) for x, y in zip(well_path.e_offset_delta, well_path.n_offset_delta)]
             mask = [polygon_plat.contains(pt) for pt in pts]
             well_path.loc[mask, 'rel_data_order'] = counter - 1
-            used_well_path_df = well_path[well_path['rel_data_order'] >= counter - 1]
-            intersection_segment = LineString(list(zip(used_well_path_df['e_offset_delta'], used_well_path_df['n_offset_delta'])))
+            used_well_path_df = well_path[well_path['rel_data_order'] == 99]
+            # print(used_well_path_df)
+            intersection_segment = LineString(
+                list(zip(used_well_path_df['e_offset_delta'], used_well_path_df['n_offset_delta'])))
             boundary = polygon_plat.exterior
             intersection_pt = intersection_segment.intersection(boundary)
             intersection_pt = check_for_multipoint()
@@ -1196,10 +1374,14 @@ class SetupRelativeCoordsPage:
             try:
                 dir_val, index = get_direction_sides()
             except (AttributeError, TypeError) as e:
+                print('errored', e)
                 all_plats_dict[['x_delta', 'y_delta']] = (
-                    all_plats_dict.apply(lambda row: get_offset_added_delta(row['x'] * 0.3048, row['y'] * 0.3048, dx_start, dy_start), axis=1,
-                                         result_type='expand'))
+                    all_plats_dict.apply(
+                        lambda row: get_offset_added_delta(row['x'] * 0.3048, row['y'] * 0.3048, dx_start, dy_start),
+                        axis=1,
+                        result_type='expand'))
                 # self.graph_plats_and_well(all_plats_dict, list(zip(well_path.easting, well_path.northing)), title)
+
                 return all_plats_dict
 
             next_plat_df = self.currently_used_plat_data[self.currently_used_plat_data['range'] == counter]
@@ -1207,33 +1389,42 @@ class SetupRelativeCoordsPage:
             try:
                 next_plat_conc = next_plat_df['conc'].iloc[0]
             except IndexError as f:
+
                 break
             next_plat_coords_dict = all_plats_dict[all_plats_dict['conc'] == next_plat_conc]
 
-            well_prox_boo = well_path_prox(intersection=intersection_pt, side_dict_all=next_plat_coords_dict, direction=dir_val)
-            rewritten_coords = self.coords_stitcher(next_plat_coords_dict, all_plats_dict[all_plats_dict['conc'] == current_plat_conc], dir_val, well_prox_boo)
+            well_prox_boo = well_path_prox(intersection=intersection_pt, side_dict_all=next_plat_coords_dict,
+                                           direction=dir_val)
+            rewritten_coords = self.coords_stitcher(next_plat_coords_dict,
+                                                    all_plats_dict[all_plats_dict['conc'] == current_plat_conc],
+                                                    dir_val, well_prox_boo)
             current_polygon = df_to_polygon(rewritten_coords)
             new_dict = pd.DataFrame(data=rewritten_coords.to_dict(orient='list'))
 
             try:
+                print('counter', counter)
                 all_plats_dict = update_original_dataframe(all_plats_dict, new_dict)
                 counter += 1
                 current_plat_conc = next_plat_conc
             except ValueError as e:
                 all_plats_dict[['x_delta', 'y_delta']] = (
-                    all_plats_dict.apply(lambda row: get_offset_added_delta(row['x'] / 0.3048, row['y'] / 0.3048, starter_utm[0], starter_utm[1]), axis=1,
-                                         result_type='expand'))
+                    all_plats_dict.apply(
+                        lambda row: get_offset_added_delta(row['x'] / 0.3048, row['y'] / 0.3048, starter_utm[0],
+                                                           starter_utm[1]), axis=1,
+                        result_type='expand'))
                 # break
+
                 return all_plats_dict
         return pd.DataFrame()
+
     def run_plat_well_tracer(self, current_plat_coords, current_plat_conc, original_all_plats_dict):
         def get_direction_sides():
             used_df = all_plats_dict[all_plats_dict['conc'] == current_plat_conc]
             grouped_df = used_df.groupby('side')
-            dict_index = {'e':2, 'w':6, 'n':0, 's': 4}
+            dict_index = {'e': 2, 'w': 6, 'n': 0, 's': 4}
 
             for r, group_df in grouped_df:
-                line_string_side = Polygon(group_df[['x','y']].values.tolist())
+                line_string_side = Polygon(group_df[['x', 'y']].values.tolist())
                 on_line3 = intersection_pt.within(line_string_side.buffer(1e-8))
                 if on_line3:
                     return r[0], dict_index[r[0]]
@@ -1244,19 +1435,15 @@ class SetupRelativeCoordsPage:
             # pick just the one side
             side_key = direction.lower()
             if side_key == 'n':
-                # coords = side_dict_all['north']
-                coords = side_dict_all[side_dict_all['side']=='north'][['x', 'y']].values.tolist()
+                coords = side_dict_all[side_dict_all['side'] == 'north'][['x', 'y']].values.tolist()
             elif side_key == 's':
-                # coords = side_dict_all['south']
-                coords = side_dict_all[side_dict_all['side']=='south'][['x', 'y']].values.tolist()
+                coords = side_dict_all[side_dict_all['side'] == 'south'][['x', 'y']].values.tolist()
 
             elif side_key == 'e':
-                # coords = side_dict_all['east']
-                coords = side_dict_all[side_dict_all['side']=='east'][['x', 'y']].values.tolist()
+                coords = side_dict_all[side_dict_all['side'] == 'east'][['x', 'y']].values.tolist()
 
             elif side_key == 'w':
-                # coords = side_dict_all['west']
-                coords = side_dict_all[side_dict_all['side']=='west'][['x', 'y']].values.tolist()
+                coords = side_dict_all[side_dict_all['side'] == 'west'][['x', 'y']].values.tolist()
 
             else:
                 raise KeyError(f"Direction must be one of 'n','s','e','w', not {direction!r}")
@@ -1267,6 +1454,7 @@ class SetupRelativeCoordsPage:
 
             # whichever corner is nearer the intersection…
             return pt.distance(p_start) < pt.distance(p_end)
+
         def get_offset_added_delta(x, y, dx, dy):
             # return (x + float(dx)) * 0.3048, (y + float(dy)) * 0.3048
 
@@ -1301,6 +1489,7 @@ class SetupRelativeCoordsPage:
             # Create pandas DataFrame
             df = pd.DataFrame(data, columns=headers)
             return df
+
         def df_to_polygon(df):
             # all_cells = np.ravel(df.to_numpy(), order='F').tolist()
             all_cells = df[['x', 'y']].values.tolist()
@@ -1308,6 +1497,7 @@ class SetupRelativeCoordsPage:
 
             ring = [tuple(pt) for pt in coords_unique]
             return Polygon(ring)
+
         def update_original_dataframe(df_o, df_new):
             df2 = df_o.set_index(['conc', 'side', 'point_i'])
             repl2 = df_new.set_index(['conc', 'side', 'point_i'])
@@ -1327,15 +1517,15 @@ class SetupRelativeCoordsPage:
             all_pts = []
             if not isinstance(intersection_pt, MultiPoint):
                 return intersection_pt
-            elif intersection_pt == Point(0,0):
+            elif intersection_pt == Point(0, 0):
                 return intersection_pt_current
             else:
                 for geom in intersection_pt.geoms:
                     # all_pts.append(geom)
                     if not geom.equals(intersection_pt_current):
-                        print('unique point', geom)
                         return geom
                 # return all_pts[1]
+
         def transform_to_plat_format(df):
             def transform_string(s):
                 part1 = str(int(s[:2]))
@@ -1344,33 +1534,31 @@ class SetupRelativeCoordsPage:
                 part4 = s[-1]
 
                 return f"{part1} {part2} {part3} {part4}"
+
             grouped_df = df.groupby('conc')
             lst = []
 
             for r, group in grouped_df:
-                poly = Polygon([x,y] for x, y in zip(group.x_delta, group.y_delta))
+                poly = Polygon([x, y] for x, y in zip(group.x_delta, group.y_delta))
                 centroid = poly.centroid
                 label = transform_string(group.iloc[0]['conc'])
                 lst.append([r, poly, label, centroid])
             column_names = ['Conc', 'geometry', 'label', 'centroid']
-            output_df = pd.DataFrame(columns = column_names, data = lst)
+            output_df = pd.DataFrame(columns=column_names, data=lst)
             return output_df
-        # well_path = get_dataframe_from_qtableview()
-        # well_paths_lst = ['drl_df_true_dx', 'drl_df_grid_dx', 'pln_df_true_dx', 'pln_df_grid_dx']
-        well_paths_lst = [k for k, v in self.well_path_dict.items()]
 
+        well_paths_lst = [k for k, v in self.well_path_dict.items()]
         all_plats_dict = original_all_plats_dict
         for i in well_paths_lst:
-            tracer_output = self.main_tracer_process(current_plat_coords, current_plat_conc, original_all_plats_dict, self.well_path_dict[i].clearance_data, i)
-
+            tracer_output = self.main_tracer_process(current_plat_coords, current_plat_conc, original_all_plats_dict,
+                                                     self.well_path_dict[i].clearance_data, i)
             if not tracer_output.empty:
                 transformed_df = transform_to_plat_format(tracer_output)
                 well_path_dropped = copy.copy(self.well_path_dict[i].clearance_data)
                 well_path_dropped = well_path_dropped.drop(['index_right',
-       'Conc', 'label', 'FNL', 'FSL', 'FEL', 'FWL'], axis=1)
+                                                            'Conc', 'label', 'FNL', 'FSL', 'FEL', 'FWL'], axis=1)
 
-                clearance_process = ClearanceProcess(df_used=well_path_dropped, df_plat=transformed_df, bypass_db = True)
-                print(clearance_process.clearance_data)
+                clearance_process = ClearanceProcess(df_used=well_path_dropped, df_plat=transformed_df, bypass_db=True)
                 # clearance_process.load_relative_clearance(df_used=well_path_dropped, df_plat=transformed_df)
 
                 # pass
@@ -1452,18 +1640,18 @@ class SetupRelativeCoordsPage:
         #             counter += 1
         #         except IndexError as e:
         #             pass
-            # for i in used_plats:
-            #     used_poly = all_plats_dict[i]
-            #     if Polygon(used_poly).contains(Point(used_pt)):
-            #         well_path.at[x, 'rel_plat_conc'] = conc
-            #     else:
-            #         pass
-            # for k, v in all_plats_dict.items():
-            #     if Polygon(v).contains(Point(used_pt)):
-            #         well_path.at[x, 'rel_plat_conc'] = conc
-            #     else:
-            #
-            #         pass
+        # for i in used_plats:
+        #     used_poly = all_plats_dict[i]
+        #     if Polygon(used_poly).contains(Point(used_pt)):
+        #         well_path.at[x, 'rel_plat_conc'] = conc
+        #     else:
+        #         pass
+        # for k, v in all_plats_dict.items():
+        #     if Polygon(v).contains(Point(used_pt)):
+        #         well_path.at[x, 'rel_plat_conc'] = conc
+        #     else:
+        #
+        #         pass
 
     # def extract_coords_and_add_direction(self, used_dict):
     #     new_lst = [[i + [k] for i in v] for k, v in used_dict.items()]
@@ -1532,13 +1720,17 @@ class SetupRelativeCoordsPage:
 
             start_row = (starting_pts % 5)
 
-            current_point = current_coords_df[(current_coords_df['side'] == start_col) & (current_coords_df['point_i'] == start_row)][['x', 'y']].iloc[0].values.tolist()
+            current_point = \
+            current_coords_df[(current_coords_df['side'] == start_col) & (current_coords_df['point_i'] == start_row)][
+                ['x', 'y']].iloc[0].values.tolist()
             # current_point = current_coords_df.loc[start_row, start_col]
             # 2. Get location for the matched point in next_coords_df
             matched_col = column_map[matched_pt // 5]
             matched_row = matched_pt % 5
 
-            next_point = next_coords_df[(next_coords_df['side'] == matched_col) & (next_coords_df['point_i'] == matched_row)][['x', 'y']].iloc[0].values.tolist()
+            next_point = \
+            next_coords_df[(next_coords_df['side'] == matched_col) & (next_coords_df['point_i'] == matched_row)][
+                ['x', 'y']].iloc[0].values.tolist()
             # next_point = next_coords_df.loc[matched_row, matched_col]
 
             # 3. Perform the calculation
@@ -1547,14 +1739,14 @@ class SetupRelativeCoordsPage:
 
             return diff_x_pt, diff_y_pt
 
-        def my_calc(x,y):
+        def my_calc(x, y):
             return x + diff_x_used, y + diff_y_used
 
         def update_original_dataframe(df_o, df_new):
-            dir_dict = {'n':['north', 'south'],
-                        's':['south', 'north'],
-                        'e':['west','east'],
-                        'w':['east','west']}
+            dir_dict = {'n': ['north', 'south'],
+                        's': ['south', 'north'],
+                        'e': ['west', 'east'],
+                        'w': ['east', 'west']}
             dir_lst = dir_dict[direction]
             north_coords = df_o[df_o['side'] == dir_lst[0]][['x', 'y']].iloc[::-1].reset_index(drop=True)
             south_indices = df_new[df_new['side'] == dir_lst[1]].index
@@ -1573,6 +1765,7 @@ class SetupRelativeCoordsPage:
             # # 4) (optionally) drop the index back to columns
             # df_new = df2.reset_index()
             return df_new
+
         # to run this on every cell in every column:
         # result_df = df.applymap(my_calc)
         opp_direction_list = {"0": '2', "1": '3', "2": '0', "3": '1'}
@@ -1592,14 +1785,12 @@ class SetupRelativeCoordsPage:
         starting_pts, matched_pt = get_point_indices()
         diff_x_used, diff_y_used = calculate_diff_from_dfs()
 
-        next_coords_df[['x', 'y']] = next_coords_df.apply(lambda row: my_calc(row['x'], row['y']), axis=1, result_type='expand')
+        next_coords_df[['x', 'y']] = next_coords_df.apply(lambda row: my_calc(row['x'], row['y']), axis=1,
+                                                          result_type='expand')
         next_coords_df = update_original_dataframe(current_coords_df, next_coords_df)
-
-
 
         # next_coords_df_mod = next_coords_df.applymap(my_calc)
         return next_coords_df
-
 
     # def coords_stitcher_3(self, next_plat_dict_out, current_plat_dict_out, direction, direction_boo):
     #
@@ -1717,7 +1908,6 @@ class SetupRelativeCoordsPage:
     #     # current_plat_lst_organized = [[[round(k, 1) for k in j] for j in i] for i in current_plat_lst_organized]
     #     # current_plat_lst_organized = [unique_lists(i) for i in current_plat_lst_organized]
     #     # corners = [current_plat_dict_out['south'][-1], current_plat_dict_out['east'][-1], current_plat_dict_out['north'][-1], current_plat_dict_out['west'][-1]]
-
 
     # def coords_stitcher_2(self, new_coords, last_coords, direction, direction_boo):
     #
@@ -1843,15 +2033,15 @@ class SetupRelativeCoordsPage:
     #     if direction == "E":
     #         coords, valsLst = self.directionE(coords, coordLst, valsLst, valsLstTot)
     #         return coords, valsLst
-        # elif direction == 'W':
-        #     coords, valsLst = ExcelGetNewCoords.directionW(coords, coordLst, valsLst, valsLstTot)
-        #     return coords, valsLst
-        # elif direction == 'S':
-        #     coords, valsLst = ExcelGetNewCoords.directionS(coords, coordLst, valsLst, valsLstTot)
-        #     return coords, valsLst
-        # elif direction == 'N':
-        #     coords, valsLst = ExcelGetNewCoords.directionN(coords, coordLst, valsLst, valsLstTot)
-        #     return coords, valsLst
+    # elif direction == 'W':
+    #     coords, valsLst = ExcelGetNewCoords.directionW(coords, coordLst, valsLst, valsLstTot)
+    #     return coords, valsLst
+    # elif direction == 'S':
+    #     coords, valsLst = ExcelGetNewCoords.directionS(coords, coordLst, valsLst, valsLstTot)
+    #     return coords, valsLst
+    # elif direction == 'N':
+    #     coords, valsLst = ExcelGetNewCoords.directionN(coords, coordLst, valsLst, valsLstTot)
+    #     return coords, valsLst
 
     # def directionE(self, next_plat_df, next_plat_coords, current_plat_coords, conc, direction):
     #     coords = [0] * 20
@@ -2016,6 +2206,8 @@ class SetupRelativeCoordsPage:
         plt.title(title)
         plt.show()
         pass
+
+
 def get_starter_pt(row, current_plat):
     if row['FNL'] < row['FSL']:
         fnsl_val = row['FNL']
@@ -2031,7 +2223,6 @@ def get_starter_pt(row, current_plat):
         fewl = 'FWL'
     out = find_point_from_footages(current_plat, float(fnsl_val), fnsl, float(fewl_val), fewl)
     return out
-
 
 # class PlatEditorProcess:
 #     def __init__(self, conn, plat_df, plat_coords, shl, well_df):
