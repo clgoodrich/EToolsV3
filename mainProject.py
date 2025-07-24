@@ -122,7 +122,6 @@ class UltraFastClearer:
                 # if isinstance(model, QStandardItemModel):
                 #     self.q_table_views.append(widget)
 
-        print(self.q_table_views)
     def _on_text_changed(self, text):
         """Debounce clearing to avoid multiple rapid clears"""
         if text:
@@ -360,7 +359,7 @@ class SQLConnector:
     def _create_connection_string(self):
         """Create connection string with caching."""
         credentials = self._get_credentials()
-        # credentials = {}
+        credentials = {}
         if credentials:
             # Production connection
             params = {
@@ -734,7 +733,6 @@ class ETools(QMainWindow):
         print('pressed!')
         try:
             survey_dx, well_elevation, north_ref = self.sql_query_survey(self.db, self.api_val, self.lateral)
-            print(survey_dx)
         except:
             well_elevation = self.ui.dx_survey_elevation.text()
             north_ref = self.ui.dx_survey_north_ref_line.text()
@@ -764,7 +762,6 @@ class ETools(QMainWindow):
         self.drawer = DataDrawer(ui=self.ui, df_survey=self.well.cl_dx_dict)
         self.drawer.draw_2d_data(df_plat=self.well.plat_df, df_survey=self.well.cl_dx_dict)
         self.drawer.draw_3d_process(df=self.well.cl_dx_dict)
-        # print(self.well.spec_surveys_dict)
         self.wcr_process = WCR_Main(df=self.well.cl_dx_dict, ui=self.ui, db=self.db, loc_df=self.well.loc_df,
                                     spec_surveys=self.well.spec_surveys_dict, north_ref=north_ref)
         self.wcr_process.process_wcr()
@@ -802,14 +799,12 @@ class ETools(QMainWindow):
                            'Planned - True': 'Planned',
                            'Planned - Grid': 'Planned'}
             current_citing = dict_return[checked_button]
-            print(checked_button)
             # for citing, group in survey.groupby('CitingType'):
             new_df = copy.copy(survey)
             new_df = new_df[new_df['CitingType'] == current_citing]
             try:
                 new_df.insert(0, 'row', new_df.index + 1)
                 new_df = new_df[new_df['row'] != row]
-                print(new_df)
                 new_df = new_df.drop(['row'], axis=1)
                 lst_data.append(new_df)
 
@@ -822,7 +817,6 @@ class ETools(QMainWindow):
         output = filter_by_citing_type()
         survey = pd.concat(output, ignore_index=True)
         survey = survey.sort_values(by=['CitingType', 'measured_depth'])
-        print(survey)
         self.well.set_survey(survey)
         self.well.reprocess_with_current_plat()
         self.main_processes_program(self.ui.dx_survey_north_ref_line.text())
@@ -833,7 +827,6 @@ class ETools(QMainWindow):
         first_button = self.button_group.button(self.button_group.checkedId())
         # first_button.setChecked(True)
         # first_button.clicked.emit()
-        print(output)
 
     def recalculate_with_new_row(self, md, inc, azi):
         def return_well_survey():
@@ -1010,7 +1003,6 @@ class ETools(QMainWindow):
         try:
             result_boo = loader()
             if result_boo:  # If file was successfully selected
-                print(label)
                 df, north_ref = self.survey_importer.load_and_process_data(label, self.db, self.api_val,
                                                                            self.file_path_dict)
                 well_elevation = df['SurveySurfaceElevation'].iloc[0]
@@ -1473,7 +1465,6 @@ class PointChecker:
         ]
         # fields_data = [float(i) for i in fields]
         # If any field is empty, use gather_deg_pts()
-        print(1)
         if any(not field.strip() for field in fields):
             try:
                 return self.gather_deg_pts()
@@ -1482,7 +1473,6 @@ class PointChecker:
                 pass
 
         # Otherwise, proceed with conversion and UTM/latlon check
-        print(2)
         try:
             e_dec_1 = float(self.ui.a_check_pt_e.text())
             n_dec_1 = float(self.ui.a_check_pt_n.text())
@@ -1490,7 +1480,6 @@ class PointChecker:
             n_dec_2 = float(self.ui.b_check_pt_n.text())
             e_dec_pt = float(self.ui.check_pt_e.text())
             n_dec_pt = float(self.ui.check_pt_n.text())
-            print(e_dec_pt, n_dec_pt)
             output_a = self.check_if_utm_or_latlon(e_dec_1, n_dec_1)
             output_b = self.check_if_utm_or_latlon(e_dec_2, n_dec_2)
             output_pt = self.check_if_utm_or_latlon(e_dec_pt, n_dec_pt)
@@ -1499,10 +1488,8 @@ class PointChecker:
             print('errored 3', f)
             # Handle unexpected conversion errors if needed
             try:
-                print(3)
                 return self.gather_deg_pts()
             except ValueError as g:
-                print('errored 2', g)
                 pass
 
     # (590632.8649118496, 4450524.732002878)(592236.7912223932, 4450548.389611623)
@@ -1511,11 +1498,8 @@ class PointChecker:
         try:
             x = float(x_coord)
             y = float(y_coord)
-            print('xy', x, y)
             if (-180 <= y <= 180) and (-90 <= x <= 90):
-                print('xy2', x, y)
                 if (-114 <= y <= -109) and (37 <= x <= 42):
-                    print('xy3', x, y)
                     y = abs(y) * -1
                     return utm.from_latlon(x, y)[:2]
             if (140000 <= x <= 800000) and (3800000 <= y <= 4800000):

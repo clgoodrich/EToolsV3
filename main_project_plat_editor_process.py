@@ -1,6 +1,7 @@
+from shapely.ops import substring
 import copy
 import itertools
-
+# from main_project_well_path_tracer import WellPathTracer
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QLineEdit, QSpinBox,
                              QCheckBox,
@@ -406,6 +407,7 @@ def find_point_from_footages(polygon_coords, ns_distance, ns_type, ew_distance, 
 
 class SetupRelativeCoordsPage:
     def __init__(self, conn, ui):
+        self.section_visits = None
         self._rel_models = {}
         self._rel_tbls = {}
         self.dict_plats_lines = {}
@@ -435,6 +437,131 @@ class SetupRelativeCoordsPage:
         self.combo_box_df = pd.DataFrame(data, columns=headers)
         self.setup_combo_boxes(all_rel_surveys)
         self.setup_section_combo_box()
+
+    def enhanced_main_tracer_process(self, current_plat_coords, current_plat_conc, original_all_plats_df, clearance_data):
+        """Enhanced version of your main_tracer_process that handles re-entries"""
+
+        # Get inputs from your existing data structures
+        # current_plat_coords = self.current_plat_coords
+        # current_plat_conc = self.current_plat_conc
+        # original_all_plats_df = self.original_all_plats_df
+        clearance_data = self.well_path_dict['pln_df_true_dx'].clearance_data
+
+        # Initialize the tracer
+        tracer = WellPathTracer(tolerance=0.1)
+
+        # Extract well path from clearance data
+        if clearance_data is not None and not clearance_data.empty:
+            # Assuming clearance_data has columns like 'x', 'y' or similar
+            # Adjust column names based on your actual data structure
+            well_coords = []
+            for _, row in clearance_data.iterrows():
+                # Adjust these column names to match your data
+                x = row.get('x', row.get('easting', row.get('X')))
+                y = row.get('y', row.get('northing', row.get('Y')))
+                well_coords.append((x, y))
+
+            well_path = LineString(well_coords)
+        else:
+            raise ValueError("No clearance data available for well path")
+
+        # Trace the path through all sections
+        result = tracer.trace_well_path(well_path, original_all_plats_df)
+
+        # Update your data structures with the results
+        self.process_tracer_results(result)
+        print('result')
+        return result
+
+    def process_tracer_results(self, tracer_result):
+        """Process the tracer results and update your system's data structures"""
+
+        # Example: Update section traversal information
+        for visit in tracer_result.visits:
+            section_id = visit.section_id
+            visit_num = visit.visit_number
+
+            # Store visit information in your existing structures
+            # This is an example - adapt to your actual data model
+            if not hasattr(self, 'section_visits'):
+                self.section_visits = {}
+
+            if section_id not in self.section_visits:
+                self.section_visits[section_id] = []
+
+            self.section_visits[section_id].append({
+                'visit_number': visit_num,
+                'entry_point': (visit.entry_point.x, visit.entry_point.y) if visit.entry_point else None,
+                'exit_point': (visit.exit_point.x, visit.exit_point.y) if visit.exit_point else None,
+                'path_length': visit.path_segment.length,
+                'timestamp': visit.timestamp
+            })
+
+        # Generate report for UI
+        print(self.generate_traversal_report(tracer_result))
+
+    def generate_traversal_report(self, tracer_result):
+        """Generate a report for display in the UI"""
+        report_lines = []
+
+        # Summary
+        total_sections = len(tracer_result.sections_visited)
+        total_visits = sum(tracer_result.sections_visited.values())
+
+        report_lines.append(f"Well Path Analysis Summary")
+        report_lines.append(f"Total sections traversed: {total_sections}")
+        report_lines.append(f"Total section visits: {total_visits}")
+        report_lines.append("")
+
+        # Detailed traversal
+        report_lines.append("Detailed Traversal Path:")
+        for i, visit in enumerate(tracer_result.visits):
+            if visit.visit_number > 1:
+                report_lines.append(f"{i + 1}. RE-ENTERING Section {visit.section_id} (Visit #{visit.visit_number})")
+            else:
+                report_lines.append(f"{i + 1}. Section {visit.section_id}")
+
+            if visit.entry_point:
+                report_lines.append(f"   Entry: ({visit.entry_point.x:.2f}, {visit.entry_point.y:.2f})")
+            if visit.exit_point:
+                report_lines.append(f"   Exit: ({visit.exit_point.x:.2f}, {visit.exit_point.y:.2f})")
+            report_lines.append(f"   Distance: {visit.path_segment.length:.2f} units")
+
+        # Sections with multiple visits
+        report_lines.append("")
+        report_lines.append("Sections with Multiple Visits:")
+        for section_id, count in tracer_result.sections_visited.items():
+            if count > 1:
+                report_lines.append(f"  - {section_id}: {count} visits")
+
+        return "\n".join(report_lines)
+
+    # Example: Handling user input for manual section addition
+    def add_section_with_reentry_info(self, section_data, expects_reentry=False,
+                                      reentry_from=None, reentry_to=None):
+        """
+        Enhanced section addition that captures re-entry expectations
+
+        Args:
+            section_data: Standard section data
+            expects_reentry: Boolean indicating if this section expects re-entry
+            reentry_from: Section ID where re-entry originates
+            reentry_to: Section ID where path continues after re-entry
+        """
+        # Add section to rel_all_sections_tabs as usual
+        self.rel_all_sections_tabs.add_section(section_data)
+
+        # Store re-entry metadata
+        if expects_reentry:
+            if not hasattr(self, 'reentry_expectations'):
+                self.reentry_expectations = {}
+
+            self.reentry_expectations[section_data['id']] = {
+                'expects_reentry': True,
+                'from_section': reentry_from,
+                'to_section': reentry_to,
+                'user_notes': section_data.get('notes', '')
+            }
 
     def set_well_path_dict(self, well_path_dict):
         self.well_path_dict = well_path_dict
@@ -754,28 +881,28 @@ class SetupRelativeCoordsPage:
             plat_df = plat_df[['conc', 'side', 'point_i', 'x', 'y']]
             return plat_df
 
-        all_plats_dict = {}
+        all_plats_df = {}
         self.currently_used_plat_data = self.collect_relative_data()
         consecutive_codes, _ = pd.factorize(self.currently_used_plat_data['order'])
         self.currently_used_plat_data['range'] = consecutive_codes + 1
         initial_plat_conc = \
-        self.currently_used_plat_data[self.currently_used_plat_data['order'] == version]['conc'].iloc[0]
+            self.currently_used_plat_data[self.currently_used_plat_data['order'] == version]['conc'].iloc[0]
         grouped = self.currently_used_plat_data.groupby(['range'])
         all_conc_codes = []
         for x, df in grouped:
             plat_coords = convert_to_pts(df)
             conc = df['conc'].iloc[0]
-            all_plats_dict[conc] = plat_coords
+            all_plats_df[conc] = plat_coords
             all_conc_codes.append(conc)
-        self.draw_plat_solo(all_plats_dict[initial_plat_conc], version)
+        self.draw_plat_solo(all_plats_df[initial_plat_conc], version)
         plat_df = data_frame_plat_builder()
         plat_df_conc = plat_df['conc'].unique()
         output_polygons = self.run_plat_well_tracer(current_plat_coords=plat_df[plat_df['conc'] == plat_df_conc[0]],
-                                                    current_plat_conc=plat_df_conc[0], original_all_plats_dict=plat_df)
+                                                    current_plat_conc=plat_df_conc[0], original_all_plats_df=plat_df)
         # ClearanceProcess(df, plat_df)
         print("OUTPUT")
         print(output_polygons)
-        # output_polygons = self.run_plat_well_tracer_4(current_plat_coords=result[all_conc_codes[0]], current_plat_conc=all_conc_codes[0], all_plats_dict=result)
+        # output_polygons = self.run_plat_well_tracer_4(current_plat_coords=result[all_conc_codes[0]], current_plat_conc=all_conc_codes[0], all_plats_df=result)
 
     def grapher(self, data):
         x_coords = [point[0] for point in data]
@@ -1091,7 +1218,7 @@ class SetupRelativeCoordsPage:
     #     ax.set_ylabel('Y')
     #     ax.set_title('Polygon × LineString Intersection')
     #     plt.show()
-    # def run_plat_well_tracer_4(self, current_plat_coords, current_plat_conc, all_plats_dict):
+    # def run_plat_well_tracer_4(self, current_plat_coords, current_plat_conc, all_plats_df):
     #     def well_path_prox(intersection, side_dict_all, direction, tol=1e-8):
     #         pt = intersection if isinstance(intersection, Point) else Point(intersection)
     #
@@ -1214,27 +1341,36 @@ class SetupRelativeCoordsPage:
     #         try:
     #             dir_val, index = get_direction((intersection_pt.x, intersection_pt.y), xMin, xMax, yMin, yMax)
     #         except AttributeError:
-    #             return all_plats_dict
+    #             return all_plats_df
     #         next_plat_df = self.currently_used_plat_data[self.currently_used_plat_data['range'] == counter]
     #         try:
     #             next_plat_conc = next_plat_df['conc'].iloc[0]
     #         except IndexError:
     #             break
-    #         next_plat_coords_dict = all_plats_dict[next_plat_conc]
+    #         next_plat_coords_dict = all_plats_df[next_plat_conc]
     #         well_prox_boo = well_path_prox(intersection = intersection_pt, side_dict_all=next_plat_coords_dict, direction=dir_val)
-    #         rewritten_coords = self.coords_stitcher_2(all_plats_dict[next_plat_conc], all_plats_dict[current_plat_conc], dir_val, well_prox_boo)
+    #         rewritten_coords = self.coords_stitcher_2(all_plats_df[next_plat_conc], all_plats_df[current_plat_conc], dir_val, well_prox_boo)
     #         current_polygon = df_to_polygon(rewritten_coords)
     #         new_dict = rewritten_coords.to_dict(orient='list')
-    #         all_plats_dict[next_plat_conc] = new_dict
+    #         all_plats_df[next_plat_conc] = new_dict
     #         counter += 1
     #         current_plat_conc = next_plat_conc
 
-    def main_tracer_process(self, current_plat_coords, current_plat_conc, original_all_plats_dict, well_path, title):
+    def main_tracer_process(self, current_plat_coords, current_plat_conc, original_all_plats_df, well_path, title):
+        # print(current_plat_coords)
+        # print(current_plat_conc)
+        # print(original_all_plats_df)
+        # print(well_path)
+
         def get_direction_sides():
-            used_df = all_plats_dict[all_plats_dict['conc'] == current_plat_conc]
+            used_df = all_plats_df[all_plats_df['conc'] == current_plat_conc]
             grouped_df = used_df.groupby('side')
             dict_index = {'e': 2, 'w': 6, 'n': 0, 's': 4}
-
+            for r, group_df in grouped_df:
+                line_string_side = Polygon(group_df[['x', 'y']].values.tolist())
+                on_line3 = intersection_pt.within(line_string_side.buffer(1e-8))
+                if on_line3:
+                    print(r)
             for r, group_df in grouped_df:
                 line_string_side = Polygon(group_df[['x', 'y']].values.tolist())
                 on_line3 = intersection_pt.within(line_string_side.buffer(1e-8))
@@ -1341,9 +1477,64 @@ class SetupRelativeCoordsPage:
                         return geom
                 # return all_pts[1]
 
+        def check_intersection_pts(intersection_result):
+            if isinstance(intersection_result, MultiPoint):
+                # Sort intersection points by their position along the LineString
+                sorted_points = sorted(intersection_result.geoms,
+                                       key=lambda pt: intersection_segment.project(pt))
+
+                first_crossed_point = sorted_points[0]
+
+            elif intersection_result.geom_type == "Point":
+                first_crossed_point = intersection_result
+
+            else:
+                # Handle other unexpected cases (like no intersection, LineString, etc.)
+                first_crossed_point = None
+            return first_crossed_point
+
+        def check_full_inter_pts(intersection_result, current_well_path_section):
+            if isinstance(intersection_result, MultiPoint):
+                pts_1 = sorted(intersection_result.geoms,
+                             key=lambda pt: intersection_segment.project(pt))
+            elif intersection_result.geom_type == "Point":
+                pts_1 = [intersection_result]
+            else:
+                pts_1 = []
+
+            # Now get distances (normalized between 0 and 1)
+            line_length = intersection_segment.length
+            cut_distances = [0.0] + [intersection_segment.project(pt) / line_length for pt in pts_1] + [1.0]
+
+            # Slice line into segments between cut distances
+            segments = []
+            for i in range(len(cut_distances) - 1):
+                start_frac = cut_distances[i]
+                end_frac = cut_distances[i + 1]
+                seg = substring(intersection_segment, start_frac, end_frac, normalized=True)
+                segments.append(seg)
+
+            # Result: list of LineString segments
+            # for idx, s in enumerate(segments):
+            #     print(f"Segment {idx + 1}: {s}")
+            print(segments)
+            first_segment = segments[0]  # from earlier code
+            first_coords_set = set(first_segment.coords)
+
+            # 2. Create coordinate tuples from the DataFrame
+            all_coords = list(zip(current_well_path_section['e_offset_delta'], current_well_path_section['n_offset_delta']))
+
+            # 3. Filter OUT rows that are part of the first segment
+            mask = [pt not in first_coords_set for pt in all_coords]
+            everything_but_first = current_well_path_section[mask]
+            return everything_but_first
+            # Optional: reset index for convenience
+            # segment_df = segment_df.reset_index(drop=True)
+            # print(everything_but_first)
         well_paths_lst = [k for k, v in self.well_path_dict.items()]
-        all_plats_dict = original_all_plats_dict
+        all_plats_df = original_all_plats_df
         # well_path = self.well_path_dict[i].clearance_data
+        print('conc', current_plat_conc)
         result_coords = current_plat_coords[['x', 'y', 'side']].values.tolist()
         starter_pt = get_starter_pt(well_path.iloc[0], result_coords)
         starter_utm = well_path.iloc[0][['easting', 'northing']].values.tolist()
@@ -1353,73 +1544,93 @@ class SetupRelativeCoordsPage:
             lambda row: get_offset_added_delta(starter_pt[0], starter_pt[1], row['e_offset'], row['n_offset']), axis=1,
             result_type='expand'))
         well_path['rel_data_order'] = 99
+        current_well_path_section = copy.deepcopy(well_path)
         current_plat_coords_modified = [i[:2] for i in result_coords]
         current_polygon = Polygon(current_plat_coords_modified)
+        used_conc_sections = [current_plat_conc]
         counter = 2
         intersection_pt_current = Point(0, 0)
         while True:
-            print('counter', counter)
             polygon_plat = current_polygon
-            pts = [Point(x, y) for x, y in zip(well_path.e_offset_delta, well_path.n_offset_delta)]
-            mask = [polygon_plat.contains(pt) for pt in pts]
-            well_path.loc[mask, 'rel_data_order'] = counter - 1
-            used_well_path_df = well_path[well_path['rel_data_order'] == 99]
-            # print(used_well_path_df)
+            # pts = [Point(x, y) for x, y in zip(current_well_path_section.e_offset_delta, current_well_path_section.n_offset_delta)]
             intersection_segment = LineString(
-                list(zip(used_well_path_df['e_offset_delta'], used_well_path_df['n_offset_delta'])))
+                list(zip(current_well_path_section['e_offset_delta'], current_well_path_section['n_offset_delta'])))
             boundary = polygon_plat.exterior
             intersection_pt = intersection_segment.intersection(boundary)
-            intersection_pt = check_for_multipoint()
+            print(intersection_pt)
+            current_well_path_section = check_full_inter_pts(intersection_pt, current_well_path_section)
+            # print(current_well_path_section)
+            intersection_pt = check_intersection_pts(intersection_pt)
             intersection_pt_current = intersection_pt
+
+
+            # print('\n\ncounter', counter)
+            # pts = [Point(x, y) for x, y in zip(well_path.e_offset_delta, well_path.n_offset_delta)]
+            #
+            # mask = [polygon_plat.contains(pt) for pt in pts]
+            # well_path.loc[mask, 'rel_data_order'] = counter - 1
+            # used_well_path_df = well_path[well_path['rel_data_order'] == 99]
+            # lst_well_path = [tuple(i) for i in list(zip(well_path['e_offset_delta'], well_path['n_offset_delta']))]
+            #
+            # intersection_segment = LineString(
+            #     list(zip(used_well_path_df['e_offset_delta'], used_well_path_df['n_offset_delta'])))
+            # boundary = polygon_plat.exterior
+            # intersection_pt = intersection_segment.intersection(boundary)
+            # intersection_pt = check_intersection_pts(intersection_pt)
+            #
+            # intersection_pt_current = intersection_pt
             try:
                 dir_val, index = get_direction_sides()
             except (AttributeError, TypeError) as e:
-                print('errored', e)
-                all_plats_dict[['x_delta', 'y_delta']] = (
-                    all_plats_dict.apply(
+                all_plats_df[['x_delta', 'y_delta']] = (
+                    all_plats_df.apply(
                         lambda row: get_offset_added_delta(row['x'] * 0.3048, row['y'] * 0.3048, dx_start, dy_start),
                         axis=1,
                         result_type='expand'))
-                # self.graph_plats_and_well(all_plats_dict, list(zip(well_path.easting, well_path.northing)), title)
-
-                return all_plats_dict
+                # self.graph_plats_and_well(all_plats_df, list(zip(well_path.easting, well_path.northing)), title)
+                return all_plats_df
 
             next_plat_df = self.currently_used_plat_data[self.currently_used_plat_data['range'] == counter]
 
             try:
                 next_plat_conc = next_plat_df['conc'].iloc[0]
+                if next_plat_conc not in used_conc_sections:
+                    rewritten_coords = all_plats_df[all_plats_df['conc'] == next_plat_conc]
+                else:
+                    used_conc_sections = used_conc_sections.append(next_plat_conc)
+
+                    next_plat_coords_dict = all_plats_df[all_plats_df['conc'] == next_plat_conc]
+
+                    well_prox_boo = well_path_prox(intersection=intersection_pt, side_dict_all=next_plat_coords_dict,
+                                                   direction=dir_val)
+                    rewritten_coords = self.coords_stitcher(next_plat_coords_dict,
+                                                            all_plats_df[all_plats_df['conc'] == current_plat_conc],
+                                                            dir_val, well_prox_boo)
+                print(next_plat_conc)
             except IndexError as f:
+                print('broke here 2')
 
                 break
-            next_plat_coords_dict = all_plats_dict[all_plats_dict['conc'] == next_plat_conc]
 
-            well_prox_boo = well_path_prox(intersection=intersection_pt, side_dict_all=next_plat_coords_dict,
-                                           direction=dir_val)
-            rewritten_coords = self.coords_stitcher(next_plat_coords_dict,
-                                                    all_plats_dict[all_plats_dict['conc'] == current_plat_conc],
-                                                    dir_val, well_prox_boo)
             current_polygon = df_to_polygon(rewritten_coords)
             new_dict = pd.DataFrame(data=rewritten_coords.to_dict(orient='list'))
-
             try:
-                print('counter', counter)
-                all_plats_dict = update_original_dataframe(all_plats_dict, new_dict)
+                all_plats_df = update_original_dataframe(all_plats_df, new_dict)
                 counter += 1
                 current_plat_conc = next_plat_conc
             except ValueError as e:
-                all_plats_dict[['x_delta', 'y_delta']] = (
-                    all_plats_dict.apply(
+                print('broke here 3')
+                all_plats_df[['x_delta', 'y_delta']] = (
+                    all_plats_df.apply(
                         lambda row: get_offset_added_delta(row['x'] / 0.3048, row['y'] / 0.3048, starter_utm[0],
                                                            starter_utm[1]), axis=1,
                         result_type='expand'))
-                # break
-
-                return all_plats_dict
+                return all_plats_df
         return pd.DataFrame()
 
-    def run_plat_well_tracer(self, current_plat_coords, current_plat_conc, original_all_plats_dict):
+    def run_plat_well_tracer(self, current_plat_coords, current_plat_conc, original_all_plats_df):
         def get_direction_sides():
-            used_df = all_plats_dict[all_plats_dict['conc'] == current_plat_conc]
+            used_df = all_plats_df[all_plats_df['conc'] == current_plat_conc]
             grouped_df = used_df.groupby('side')
             dict_index = {'e': 2, 'w': 6, 'n': 0, 's': 4}
 
@@ -1548,20 +1759,22 @@ class SetupRelativeCoordsPage:
             return output_df
 
         well_paths_lst = [k for k, v in self.well_path_dict.items()]
-        all_plats_dict = original_all_plats_dict
-        for i in well_paths_lst:
-            tracer_output = self.main_tracer_process(current_plat_coords, current_plat_conc, original_all_plats_dict,
-                                                     self.well_path_dict[i].clearance_data, i)
-            if not tracer_output.empty:
-                transformed_df = transform_to_plat_format(tracer_output)
-                well_path_dropped = copy.copy(self.well_path_dict[i].clearance_data)
-                well_path_dropped = well_path_dropped.drop(['index_right',
-                                                            'Conc', 'label', 'FNL', 'FSL', 'FEL', 'FWL'], axis=1)
+        all_plats_df = original_all_plats_df
+        # for i in well_paths_lst:
 
-                clearance_process = ClearanceProcess(df_used=well_path_dropped, df_plat=transformed_df, bypass_db=True)
-                # clearance_process.load_relative_clearance(df_used=well_path_dropped, df_plat=transformed_df)
 
-                # pass
+        tracer_output = self.main_tracer_process(current_plat_coords, current_plat_conc, original_all_plats_df,
+                                                 self.well_path_dict['pln_df_true_dx'].clearance_data, 'pln_df_true_dx')
+        if not tracer_output.empty:
+            transformed_df = transform_to_plat_format(tracer_output)
+            well_path_dropped = copy.copy(self.well_path_dict['pln_df_true_dx'].clearance_data)
+            well_path_dropped = well_path_dropped.drop(['index_right',
+                                                        'Conc', 'label', 'FNL', 'FSL', 'FEL', 'FWL'], axis=1)
+
+            clearance_process = ClearanceProcess(df_used=well_path_dropped, df_plat=transformed_df, bypass_db=True)
+            # clearance_process.load_relative_clearance(df_used=well_path_dropped, df_plat=transformed_df)
+
+            # pass
             # well_path = self.well_path_dict[i].clearance_data
             # result_coords = current_plat_coords[['x', 'y', 'side']].values.tolist()
             # starter_pt = get_starter_pt(well_path.iloc[0], result_coords)
@@ -1587,34 +1800,34 @@ class SetupRelativeCoordsPage:
             #     try:
             #         dir_val, index = get_direction_sides()
             #     except (AttributeError, TypeError) as e:
-            #         all_plats_dict[['x_delta', 'y_delta']] = (
-            #             all_plats_dict.apply(lambda row: get_offset_added_delta(row['x']/0.3048, row['y']/0.3048, starter_utm[0], starter_utm[1]), axis=1,
+            #         all_plats_df[['x_delta', 'y_delta']] = (
+            #             all_plats_df.apply(lambda row: get_offset_added_delta(row['x']/0.3048, row['y']/0.3048, starter_utm[0], starter_utm[1]), axis=1,
             #                                   result_type='expand'))
             #         # break
-            #         return all_plats_dict
+            #         return all_plats_df
             #
             #     next_plat_df = self.currently_used_plat_data[self.currently_used_plat_data['range'] == counter]
             #     try:
             #         next_plat_conc = next_plat_df['conc'].iloc[0]
             #     except IndexError as f:
             #         break
-            #     next_plat_coords_dict = all_plats_dict[all_plats_dict['conc']==next_plat_conc]
+            #     next_plat_coords_dict = all_plats_df[all_plats_df['conc']==next_plat_conc]
             #
             #     well_prox_boo = well_path_prox(intersection = intersection_pt, side_dict_all=next_plat_coords_dict, direction=dir_val)
-            #     rewritten_coords = self.coords_stitcher(next_plat_coords_dict, all_plats_dict[all_plats_dict['conc']==current_plat_conc], dir_val, well_prox_boo)
+            #     rewritten_coords = self.coords_stitcher(next_plat_coords_dict, all_plats_df[all_plats_df['conc']==current_plat_conc], dir_val, well_prox_boo)
             #     current_polygon = df_to_polygon(rewritten_coords)
             #     new_dict = pd.DataFrame(data= rewritten_coords.to_dict(orient='list'))
             #
             #     try:
-            #         all_plats_dict = update_original_dataframe(all_plats_dict,new_dict)
+            #         all_plats_df = update_original_dataframe(all_plats_df,new_dict)
             #         counter += 1
             #         current_plat_conc = next_plat_conc
             #     except ValueError as e:
-            #         all_plats_dict[['x_delta', 'y_delta']] = (
-            #             all_plats_dict.apply(lambda row: get_offset_added_delta(row['x'] / 0.3048, row['y'] / 0.3048, starter_utm[0], starter_utm[1]), axis=1,
+            #         all_plats_df[['x_delta', 'y_delta']] = (
+            #             all_plats_df.apply(lambda row: get_offset_added_delta(row['x'] / 0.3048, row['y'] / 0.3048, starter_utm[0], starter_utm[1]), axis=1,
             #                                  result_type='expand'))
             #         # break
-            #         return all_plats_dict
+            #         return all_plats_df
 
         # for x, row in well_path.iterrows():
         #     polygon_plat = Polygon(current_plat_coords_modified)
@@ -1635,18 +1848,18 @@ class SetupRelativeCoordsPage:
         #             next_plat_df = self.currently_used_plat_data[self.currently_used_plat_data['range'] == counter]
         #
         #             next_plat_conc = next_plat_df['conc'].iloc[0]
-        #             next_plat_coords = all_plats_dict[next_plat_conc]
+        #             next_plat_coords = all_plats_df[next_plat_conc]
         #             self.stitcher_process(next_plat_df, current_plat_df, next_plat_coords, current_plat_coords, next_plat_conc, dir_val)
         #             counter += 1
         #         except IndexError as e:
         #             pass
         # for i in used_plats:
-        #     used_poly = all_plats_dict[i]
+        #     used_poly = all_plats_df[i]
         #     if Polygon(used_poly).contains(Point(used_pt)):
         #         well_path.at[x, 'rel_plat_conc'] = conc
         #     else:
         #         pass
-        # for k, v in all_plats_dict.items():
+        # for k, v in all_plats_df.items():
         #     if Polygon(v).contains(Point(used_pt)):
         #         well_path.at[x, 'rel_plat_conc'] = conc
         #     else:
@@ -1657,7 +1870,314 @@ class SetupRelativeCoordsPage:
     #     new_lst = [[i + [k] for i in v] for k, v in used_dict.items()]
     #
     #     return new_lst
-
+    # def main_tracer_process_1(self, current_plat_coords, current_plat_conc, original_all_plats_df, well_path, title):
+    #     """
+    #     Enhanced well path tracer that handles section re-entry scenarios.
+    #
+    #     Supports wells that hook back into previously visited sections before continuing
+    #     in different directions. Maintains coordinate integrity and proper stitching
+    #     for complex well path geometries.
+    #     """
+    #
+    #     def get_offset_added_delta(x, y, dx, dy):
+    #         # return (x + float(dx)) * 0.3048, (y + float(dy)) * 0.3048
+    #
+    #         return x + float(dx), y + float(dy)
+    #
+    #     def update_original_dataframe(df_o, df_new):
+    #         df2 = df_o.set_index(['conc', 'side', 'point_i'])
+    #         repl2 = df_new.set_index(['conc', 'side', 'point_i'])
+    #
+    #         # 2) restrict repl2 to just the columns you want to overwrite
+    #         #    (here: 'x' and 'y')
+    #         repl2 = repl2[['x', 'y']]
+    #
+    #         # 3) update df2 in place
+    #         df2.update(repl2)
+    #
+    #         # 4) (optionally) drop the index back to columns
+    #         df_new = df2.reset_index()
+    #         return df_new
+    #
+    #     def df_to_polygon(df):
+    #         # all_cells = np.ravel(df.to_numpy(), order='F').tolist()
+    #         all_cells = df[['x', 'y']].values.tolist()
+    #         coords_unique = [list(t) for t in dict.fromkeys(map(tuple, all_cells))]
+    #
+    #         ring = [tuple(pt) for pt in coords_unique]
+    #         return Polygon(ring)
+    #
+    #     def get_direction_sides():
+    #         """Get direction based on intersection point and polygon bounds."""
+    #         used_df = all_plats_df[all_plats_df['conc'] == current_plat_conc]
+    #         xMin, xMax, yMin, yMax = df_to_polygon(used_df).bounds
+    #
+    #         try:
+    #             dir_val, index = get_direction((intersection_pt.x, intersection_pt.y), xMin, xMax, yMin, yMax)
+    #             return dir_val, index
+    #         except (AttributeError, TypeError):
+    #             return None, None
+    #
+    #     def check_for_multipoint():
+    #         """Handle multiple intersection points, selecting the appropriate one."""
+    #         if hasattr(intersection_pt, 'geoms') and len(intersection_pt.geoms) > 0:
+    #             return intersection_pt.geoms[0]
+    #         else:
+    #             for geom in intersection_pt.geoms:
+    #                 if not geom.equals(intersection_pt_current):
+    #                     return geom
+    #         return intersection_pt
+    #
+    #     def handle_section_reentry(section_conc, intersection_pt, entry_direction):
+    #         """
+    #         Handle well re-entering a previously visited section.
+    #
+    #         Args:
+    #             section_conc: Section concentration identifier
+    #             intersection_pt: Point where well re-enters section
+    #             entry_direction: Direction of entry
+    #
+    #         Returns:
+    #             Processed coordinates for the re-entered section
+    #         """
+    #         # Get the original processed coordinates for this section
+    #         if section_conc in visited_sections:
+    #             original_coords = visited_sections[section_conc]['last_coords'].copy()
+    #             previous_entries = visited_sections[section_conc]['entry_points']
+    #
+    #             # Check if this is a new entry point
+    #             entry_point_key = f"{intersection_pt.x:.2f}_{intersection_pt.y:.2f}_{entry_direction}"
+    #
+    #             if entry_point_key not in previous_entries:
+    #                 # New entry point - may need coordinate adjustment
+    #                 visited_sections[section_conc]['entry_points'].append(entry_point_key)
+    #                 visited_sections[section_conc]['visit_count'] += 1
+    #
+    #                 # Determine if we need to re-stitch based on new entry characteristics
+    #                 next_coords_df = all_plats_df[all_plats_df['conc'] == section_conc]
+    #                 well_prox_boo = well_path_prox(intersection=intersection_pt,
+    #                                                side_dict_all=next_coords_df,
+    #                                                direction=entry_direction)
+    #
+    #                 # Re-stitch coordinates for the new entry scenario
+    #                 restitched_coords = self.coords_stitcher(
+    #                     next_coords_df,
+    #                     all_plats_df[all_plats_df['conc'] == current_plat_conc],
+    #                     entry_direction,
+    #                     well_prox_boo
+    #                 )
+    #
+    #                 # Update stored coordinates
+    #                 visited_sections[section_conc]['last_coords'] = restitched_coords
+    #                 return restitched_coords
+    #             else:
+    #                 # Same entry point - use existing coordinates but increment visit
+    #                 visited_sections[section_conc]['visit_count'] += 1
+    #                 return original_coords
+    #         else:
+    #             # This shouldn't happen, but handle gracefully
+    #             return handle_new_section(section_conc, intersection_pt, entry_direction)
+    #
+    #     def handle_new_section(section_conc, intersection_pt, entry_direction):
+    #         """
+    #         Handle well entering a new section for the first time.
+    #
+    #         Args:
+    #             section_conc: Section concentration identifier
+    #             intersection_pt: Point where well enters section
+    #             entry_direction: Direction of entry
+    #
+    #         Returns:
+    #             Processed coordinates for the new section
+    #         """
+    #         next_coords_df = all_plats_df[all_plats_df['conc'] == section_conc]
+    #
+    #         well_prox_boo = well_path_prox(intersection=intersection_pt,
+    #                                        side_dict_all=next_coords_df,
+    #                                        direction=entry_direction)
+    #
+    #         rewritten_coords = self.coords_stitcher(
+    #             next_coords_df,
+    #             all_plats_df[all_plats_df['conc'] == current_plat_conc],
+    #             entry_direction,
+    #             well_prox_boo
+    #         )
+    #
+    #         # Track this as a new section visit
+    #         entry_point_key = f"{intersection_pt.x:.2f}_{intersection_pt.y:.2f}_{entry_direction}"
+    #         visited_sections[section_conc] = {
+    #             'visit_count': 1,
+    #             'last_coords': rewritten_coords,
+    #             'entry_points': [entry_point_key],
+    #             'first_entry_range': counter
+    #         }
+    #
+    #         return rewritten_coords
+    #
+    #     def get_well_path_segment_for_range(current_range):
+    #         """
+    #         Get the well path segment that should be processed for the current range.
+    #
+    #         This ensures we only process the portion of the well path that belongs
+    #         to the current range in the user-defined sequence.
+    #         """
+    #         # Mark points that haven't been assigned to any range yet
+    #         unprocessed_mask = well_path['rel_data_order'] == 99
+    #
+    #         if not unprocessed_mask.any():
+    #             return well_path.iloc[0:0]  # Return empty DataFrame
+    #
+    #         return well_path[unprocessed_mask]
+    #
+    #     # Initialize section visit tracking
+    #     visited_sections = {}  # {conc: {'visit_count': int, 'last_coords': df, 'entry_points': [], 'first_entry_range': int}}
+    #
+    #     # Initialize all_plats_df as DataFrame instead of dict for consistency
+    #     all_plats_df = original_all_plats_df.copy()
+    #
+    #     # Set up initial well path processing
+    #     result_coords = current_plat_coords[['x', 'y', 'side']].values.tolist()
+    #     starter_pt = get_starter_pt(well_path.iloc[0], result_coords)
+    #     starter_utm = well_path.iloc[0][['easting', 'northing']].values.tolist()
+    #
+    #     # Calculate offset deltas for the entire well path
+    #     dx_start, dy_start = (float(well_path['easting'].iloc[0])) - starter_pt[0] * 0.3048, (
+    #         float(well_path['northing'].iloc[0])) - starter_pt[1] * 0.3048
+    #
+    #     well_path[['e_offset_delta', 'n_offset_delta']] = (well_path.apply(
+    #         lambda row: get_offset_added_delta(starter_pt[0], starter_pt[1], row['e_offset'], row['n_offset']),
+    #         axis=1, result_type='expand'))
+    #
+    #     # Initialize well path tracking
+    #     well_path['rel_data_order'] = 99  # 99 means unprocessed
+    #     well_path['section_conc'] = ''  # Track which section each point belongs to
+    #     well_path['range_order'] = 0  # Track which range in sequence
+    #
+    #     # Set up initial polygon and tracking variables
+    #     current_plat_coords_modified = [i[:2] for i in result_coords]
+    #     current_polygon = Polygon(current_plat_coords_modified)
+    #     counter = 2
+    #     intersection_pt_current = Point(0, 0)
+    #
+    #     # Track the first section as visited
+    #     visited_sections[current_plat_conc] = {
+    #         'visit_count': 1,
+    #         'last_coords': current_plat_coords,
+    #         'entry_points': ['initial_entry'],
+    #         'first_entry_range': 1
+    #     }
+    #
+    #     # Main processing loop
+    #     while True:
+    #         print(f'Processing range {counter}')
+    #
+    #         # Get current polygon for intersection testing
+    #         polygon_plat = current_polygon
+    #
+    #         # Get well path segment for current range processing
+    #         used_well_path_df = get_well_path_segment_for_range(counter)
+    #
+    #         if used_well_path_df.empty:
+    #             print("No more well path segments to process")
+    #             break
+    #
+    #         # Mark points inside current polygon
+    #         pts = [Point(x, y) for x, y in zip(used_well_path_df.e_offset_delta, used_well_path_df.n_offset_delta)]
+    #         mask = [polygon_plat.contains(pt) for pt in pts]
+    #
+    #         # Update well path assignments for points in current polygon
+    #         indices_in_polygon = used_well_path_df.index[mask]
+    #         well_path.loc[indices_in_polygon, 'rel_data_order'] = counter - 1
+    #         well_path.loc[indices_in_polygon, 'section_conc'] = current_plat_conc
+    #         well_path.loc[indices_in_polygon, 'range_order'] = counter - 1
+    #
+    #         # Create intersection segment from remaining unprocessed well path
+    #         remaining_well_path = well_path[well_path['rel_data_order'] == 99]
+    #
+    #         if remaining_well_path.empty:
+    #             print("All well path points have been processed")
+    #             break
+    #
+    #         intersection_segment = LineString(
+    #             list(zip(remaining_well_path['e_offset_delta'], remaining_well_path['n_offset_delta'])))
+    #
+    #         # Find intersection with polygon boundary
+    #         boundary = polygon_plat.exterior
+    #         intersection_pt = intersection_segment.intersection(boundary)
+    #         intersection_pt = check_for_multipoint()
+    #         intersection_pt_current = intersection_pt
+    #
+    #         # Get direction of well exit
+    #         try:
+    #             dir_val, index = get_direction_sides()
+    #             if dir_val is None:
+    #                 print("Could not determine exit direction")
+    #                 break
+    #         except (AttributeError, TypeError) as e:
+    #             print(f'Error determining direction: {e}')
+    #             # Apply final coordinate transformation and exit
+    #             all_plats_df[['x_delta', 'y_delta']] = (
+    #                 all_plats_df.apply(
+    #                     lambda row: get_offset_added_delta(row['x'] * 0.3048, row['y'] * 0.3048, dx_start, dy_start),
+    #                     axis=1, result_type='expand'))
+    #             return all_plats_df
+    #
+    #         # Get next section from user-defined sequence
+    #         next_plat_df = self.currently_used_plat_data[self.currently_used_plat_data['range'] == counter]
+    #
+    #         try:
+    #             next_plat_conc = next_plat_df['conc'].iloc[0]
+    #         except IndexError:
+    #             print(f"No section defined for range {counter}")
+    #             break
+    #
+    #         # Check if this is a re-entry to a previously visited section
+    #         if next_plat_conc in visited_sections:
+    #             print(f"Re-entering section {next_plat_conc} (visit #{visited_sections[next_plat_conc]['visit_count'] + 1})")
+    #             rewritten_coords = handle_section_reentry(next_plat_conc, intersection_pt, dir_val)
+    #         else:
+    #             print(f"Entering new section {next_plat_conc}")
+    #             rewritten_coords = handle_new_section(next_plat_conc, intersection_pt, dir_val)
+    #
+    #         # Update polygon for next iteration
+    #         current_polygon = df_to_polygon(rewritten_coords)
+    #         new_dict = pd.DataFrame(data=rewritten_coords.to_dict(orient='list'))
+    #
+    #         try:
+    #             print(f'Successfully processed range {counter}')
+    #             all_plats_df = update_original_dataframe(all_plats_df, new_dict)
+    #             counter += 1
+    #             current_plat_conc = next_plat_conc
+    #         except ValueError as e:
+    #             print(f'Error updating dataframe for range {counter}: {e}')
+    #             # Apply final coordinate transformation and exit
+    #             all_plats_df[['x_delta', 'y_delta']] = (
+    #                 all_plats_df.apply(
+    #                     lambda row: get_offset_added_delta(row['x'] / 0.3048, row['y'] / 0.3048, starter_utm[0], starter_utm[1]),
+    #                     axis=1, result_type='expand'))
+    #             return all_plats_df
+    #
+    #     # Final processing: Apply coordinate transformations and return results
+    #     try:
+    #         all_plats_df[['x_delta', 'y_delta']] = (
+    #             all_plats_df.apply(
+    #                 lambda row: get_offset_added_delta(row['x'] * 0.3048, row['y'] * 0.3048, dx_start, dy_start),
+    #                 axis=1, result_type='expand'))
+    #
+    #         # Add visit summary to well_path for debugging/analysis
+    #         well_path['section_visit_summary'] = well_path.apply(
+    #             lambda row: f"Range_{row['range_order']}_Section_{row['section_conc']}" if row['section_conc'] else "Unprocessed",
+    #             axis=1
+    #         )
+    #
+    #         print(f"Processing complete. Sections visited: {list(visited_sections.keys())}")
+    #         print(f"Total section visits: {sum(v['visit_count'] for v in visited_sections.values())}")
+    #
+    #         return all_plats_df
+    #
+    #     except Exception as e:
+    #         print(f'Error in final coordinate transformation: {e}')
+    #         return pd.DataFrame()  # Return empty DataFrame on error
     def coords_stitcher(self, next_coords_df, current_coords_df, direction, direction_boo):
         def get_point_indices():
             """
@@ -1721,16 +2241,16 @@ class SetupRelativeCoordsPage:
             start_row = (starting_pts % 5)
 
             current_point = \
-            current_coords_df[(current_coords_df['side'] == start_col) & (current_coords_df['point_i'] == start_row)][
-                ['x', 'y']].iloc[0].values.tolist()
+                current_coords_df[(current_coords_df['side'] == start_col) & (current_coords_df['point_i'] == start_row)][
+                    ['x', 'y']].iloc[0].values.tolist()
             # current_point = current_coords_df.loc[start_row, start_col]
             # 2. Get location for the matched point in next_coords_df
             matched_col = column_map[matched_pt // 5]
             matched_row = matched_pt % 5
 
             next_point = \
-            next_coords_df[(next_coords_df['side'] == matched_col) & (next_coords_df['point_i'] == matched_row)][
-                ['x', 'y']].iloc[0].values.tolist()
+                next_coords_df[(next_coords_df['side'] == matched_col) & (next_coords_df['point_i'] == matched_row)][
+                    ['x', 'y']].iloc[0].values.tolist()
             # next_point = next_coords_df.loc[matched_row, matched_col]
 
             # 3. Perform the calculation
@@ -2177,7 +2697,6 @@ class SetupRelativeCoordsPage:
     #     pass
 
     def graph_plat_and_well(self, poly, well):
-
         x, y = poly.exterior.xy
         x_coords_1 = [point[0] for point in well]
         y_coords_1 = [point[1] for point in well]
