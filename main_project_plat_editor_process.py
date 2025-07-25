@@ -438,40 +438,39 @@ class SetupRelativeCoordsPage:
         self.setup_combo_boxes(all_rel_surveys)
         self.setup_section_combo_box()
 
-    def enhanced_main_tracer_process(self, current_plat_coords, current_plat_conc, original_all_plats_df, clearance_data):
-        """Enhanced version of your main_tracer_process that handles re-entries"""
-
-        # Get inputs from your existing data structures
-        # current_plat_coords = self.current_plat_coords
-        # current_plat_conc = self.current_plat_conc
-        # original_all_plats_df = self.original_all_plats_df
-        clearance_data = self.well_path_dict['pln_df_true_dx'].clearance_data
-
-        # Initialize the tracer
-        tracer = WellPathTracer(tolerance=0.1)
-
-        # Extract well path from clearance data
-        if clearance_data is not None and not clearance_data.empty:
-            # Assuming clearance_data has columns like 'x', 'y' or similar
-            # Adjust column names based on your actual data structure
-            well_coords = []
-            for _, row in clearance_data.iterrows():
-                # Adjust these column names to match your data
-                x = row.get('x', row.get('easting', row.get('X')))
-                y = row.get('y', row.get('northing', row.get('Y')))
-                well_coords.append((x, y))
-
-            well_path = LineString(well_coords)
-        else:
-            raise ValueError("No clearance data available for well path")
-
-        # Trace the path through all sections
-        result = tracer.trace_well_path(well_path, original_all_plats_df)
-
-        # Update your data structures with the results
-        self.process_tracer_results(result)
-        print('result')
-        return result
+    # def enhanced_main_tracer_process(self, current_plat_coords, current_plat_conc, original_all_plats_df, clearance_data):
+    #     """Enhanced version of your main_tracer_process that handles re-entries"""
+    #
+    #     # Get inputs from your existing data structures
+    #     # current_plat_coords = self.current_plat_coords
+    #     # current_plat_conc = self.current_plat_conc
+    #     # original_all_plats_df = self.original_all_plats_df
+    #     clearance_data = self.well_path_dict['pln_df_true_dx'].clearance_data
+    #
+    #     # Initialize the tracer
+    #     tracer = WellPathTracer(tolerance=0.1)
+    #
+    #     # Extract well path from clearance data
+    #     if clearance_data is not None and not clearance_data.empty:
+    #         # Assuming clearance_data has columns like 'x', 'y' or similar
+    #         # Adjust column names based on your actual data structure
+    #         well_coords = []
+    #         for _, row in clearance_data.iterrows():
+    #             # Adjust these column names to match your data
+    #             x = row.get('x', row.get('easting', row.get('X')))
+    #             y = row.get('y', row.get('northing', row.get('Y')))
+    #             well_coords.append((x, y))
+    #
+    #         well_path = LineString(well_coords)
+    #     else:
+    #         raise ValueError("No clearance data available for well path")
+    #
+    #     # Trace the path through all sections
+    #     result = tracer.trace_well_path(well_path, original_all_plats_df)
+    #
+    #     # Update your data structures with the results
+    #     self.process_tracer_results(result)
+    #     return result
 
     def process_tracer_results(self, tracer_result):
         """Process the tracer results and update your system's data structures"""
@@ -900,8 +899,8 @@ class SetupRelativeCoordsPage:
         output_polygons = self.run_plat_well_tracer(current_plat_coords=plat_df[plat_df['conc'] == plat_df_conc[0]],
                                                     current_plat_conc=plat_df_conc[0], original_all_plats_df=plat_df)
         # ClearanceProcess(df, plat_df)
-        print("OUTPUT")
-        print(output_polygons)
+        # print("OUTPUT")
+        # print(output_polygons)
         # output_polygons = self.run_plat_well_tracer_4(current_plat_coords=result[all_conc_codes[0]], current_plat_conc=all_conc_codes[0], all_plats_df=result)
 
     def grapher(self, data):
@@ -1357,10 +1356,18 @@ class SetupRelativeCoordsPage:
     #         current_plat_conc = next_plat_conc
 
     def main_tracer_process(self, current_plat_coords, current_plat_conc, original_all_plats_df, well_path, title):
-        # print(current_plat_coords)
-        # print(current_plat_conc)
-        # print(original_all_plats_df)
-        # print(well_path)
+
+        # result = main_tracer_process(
+        #     current_plat_coords=current_plat_coords,
+        #     clearance_data=well_path,
+        #     visualize=True,
+        #     validate=True
+        # )
+
+        # Access results
+        # visits = result['visits']  # List of all section visits
+        # summary = result['summary']  # DataFrame with traversal summary
+        # visit_counts = result['visit_counts']  # Count of visits per section
 
         def get_direction_sides():
             used_df = all_plats_df[all_plats_df['conc'] == current_plat_conc]
@@ -1369,8 +1376,8 @@ class SetupRelativeCoordsPage:
             for r, group_df in grouped_df:
                 line_string_side = Polygon(group_df[['x', 'y']].values.tolist())
                 on_line3 = intersection_pt.within(line_string_side.buffer(1e-8))
-                if on_line3:
-                    print(r)
+                # if on_line3:
+                #     print(r)
             for r, group_df in grouped_df:
                 line_string_side = Polygon(group_df[['x', 'y']].values.tolist())
                 on_line3 = intersection_pt.within(line_string_side.buffer(1e-8))
@@ -1514,10 +1521,7 @@ class SetupRelativeCoordsPage:
                 seg = substring(intersection_segment, start_frac, end_frac, normalized=True)
                 segments.append(seg)
 
-            # Result: list of LineString segments
-            # for idx, s in enumerate(segments):
-            #     print(f"Segment {idx + 1}: {s}")
-            print(segments)
+
             first_segment = segments[0]  # from earlier code
             first_coords_set = set(first_segment.coords)
 
@@ -1530,11 +1534,9 @@ class SetupRelativeCoordsPage:
             return everything_but_first
             # Optional: reset index for convenience
             # segment_df = segment_df.reset_index(drop=True)
-            # print(everything_but_first)
         well_paths_lst = [k for k, v in self.well_path_dict.items()]
         all_plats_df = original_all_plats_df
         # well_path = self.well_path_dict[i].clearance_data
-        print('conc', current_plat_conc)
         result_coords = current_plat_coords[['x', 'y', 'side']].values.tolist()
         starter_pt = get_starter_pt(well_path.iloc[0], result_coords)
         starter_utm = well_path.iloc[0][['easting', 'northing']].values.tolist()
@@ -1557,14 +1559,11 @@ class SetupRelativeCoordsPage:
                 list(zip(current_well_path_section['e_offset_delta'], current_well_path_section['n_offset_delta'])))
             boundary = polygon_plat.exterior
             intersection_pt = intersection_segment.intersection(boundary)
-            print(intersection_pt)
             current_well_path_section = check_full_inter_pts(intersection_pt, current_well_path_section)
-            # print(current_well_path_section)
             intersection_pt = check_intersection_pts(intersection_pt)
             intersection_pt_current = intersection_pt
 
 
-            # print('\n\ncounter', counter)
             # pts = [Point(x, y) for x, y in zip(well_path.e_offset_delta, well_path.n_offset_delta)]
             #
             # mask = [polygon_plat.contains(pt) for pt in pts]
@@ -1606,7 +1605,6 @@ class SetupRelativeCoordsPage:
                     rewritten_coords = self.coords_stitcher(next_plat_coords_dict,
                                                             all_plats_df[all_plats_df['conc'] == current_plat_conc],
                                                             dir_val, well_prox_boo)
-                print(next_plat_conc)
             except IndexError as f:
                 print('broke here 2')
 
@@ -1765,6 +1763,21 @@ class SetupRelativeCoordsPage:
 
         tracer_output = self.main_tracer_process(current_plat_coords, current_plat_conc, original_all_plats_df,
                                                  self.well_path_dict['pln_df_true_dx'].clearance_data, 'pln_df_true_dx')
+
+        result = enhanced_main_tracer_process(current_plat_coords, current_plat_conc,
+                                              original_all_plats_df, clearance_data)
+
+        # Handle missing section alerts
+        if result.missing_section_alerts:
+            for i, alert in enumerate(result.missing_section_alerts):
+                next_tab_num = 2 + i  # tab_rel_2, tab_rel_3, etc.
+
+                print(f"⚠️  Add section in tab_rel_{next_tab_num}:")
+                print(f"   Location: ({alert.suggested_location.x:.0f}, {alert.suggested_location.y:.0f})")
+                print(f"   Confidence: {alert.confidence_score:.2f}")
+                print(f"   Recommended Action: {alert.recommended_action}")
+
+
         if not tracer_output.empty:
             transformed_df = transform_to_plat_format(tracer_output)
             well_path_dropped = copy.copy(self.well_path_dict['pln_df_true_dx'].clearance_data)
