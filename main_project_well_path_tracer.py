@@ -16,7 +16,6 @@ from PyQt5.QtGui import QStandardItemModel, QStandardItem
 import pandas as pd
 from shapely.geometry import Polygon
 import numpy as np
-import ModuleAgnostic
 import regex as re
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas

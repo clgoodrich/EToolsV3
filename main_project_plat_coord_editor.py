@@ -108,7 +108,6 @@ class PlatCoordEditor:
 
             table_wid = getattr(self.ui, f"plat_table_coords_{i + 1}")
             table_wid.blockSignals(False)
-        ma.search_db(r'C:\Work\Databases\Board_DB_Plss_Sections.db')
         # path_used_db = r'C:\Work\Databases'
         # apd_data_dir = os.path.join(path_used_db, 'Board_DB_Plss_Sections.db')
     def delete_selected_rows(self, table_index):

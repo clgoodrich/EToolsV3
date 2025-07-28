@@ -428,6 +428,20 @@ class SurveyImporter:
             return md_inc_azi_found, set(page_lst_found), inc_azi_lst_found
 
         def grouper_process():
+            def grouper(iterable, val):
+                prev = None
+                group = []
+                for item in iterable:
+                    if not prev or item - prev <= val:
+
+                        group.append(item)
+                    else:
+                        yield group
+                        group = [item]
+                    prev = item
+                if group:
+                    yield group
+
             def find_corresponding_data(grouper, lst, checker):
                 def find_closest(val):
                     return min(flat_grouper, key=lambda x: abs(x - val))
@@ -481,8 +495,8 @@ class SurveyImporter:
                              range(len(parsed_data_used[i]))]
                 group_lst_y = [st.mean([parsed_data_used[i][j][1], parsed_data_used[i][j][3]]) for j in
                                range(len(parsed_data_used[i]))]
-                grouper_func = [j for i, j in dict(enumerate(ma.grouper(sorted(group_lst), 3), 1)).items()]
-                grouper_func_y = [j for i, j in dict(enumerate(ma.grouper(sorted(group_lst_y), 2), 1)).items()]
+                grouper_func = [j for i, j in dict(enumerate(grouper(sorted(group_lst), 3), 1)).items()]
+                grouper_func_y = [j for i, j in dict(enumerate(grouper(sorted(group_lst_y), 2), 1)).items()]
                 grouper_full_data = find_corresponding_data(grouper_func, parsed_data_used[i], 'x_avg')
                 grouper_full_data_y = find_corresponding_data(grouper_func_y, parsed_data_used[i], 'y_avg')
                 grouper_full_data_y = sorted(grouper_full_data_y, key=lambda x: x[0][1], reverse=True)

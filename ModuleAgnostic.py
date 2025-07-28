@@ -525,8 +525,13 @@ def concCodeToLabel(data):
 #     label = "".join(label)
 #     return label
 
+import sys
+import os
+sys.path.append(os.path.dirname(__file__))
+from file_helper import get_board_db_path
+
 def clearDatabaseOfDupes():
-    conn = sqlite3.connect('Board_DB.db')
+    conn = sqlite3.connect(get_board_db_path())
 
     # Read data from the table into a Pandas DataFrame
     df = pd.read_sql('SELECT * FROM WellInfo', conn)
@@ -553,8 +558,10 @@ def clearDatabaseOfDupes():
     print('done')
 
 
+from file_helper import get_dx_sample_path
+
 def createFileGDB(plat_df, all_plats_adjacent, base_dx_df_planned_true):
-    conn_sample = sqlite3.connect('DX_sample.db')
+    conn_sample = sqlite3.connect(get_dx_sample_path())
     conn_sample.execute('DROP TABLE IF EXISTS PlatDF')
     conn_sample.execute('DROP TABLE IF EXISTS PlatAdj')
     conn_sample.execute('DROP TABLE IF EXISTS DX')

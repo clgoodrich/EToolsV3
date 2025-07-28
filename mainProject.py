@@ -525,7 +525,7 @@ class ETools(QMainWindow):
         # 4304757090
         # 4304757728
         #4304757633
-        self.ui.well_api_val.setText('4301354659')
+        # self.ui.well_api_val.setText('4301354659')
         self.button_group = QButtonGroup(self.ui.survey_type_widget)
         self.button_group.setExclusive(True)
         self.clearer = UltraFastClearer(self, self.ui.well_api_val)
@@ -545,7 +545,7 @@ class ETools(QMainWindow):
         self.ui.load_as_drilled_survey_box.clicked.connect(lambda: self.press_new_survey_button('drilled'))
         self.ui.load_planned_survey_box.clicked.connect(lambda: self.press_new_survey_button('planned'))
         self.ui.data_return_box.setOpenLinks(False)
-        self.run_api_when_entered()
+        # self.run_api_when_entered()
 
     def open_dialog_new_row(self):
         dialog = InputDialog(None)  # Using None as parent
@@ -725,7 +725,7 @@ class ETools(QMainWindow):
         self.api_val = api_val
         self.lateral = lateral_name
         self.retrieve_well_parameters()
-        self.process_when_dx_button_pushed()
+        # self.process_when_dx_button_pushed()
         # self.api_loaded()
 
 
@@ -1644,7 +1644,6 @@ if __name__ == "__main__":
 
     app = QApplication(sys.argv)
     # w = EngineeringTools()
-    w = ETools()
-    w.show()
+        w.show()
     sys.excepthook = except_hook
     sys.exit(app.exec_())
