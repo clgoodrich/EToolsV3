@@ -25,7 +25,7 @@ collections.Iterable = collections.abc.Iterable
 collections.Mapping = collections.abc.Mapping
 collections.MutableSet = collections.abc.MutableSet
 collections.MutableMapping = collections.abc.MutableMapping
-from WCR import *
+# from WCR import *
 from PyQt5.QtWidgets import QApplication, QMainWindow, QTableWidgetItem, QApplication, QWidget, QVBoxLayout, \
     QPushButton, QRadioButton, QButtonGroup, QMessageBox, QLabel, QVBoxLayout, QScrollArea
 import ModuleAgnostic as ma

@@ -1644,6 +1644,7 @@ if __name__ == "__main__":
 
     app = QApplication(sys.argv)
     # w = EngineeringTools()
-        w.show()
+    w = ETools()
+    w.show()
     sys.excepthook = except_hook
     sys.exit(app.exec_())
