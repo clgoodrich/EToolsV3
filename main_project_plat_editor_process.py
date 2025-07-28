@@ -1,3 +1,5 @@
+import traceback
+
 from shapely.ops import substring
 import copy
 import itertools
@@ -22,6 +24,7 @@ from shapely.geometry import Point, LineString, Polygon, MultiPoint
 from shapely.geometry.base import BaseGeometry
 import operator
 from main_project_clearance import ClearanceProcess
+from main_project_well_path_tracer import tracer_process
 
 
 def decimal_converter(side, deg, minutes, sec, dir_val):
@@ -438,130 +441,6 @@ class SetupRelativeCoordsPage:
         self.setup_combo_boxes(all_rel_surveys)
         self.setup_section_combo_box()
 
-    # def enhanced_main_tracer_process(self, current_plat_coords, current_plat_conc, original_all_plats_df, clearance_data):
-    #     """Enhanced version of your main_tracer_process that handles re-entries"""
-    #
-    #     # Get inputs from your existing data structures
-    #     # current_plat_coords = self.current_plat_coords
-    #     # current_plat_conc = self.current_plat_conc
-    #     # original_all_plats_df = self.original_all_plats_df
-    #     clearance_data = self.well_path_dict['pln_df_true_dx'].clearance_data
-    #
-    #     # Initialize the tracer
-    #     tracer = WellPathTracer(tolerance=0.1)
-    #
-    #     # Extract well path from clearance data
-    #     if clearance_data is not None and not clearance_data.empty:
-    #         # Assuming clearance_data has columns like 'x', 'y' or similar
-    #         # Adjust column names based on your actual data structure
-    #         well_coords = []
-    #         for _, row in clearance_data.iterrows():
-    #             # Adjust these column names to match your data
-    #             x = row.get('x', row.get('easting', row.get('X')))
-    #             y = row.get('y', row.get('northing', row.get('Y')))
-    #             well_coords.append((x, y))
-    #
-    #         well_path = LineString(well_coords)
-    #     else:
-    #         raise ValueError("No clearance data available for well path")
-    #
-    #     # Trace the path through all sections
-    #     result = tracer.trace_well_path(well_path, original_all_plats_df)
-    #
-    #     # Update your data structures with the results
-    #     self.process_tracer_results(result)
-    #     return result
-
-    def process_tracer_results(self, tracer_result):
-        """Process the tracer results and update your system's data structures"""
-
-        # Example: Update section traversal information
-        for visit in tracer_result.visits:
-            section_id = visit.section_id
-            visit_num = visit.visit_number
-
-            # Store visit information in your existing structures
-            # This is an example - adapt to your actual data model
-            if not hasattr(self, 'section_visits'):
-                self.section_visits = {}
-
-            if section_id not in self.section_visits:
-                self.section_visits[section_id] = []
-
-            self.section_visits[section_id].append({
-                'visit_number': visit_num,
-                'entry_point': (visit.entry_point.x, visit.entry_point.y) if visit.entry_point else None,
-                'exit_point': (visit.exit_point.x, visit.exit_point.y) if visit.exit_point else None,
-                'path_length': visit.path_segment.length,
-                'timestamp': visit.timestamp
-            })
-
-        # Generate report for UI
-        print(self.generate_traversal_report(tracer_result))
-
-    def generate_traversal_report(self, tracer_result):
-        """Generate a report for display in the UI"""
-        report_lines = []
-
-        # Summary
-        total_sections = len(tracer_result.sections_visited)
-        total_visits = sum(tracer_result.sections_visited.values())
-
-        report_lines.append(f"Well Path Analysis Summary")
-        report_lines.append(f"Total sections traversed: {total_sections}")
-        report_lines.append(f"Total section visits: {total_visits}")
-        report_lines.append("")
-
-        # Detailed traversal
-        report_lines.append("Detailed Traversal Path:")
-        for i, visit in enumerate(tracer_result.visits):
-            if visit.visit_number > 1:
-                report_lines.append(f"{i + 1}. RE-ENTERING Section {visit.section_id} (Visit #{visit.visit_number})")
-            else:
-                report_lines.append(f"{i + 1}. Section {visit.section_id}")
-
-            if visit.entry_point:
-                report_lines.append(f"   Entry: ({visit.entry_point.x:.2f}, {visit.entry_point.y:.2f})")
-            if visit.exit_point:
-                report_lines.append(f"   Exit: ({visit.exit_point.x:.2f}, {visit.exit_point.y:.2f})")
-            report_lines.append(f"   Distance: {visit.path_segment.length:.2f} units")
-
-        # Sections with multiple visits
-        report_lines.append("")
-        report_lines.append("Sections with Multiple Visits:")
-        for section_id, count in tracer_result.sections_visited.items():
-            if count > 1:
-                report_lines.append(f"  - {section_id}: {count} visits")
-
-        return "\n".join(report_lines)
-
-    # Example: Handling user input for manual section addition
-    def add_section_with_reentry_info(self, section_data, expects_reentry=False,
-                                      reentry_from=None, reentry_to=None):
-        """
-        Enhanced section addition that captures re-entry expectations
-
-        Args:
-            section_data: Standard section data
-            expects_reentry: Boolean indicating if this section expects re-entry
-            reentry_from: Section ID where re-entry originates
-            reentry_to: Section ID where path continues after re-entry
-        """
-        # Add section to rel_all_sections_tabs as usual
-        self.rel_all_sections_tabs.add_section(section_data)
-
-        # Store re-entry metadata
-        if expects_reentry:
-            if not hasattr(self, 'reentry_expectations'):
-                self.reentry_expectations = {}
-
-            self.reentry_expectations[section_data['id']] = {
-                'expects_reentry': True,
-                'from_section': reentry_from,
-                'to_section': reentry_to,
-                'user_notes': section_data.get('notes', '')
-            }
-
     def set_well_path_dict(self, well_path_dict):
         self.well_path_dict = well_path_dict
 
@@ -896,11 +775,13 @@ class SetupRelativeCoordsPage:
         self.draw_plat_solo(all_plats_df[initial_plat_conc], version)
         plat_df = data_frame_plat_builder()
         plat_df_conc = plat_df['conc'].unique()
+        #well_path_dict, original_all_plats_df, current_plat_coords, well_path, current_plat_conc, currently_used_plat_data
+
         output_polygons = self.run_plat_well_tracer(current_plat_coords=plat_df[plat_df['conc'] == plat_df_conc[0]],
                                                     current_plat_conc=plat_df_conc[0], original_all_plats_df=plat_df)
         # ClearanceProcess(df, plat_df)
-        # print("OUTPUT")
-        # print(output_polygons)
+        print("OUTPUT")
+        print(output_polygons)
         # output_polygons = self.run_plat_well_tracer_4(current_plat_coords=result[all_conc_codes[0]], current_plat_conc=all_conc_codes[0], all_plats_df=result)
 
     def grapher(self, data):
@@ -1357,18 +1238,6 @@ class SetupRelativeCoordsPage:
 
     def main_tracer_process(self, current_plat_coords, current_plat_conc, original_all_plats_df, well_path, title):
 
-        # result = main_tracer_process(
-        #     current_plat_coords=current_plat_coords,
-        #     clearance_data=well_path,
-        #     visualize=True,
-        #     validate=True
-        # )
-
-        # Access results
-        # visits = result['visits']  # List of all section visits
-        # summary = result['summary']  # DataFrame with traversal summary
-        # visit_counts = result['visit_counts']  # Count of visits per section
-
         def get_direction_sides():
             used_df = all_plats_df[all_plats_df['conc'] == current_plat_conc]
             grouped_df = used_df.groupby('side')
@@ -1500,10 +1369,12 @@ class SetupRelativeCoordsPage:
                 first_crossed_point = None
             return first_crossed_point
 
-        def check_full_inter_pts(intersection_result, current_well_path_section):
+        def check_full_inter_pts(intersection_result, current_well_path_section, current_plat_coords):
+            print('intersect')
+            cardinal_direction = None
             if isinstance(intersection_result, MultiPoint):
                 pts_1 = sorted(intersection_result.geoms,
-                             key=lambda pt: intersection_segment.project(pt))
+                               key=lambda pt: intersection_segment.project(pt))
             elif intersection_result.geom_type == "Point":
                 pts_1 = [intersection_result]
             else:
@@ -1521,7 +1392,6 @@ class SetupRelativeCoordsPage:
                 seg = substring(intersection_segment, start_frac, end_frac, normalized=True)
                 segments.append(seg)
 
-
             first_segment = segments[0]  # from earlier code
             first_coords_set = set(first_segment.coords)
 
@@ -1531,13 +1401,77 @@ class SetupRelativeCoordsPage:
             # 3. Filter OUT rows that are part of the first segment
             mask = [pt not in first_coords_set for pt in all_coords]
             everything_but_first = current_well_path_section[mask]
-            return everything_but_first
-            # Optional: reset index for convenience
-            # segment_df = segment_df.reset_index(drop=True)
+
+            # NEW CODE: Determine which boundary side the intersection passes through
+            from shapely.geometry import LineString
+            intersection_point = pts_1[0]
+
+            for side in current_plat_coords['side'].unique():
+                side_coords = current_plat_coords[current_plat_coords['side'] == side][['x', 'y']].values
+                side_line = LineString(side_coords)
+                if side_line.distance(intersection_point) < 1e-6:  # tolerance for floating point precision
+                    cardinal_direction = side[0]
+                    print('cardinal', cardinal_direction)
+                    break
+            dict_index = {'e': 2, 'w': 6, 'n': 0, 's': 4}
+            # print(everything_but_first)
+            return everything_but_first, pts_1[0], cardinal_direction, dict_index[cardinal_direction]
+
+        def plot_shapely_and_dataframe(polygon, point, dataframe,
+                                       title="Shapely Objects and DataFrame Visualization"):
+            """
+            Plot a shapely polygon, point, and pandas dataframe offset data.
+
+            Args:
+                polygon: Shapely Polygon object
+                point: Shapely Point object
+                dataframe: Pandas DataFrame with 'e_offset_delta' and 'n_offset_delta' columns
+                title: Plot title
+            """
+            fig, ax = plt.subplots(figsize=(10, 8))
+
+            # Plot polygon
+            if polygon and not polygon.is_empty:
+                x, y = polygon.exterior.xy
+                ax.plot(x, y, 'b-', linewidth=2, label='Polygon Boundary')
+                ax.fill(x, y, alpha=0.3, color='lightblue', label='Polygon Area')
+
+            # Plot point
+            if point and not point.is_empty:
+                ax.scatter(point.x, point.y, color='red', s=100, marker='o',
+                           label='Point', zorder=5, edgecolors='black')
+
+            # Plot dataframe offset data
+            if not dataframe.empty and 'e_offset_delta' in dataframe.columns and 'n_offset_delta' in dataframe.columns:
+                ax.scatter(dataframe['e_offset_delta'], dataframe['n_offset_delta'],
+                           color='green', alpha=0.7, s=50, marker='^',
+                           label='Offset Data', zorder=4)
+
+                # Add measured_depth labels if column exists
+                if 'measured_depth' in dataframe.columns:
+                    for idx, row in dataframe.iterrows():
+                        ax.annotate(f"{row['measured_depth']:.1f}",
+                                    (row['e_offset_delta'], row['n_offset_delta']),
+                                    xytext=(5, 5), textcoords='offset points',
+                                    fontsize=8, alpha=0.8, ha='left')
+
+            # Formatting
+            ax.set_xlabel('Easting / E-Offset')
+            ax.set_ylabel('Northing / N-Offset')
+            ax.set_title(title)
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            ax.set_aspect('equal', adjustable='box')
+
+            plt.tight_layout()
+            plt.show()
+
+        # print(self.currently_used_plat_data)
         well_paths_lst = [k for k, v in self.well_path_dict.items()]
         all_plats_df = original_all_plats_df
         # well_path = self.well_path_dict[i].clearance_data
         result_coords = current_plat_coords[['x', 'y', 'side']].values.tolist()
+        # print(current_plat_coords)
         starter_pt = get_starter_pt(well_path.iloc[0], result_coords)
         starter_utm = well_path.iloc[0][['easting', 'northing']].values.tolist()
         dx_start, dy_start = (float(well_path['easting'].iloc[0])) - starter_pt[0] * 0.3048, (
@@ -1552,6 +1486,7 @@ class SetupRelativeCoordsPage:
         used_conc_sections = [current_plat_conc]
         counter = 2
         intersection_pt_current = Point(0, 0)
+        print("____________________________________________")
         while True:
             polygon_plat = current_polygon
             # pts = [Point(x, y) for x, y in zip(current_well_path_section.e_offset_delta, current_well_path_section.n_offset_delta)]
@@ -1559,53 +1494,64 @@ class SetupRelativeCoordsPage:
                 list(zip(current_well_path_section['e_offset_delta'], current_well_path_section['n_offset_delta'])))
             boundary = polygon_plat.exterior
             intersection_pt = intersection_segment.intersection(boundary)
-            current_well_path_section = check_full_inter_pts(intersection_pt, current_well_path_section)
-            intersection_pt = check_intersection_pts(intersection_pt)
-            intersection_pt_current = intersection_pt
 
+            # print(current_well_path_section, intersection_pt_current)
 
-            # pts = [Point(x, y) for x, y in zip(well_path.e_offset_delta, well_path.n_offset_delta)]
-            #
-            # mask = [polygon_plat.contains(pt) for pt in pts]
-            # well_path.loc[mask, 'rel_data_order'] = counter - 1
-            # used_well_path_df = well_path[well_path['rel_data_order'] == 99]
-            # lst_well_path = [tuple(i) for i in list(zip(well_path['e_offset_delta'], well_path['n_offset_delta']))]
-            #
-            # intersection_segment = LineString(
-            #     list(zip(used_well_path_df['e_offset_delta'], used_well_path_df['n_offset_delta'])))
-            # boundary = polygon_plat.exterior
-            # intersection_pt = intersection_segment.intersection(boundary)
+            # plot_shapely_and_dataframe(polygon_plat, intersection_pt_current, current_well_path_section)
+
             # intersection_pt = check_intersection_pts(intersection_pt)
-            #
             # intersection_pt_current = intersection_pt
             try:
-                dir_val, index = get_direction_sides()
-            except (AttributeError, TypeError) as e:
+                current_well_path_section, intersection_pt, dir_val, index = check_full_inter_pts(intersection_pt, current_well_path_section, current_plat_coords)
+                intersection_pt_current = intersection_pt
+            except KeyError:
+                print('key error')
                 all_plats_df[['x_delta', 'y_delta']] = (
                     all_plats_df.apply(
                         lambda row: get_offset_added_delta(row['x'] * 0.3048, row['y'] * 0.3048, dx_start, dy_start),
                         axis=1,
                         result_type='expand'))
-                # self.graph_plats_and_well(all_plats_df, list(zip(well_path.easting, well_path.northing)), title)
+                # print(all_plats_df)
+                self.graph_plats_and_well(all_plats_df, list(zip(well_path.easting, well_path.northing)), title)
                 return all_plats_df
+            # print(intersection_pt_current)
+            # try:
 
+            # dir_val, index = get_direction_sides()
+            # print([intersection_pt_current, dir_val])
+
+            # except (AttributeError, TypeError) as e:
+            #     print('errored!', e)
+            #     all_plats_df[['x_delta', 'y_delta']] = (
+            #         all_plats_df.apply(
+            #             lambda row: get_offset_added_delta(row['x'] * 0.3048, row['y'] * 0.3048, dx_start, dy_start),
+            #             axis=1,
+            #             result_type='expand'))
+            #     self.graph_plats_and_well(all_plats_df, list(zip(well_path.easting, well_path.northing)), title)
+            #     return all_plats_df
             next_plat_df = self.currently_used_plat_data[self.currently_used_plat_data['range'] == counter]
-
             try:
                 next_plat_conc = next_plat_df['conc'].iloc[0]
+                if next_plat_conc == [used_conc_sections[-1]]:
+                    break
                 if next_plat_conc not in used_conc_sections:
                     rewritten_coords = all_plats_df[all_plats_df['conc'] == next_plat_conc]
                 else:
-                    used_conc_sections = used_conc_sections.append(next_plat_conc)
+                    used_conc_sections.append(next_plat_conc)
 
                     next_plat_coords_dict = all_plats_df[all_plats_df['conc'] == next_plat_conc]
 
-                    well_prox_boo = well_path_prox(intersection=intersection_pt, side_dict_all=next_plat_coords_dict,
+                    well_prox_boo = well_path_prox(intersection=intersection_pt_current, side_dict_all=next_plat_coords_dict,
                                                    direction=dir_val)
                     rewritten_coords = self.coords_stitcher(next_plat_coords_dict,
                                                             all_plats_df[all_plats_df['conc'] == current_plat_conc],
                                                             dir_val, well_prox_boo)
+                    print(rewritten_coords)
+
+
             except IndexError as f:
+                error_traceback = traceback.format_exc()
+                print(f"Error details:\n{error_traceback}")
                 print('broke here 2')
 
                 break
@@ -1759,25 +1705,15 @@ class SetupRelativeCoordsPage:
         well_paths_lst = [k for k, v in self.well_path_dict.items()]
         all_plats_df = original_all_plats_df
         # for i in well_paths_lst:
-
-
+        output_tracer = tracer_process(well_path_dict = self.well_path_dict,
+            current_plat_coords=current_plat_coords,
+                       current_plat_conc=current_plat_conc,
+                       well_path = self.well_path_dict['pln_df_true_dx'].clearance_data,
+                       original_all_plats_df=original_all_plats_df,
+                       currently_used_plat_data=self.currently_used_plat_data)
+        print(output_tracer)
         tracer_output = self.main_tracer_process(current_plat_coords, current_plat_conc, original_all_plats_df,
                                                  self.well_path_dict['pln_df_true_dx'].clearance_data, 'pln_df_true_dx')
-
-        result = enhanced_main_tracer_process(current_plat_coords, current_plat_conc,
-                                              original_all_plats_df, clearance_data)
-
-        # Handle missing section alerts
-        if result.missing_section_alerts:
-            for i, alert in enumerate(result.missing_section_alerts):
-                next_tab_num = 2 + i  # tab_rel_2, tab_rel_3, etc.
-
-                print(f"⚠️  Add section in tab_rel_{next_tab_num}:")
-                print(f"   Location: ({alert.suggested_location.x:.0f}, {alert.suggested_location.y:.0f})")
-                print(f"   Confidence: {alert.confidence_score:.2f}")
-                print(f"   Recommended Action: {alert.recommended_action}")
-
-
         if not tracer_output.empty:
             transformed_df = transform_to_plat_format(tracer_output)
             well_path_dropped = copy.copy(self.well_path_dict['pln_df_true_dx'].clearance_data)
@@ -1879,318 +1815,6 @@ class SetupRelativeCoordsPage:
         #
         #         pass
 
-    # def extract_coords_and_add_direction(self, used_dict):
-    #     new_lst = [[i + [k] for i in v] for k, v in used_dict.items()]
-    #
-    #     return new_lst
-    # def main_tracer_process_1(self, current_plat_coords, current_plat_conc, original_all_plats_df, well_path, title):
-    #     """
-    #     Enhanced well path tracer that handles section re-entry scenarios.
-    #
-    #     Supports wells that hook back into previously visited sections before continuing
-    #     in different directions. Maintains coordinate integrity and proper stitching
-    #     for complex well path geometries.
-    #     """
-    #
-    #     def get_offset_added_delta(x, y, dx, dy):
-    #         # return (x + float(dx)) * 0.3048, (y + float(dy)) * 0.3048
-    #
-    #         return x + float(dx), y + float(dy)
-    #
-    #     def update_original_dataframe(df_o, df_new):
-    #         df2 = df_o.set_index(['conc', 'side', 'point_i'])
-    #         repl2 = df_new.set_index(['conc', 'side', 'point_i'])
-    #
-    #         # 2) restrict repl2 to just the columns you want to overwrite
-    #         #    (here: 'x' and 'y')
-    #         repl2 = repl2[['x', 'y']]
-    #
-    #         # 3) update df2 in place
-    #         df2.update(repl2)
-    #
-    #         # 4) (optionally) drop the index back to columns
-    #         df_new = df2.reset_index()
-    #         return df_new
-    #
-    #     def df_to_polygon(df):
-    #         # all_cells = np.ravel(df.to_numpy(), order='F').tolist()
-    #         all_cells = df[['x', 'y']].values.tolist()
-    #         coords_unique = [list(t) for t in dict.fromkeys(map(tuple, all_cells))]
-    #
-    #         ring = [tuple(pt) for pt in coords_unique]
-    #         return Polygon(ring)
-    #
-    #     def get_direction_sides():
-    #         """Get direction based on intersection point and polygon bounds."""
-    #         used_df = all_plats_df[all_plats_df['conc'] == current_plat_conc]
-    #         xMin, xMax, yMin, yMax = df_to_polygon(used_df).bounds
-    #
-    #         try:
-    #             dir_val, index = get_direction((intersection_pt.x, intersection_pt.y), xMin, xMax, yMin, yMax)
-    #             return dir_val, index
-    #         except (AttributeError, TypeError):
-    #             return None, None
-    #
-    #     def check_for_multipoint():
-    #         """Handle multiple intersection points, selecting the appropriate one."""
-    #         if hasattr(intersection_pt, 'geoms') and len(intersection_pt.geoms) > 0:
-    #             return intersection_pt.geoms[0]
-    #         else:
-    #             for geom in intersection_pt.geoms:
-    #                 if not geom.equals(intersection_pt_current):
-    #                     return geom
-    #         return intersection_pt
-    #
-    #     def handle_section_reentry(section_conc, intersection_pt, entry_direction):
-    #         """
-    #         Handle well re-entering a previously visited section.
-    #
-    #         Args:
-    #             section_conc: Section concentration identifier
-    #             intersection_pt: Point where well re-enters section
-    #             entry_direction: Direction of entry
-    #
-    #         Returns:
-    #             Processed coordinates for the re-entered section
-    #         """
-    #         # Get the original processed coordinates for this section
-    #         if section_conc in visited_sections:
-    #             original_coords = visited_sections[section_conc]['last_coords'].copy()
-    #             previous_entries = visited_sections[section_conc]['entry_points']
-    #
-    #             # Check if this is a new entry point
-    #             entry_point_key = f"{intersection_pt.x:.2f}_{intersection_pt.y:.2f}_{entry_direction}"
-    #
-    #             if entry_point_key not in previous_entries:
-    #                 # New entry point - may need coordinate adjustment
-    #                 visited_sections[section_conc]['entry_points'].append(entry_point_key)
-    #                 visited_sections[section_conc]['visit_count'] += 1
-    #
-    #                 # Determine if we need to re-stitch based on new entry characteristics
-    #                 next_coords_df = all_plats_df[all_plats_df['conc'] == section_conc]
-    #                 well_prox_boo = well_path_prox(intersection=intersection_pt,
-    #                                                side_dict_all=next_coords_df,
-    #                                                direction=entry_direction)
-    #
-    #                 # Re-stitch coordinates for the new entry scenario
-    #                 restitched_coords = self.coords_stitcher(
-    #                     next_coords_df,
-    #                     all_plats_df[all_plats_df['conc'] == current_plat_conc],
-    #                     entry_direction,
-    #                     well_prox_boo
-    #                 )
-    #
-    #                 # Update stored coordinates
-    #                 visited_sections[section_conc]['last_coords'] = restitched_coords
-    #                 return restitched_coords
-    #             else:
-    #                 # Same entry point - use existing coordinates but increment visit
-    #                 visited_sections[section_conc]['visit_count'] += 1
-    #                 return original_coords
-    #         else:
-    #             # This shouldn't happen, but handle gracefully
-    #             return handle_new_section(section_conc, intersection_pt, entry_direction)
-    #
-    #     def handle_new_section(section_conc, intersection_pt, entry_direction):
-    #         """
-    #         Handle well entering a new section for the first time.
-    #
-    #         Args:
-    #             section_conc: Section concentration identifier
-    #             intersection_pt: Point where well enters section
-    #             entry_direction: Direction of entry
-    #
-    #         Returns:
-    #             Processed coordinates for the new section
-    #         """
-    #         next_coords_df = all_plats_df[all_plats_df['conc'] == section_conc]
-    #
-    #         well_prox_boo = well_path_prox(intersection=intersection_pt,
-    #                                        side_dict_all=next_coords_df,
-    #                                        direction=entry_direction)
-    #
-    #         rewritten_coords = self.coords_stitcher(
-    #             next_coords_df,
-    #             all_plats_df[all_plats_df['conc'] == current_plat_conc],
-    #             entry_direction,
-    #             well_prox_boo
-    #         )
-    #
-    #         # Track this as a new section visit
-    #         entry_point_key = f"{intersection_pt.x:.2f}_{intersection_pt.y:.2f}_{entry_direction}"
-    #         visited_sections[section_conc] = {
-    #             'visit_count': 1,
-    #             'last_coords': rewritten_coords,
-    #             'entry_points': [entry_point_key],
-    #             'first_entry_range': counter
-    #         }
-    #
-    #         return rewritten_coords
-    #
-    #     def get_well_path_segment_for_range(current_range):
-    #         """
-    #         Get the well path segment that should be processed for the current range.
-    #
-    #         This ensures we only process the portion of the well path that belongs
-    #         to the current range in the user-defined sequence.
-    #         """
-    #         # Mark points that haven't been assigned to any range yet
-    #         unprocessed_mask = well_path['rel_data_order'] == 99
-    #
-    #         if not unprocessed_mask.any():
-    #             return well_path.iloc[0:0]  # Return empty DataFrame
-    #
-    #         return well_path[unprocessed_mask]
-    #
-    #     # Initialize section visit tracking
-    #     visited_sections = {}  # {conc: {'visit_count': int, 'last_coords': df, 'entry_points': [], 'first_entry_range': int}}
-    #
-    #     # Initialize all_plats_df as DataFrame instead of dict for consistency
-    #     all_plats_df = original_all_plats_df.copy()
-    #
-    #     # Set up initial well path processing
-    #     result_coords = current_plat_coords[['x', 'y', 'side']].values.tolist()
-    #     starter_pt = get_starter_pt(well_path.iloc[0], result_coords)
-    #     starter_utm = well_path.iloc[0][['easting', 'northing']].values.tolist()
-    #
-    #     # Calculate offset deltas for the entire well path
-    #     dx_start, dy_start = (float(well_path['easting'].iloc[0])) - starter_pt[0] * 0.3048, (
-    #         float(well_path['northing'].iloc[0])) - starter_pt[1] * 0.3048
-    #
-    #     well_path[['e_offset_delta', 'n_offset_delta']] = (well_path.apply(
-    #         lambda row: get_offset_added_delta(starter_pt[0], starter_pt[1], row['e_offset'], row['n_offset']),
-    #         axis=1, result_type='expand'))
-    #
-    #     # Initialize well path tracking
-    #     well_path['rel_data_order'] = 99  # 99 means unprocessed
-    #     well_path['section_conc'] = ''  # Track which section each point belongs to
-    #     well_path['range_order'] = 0  # Track which range in sequence
-    #
-    #     # Set up initial polygon and tracking variables
-    #     current_plat_coords_modified = [i[:2] for i in result_coords]
-    #     current_polygon = Polygon(current_plat_coords_modified)
-    #     counter = 2
-    #     intersection_pt_current = Point(0, 0)
-    #
-    #     # Track the first section as visited
-    #     visited_sections[current_plat_conc] = {
-    #         'visit_count': 1,
-    #         'last_coords': current_plat_coords,
-    #         'entry_points': ['initial_entry'],
-    #         'first_entry_range': 1
-    #     }
-    #
-    #     # Main processing loop
-    #     while True:
-    #         print(f'Processing range {counter}')
-    #
-    #         # Get current polygon for intersection testing
-    #         polygon_plat = current_polygon
-    #
-    #         # Get well path segment for current range processing
-    #         used_well_path_df = get_well_path_segment_for_range(counter)
-    #
-    #         if used_well_path_df.empty:
-    #             print("No more well path segments to process")
-    #             break
-    #
-    #         # Mark points inside current polygon
-    #         pts = [Point(x, y) for x, y in zip(used_well_path_df.e_offset_delta, used_well_path_df.n_offset_delta)]
-    #         mask = [polygon_plat.contains(pt) for pt in pts]
-    #
-    #         # Update well path assignments for points in current polygon
-    #         indices_in_polygon = used_well_path_df.index[mask]
-    #         well_path.loc[indices_in_polygon, 'rel_data_order'] = counter - 1
-    #         well_path.loc[indices_in_polygon, 'section_conc'] = current_plat_conc
-    #         well_path.loc[indices_in_polygon, 'range_order'] = counter - 1
-    #
-    #         # Create intersection segment from remaining unprocessed well path
-    #         remaining_well_path = well_path[well_path['rel_data_order'] == 99]
-    #
-    #         if remaining_well_path.empty:
-    #             print("All well path points have been processed")
-    #             break
-    #
-    #         intersection_segment = LineString(
-    #             list(zip(remaining_well_path['e_offset_delta'], remaining_well_path['n_offset_delta'])))
-    #
-    #         # Find intersection with polygon boundary
-    #         boundary = polygon_plat.exterior
-    #         intersection_pt = intersection_segment.intersection(boundary)
-    #         intersection_pt = check_for_multipoint()
-    #         intersection_pt_current = intersection_pt
-    #
-    #         # Get direction of well exit
-    #         try:
-    #             dir_val, index = get_direction_sides()
-    #             if dir_val is None:
-    #                 print("Could not determine exit direction")
-    #                 break
-    #         except (AttributeError, TypeError) as e:
-    #             print(f'Error determining direction: {e}')
-    #             # Apply final coordinate transformation and exit
-    #             all_plats_df[['x_delta', 'y_delta']] = (
-    #                 all_plats_df.apply(
-    #                     lambda row: get_offset_added_delta(row['x'] * 0.3048, row['y'] * 0.3048, dx_start, dy_start),
-    #                     axis=1, result_type='expand'))
-    #             return all_plats_df
-    #
-    #         # Get next section from user-defined sequence
-    #         next_plat_df = self.currently_used_plat_data[self.currently_used_plat_data['range'] == counter]
-    #
-    #         try:
-    #             next_plat_conc = next_plat_df['conc'].iloc[0]
-    #         except IndexError:
-    #             print(f"No section defined for range {counter}")
-    #             break
-    #
-    #         # Check if this is a re-entry to a previously visited section
-    #         if next_plat_conc in visited_sections:
-    #             print(f"Re-entering section {next_plat_conc} (visit #{visited_sections[next_plat_conc]['visit_count'] + 1})")
-    #             rewritten_coords = handle_section_reentry(next_plat_conc, intersection_pt, dir_val)
-    #         else:
-    #             print(f"Entering new section {next_plat_conc}")
-    #             rewritten_coords = handle_new_section(next_plat_conc, intersection_pt, dir_val)
-    #
-    #         # Update polygon for next iteration
-    #         current_polygon = df_to_polygon(rewritten_coords)
-    #         new_dict = pd.DataFrame(data=rewritten_coords.to_dict(orient='list'))
-    #
-    #         try:
-    #             print(f'Successfully processed range {counter}')
-    #             all_plats_df = update_original_dataframe(all_plats_df, new_dict)
-    #             counter += 1
-    #             current_plat_conc = next_plat_conc
-    #         except ValueError as e:
-    #             print(f'Error updating dataframe for range {counter}: {e}')
-    #             # Apply final coordinate transformation and exit
-    #             all_plats_df[['x_delta', 'y_delta']] = (
-    #                 all_plats_df.apply(
-    #                     lambda row: get_offset_added_delta(row['x'] / 0.3048, row['y'] / 0.3048, starter_utm[0], starter_utm[1]),
-    #                     axis=1, result_type='expand'))
-    #             return all_plats_df
-    #
-    #     # Final processing: Apply coordinate transformations and return results
-    #     try:
-    #         all_plats_df[['x_delta', 'y_delta']] = (
-    #             all_plats_df.apply(
-    #                 lambda row: get_offset_added_delta(row['x'] * 0.3048, row['y'] * 0.3048, dx_start, dy_start),
-    #                 axis=1, result_type='expand'))
-    #
-    #         # Add visit summary to well_path for debugging/analysis
-    #         well_path['section_visit_summary'] = well_path.apply(
-    #             lambda row: f"Range_{row['range_order']}_Section_{row['section_conc']}" if row['section_conc'] else "Unprocessed",
-    #             axis=1
-    #         )
-    #
-    #         print(f"Processing complete. Sections visited: {list(visited_sections.keys())}")
-    #         print(f"Total section visits: {sum(v['visit_count'] for v in visited_sections.values())}")
-    #
-    #         return all_plats_df
-    #
-    #     except Exception as e:
-    #         print(f'Error in final coordinate transformation: {e}')
-    #         return pd.DataFrame()  # Return empty DataFrame on error
     def coords_stitcher(self, next_coords_df, current_coords_df, direction, direction_boo):
         def get_point_indices():
             """
@@ -2325,390 +1949,6 @@ class SetupRelativeCoordsPage:
         # next_coords_df_mod = next_coords_df.applymap(my_calc)
         return next_coords_df
 
-    # def coords_stitcher_3(self, next_plat_dict_out, current_plat_dict_out, direction, direction_boo):
-    #
-    #     def get_point_indices():
-    #         """
-    #         Determines the correct starting and matched indices based on direction.
-    #
-    #         Args:
-    #             direction (str): The cardinal direction ("W", "N", "E", "S").
-    #             direction_boo (bool): True to select the first index pair, False for the second.
-    #
-    #         Returns:
-    #             tuple: A tuple containing the (starting_point_index, matched_point_index).
-    #         """
-    #         # Consolidate all mappings into a single, clear dictionary.
-    #         # Format: direction: ([start_indices], [matched_indices])
-    #         # POINT_MAPPING = {
-    #         #     "W": ([0, 4], [12, 8]),
-    #         #     "N": ([4, 8], [16, 12]),
-    #         #     "E": ([8, 12], [4, 0]),
-    #         #     "S": ([12, 16], [8, 4]),
-    #         # }
-    #         POINT_MAPPING = {
-    #             "W": ([0, 4], [14, 10]),
-    #             "N": ([5, 9], [19, 15]),
-    #             "E": ([10, 14], [4, 0]),
-    #             "S": ([15, 19], [9, 5]),
-    #         }
-    #         # Use a simple integer (0 or 1) to select from the lists.
-    #         selector = 0 if direction_boo else 1
-    #
-    #         # Directly look up the lists of options for the given direction.
-    #         start_options, match_options = POINT_MAPPING[direction]
-    #
-    #         # Select the specific index from each list and return the pair.
-    #         return start_options[selector], match_options[selector]
-    #
-    #     def calculate_diff_from_dfs():
-    #         """
-    #         Calculates the difference between two coordinates selected from DataFrames.
-    #
-    #         The function translates legacy list-based indices into DataFrame locations
-    #         to select the appropriate points for calculation.
-    #
-    #         Args:
-    #             current_coords_df (pd.DataFrame): DataFrame with 'west', 'north', 'east', 'south' columns.
-    #             next_coords_df (pd.DataFrame): DataFrame with 'west', 'north', 'east', 'south' columns.
-    #             starting_pts (int): The legacy index for the point in current_coords_df.
-    #             matched_pt (int): The legacy index for the point in next_coords_df.
-    #
-    #         Returns:
-    #             tuple: A tuple containing the difference in x and y (diff_x, diff_y).
-    #         """
-    #         # Map for converting index to column name
-    #         column_map = {0: 'west', 1: 'north', 2: 'east', 3: 'south'}
-    #
-    #         # 1. Get location for the starting point in current_coords_df
-    #         start_col = column_map[starting_pts // 5]
-    #         start_row = starting_pts % 5
-    #         current_point = current_coords_df.loc[start_row, start_col]
-    #
-    #         # 2. Get location for the matched point in next_coords_df
-    #         matched_col = column_map[matched_pt // 5]
-    #         matched_row = matched_pt % 5
-    #         next_point = next_coords_df.loc[matched_row, matched_col]
-    #
-    #         # 3. Perform the calculation
-    #         diff_x_pt = current_point[0] - next_point[0]
-    #         diff_y_pt = current_point[1] - next_point[1]
-    #
-    #         return diff_x_pt, diff_y_pt
-    #
-    #     def my_calc(pt):
-    #         x, y = pt
-    #         return [x + diff_x, y + diff_y]
-    #
-    #     # to run this on every cell in every column:
-    #     # result_df = df.applymap(my_calc)
-    #     opp_direction_list = {"0": '2', "1": '3', "2": '0', "3": '1'}
-    #     cols = ['south', 'east', 'north', 'west']
-    #     current_coords_df  = pd.DataFrame(data = current_plat_dict_out)
-    #     next_coords_df = pd.DataFrame(data = next_plat_dict_out)
-    #     # next_coords_df_mod = copy.copy(next_coords_df)
-    #     current_coords_df_mod = copy.copy(current_coords_df)
-    #     current_coords_df_mod.loc[0, 'west'] = current_coords_df_mod.loc[4, 'south']
-    #     current_coords_df_mod = current_coords_df.applymap(lambda pt:[round(pt[0],1), round(pt[1], 1)])
-    #     current_coords_df_zeroed = current_coords_df_mod.apply(lambda col: col.where(~col.map(tuple).duplicated(), other=np.nan))
-    #     starting_pts, matched_pt = get_point_indices()
-    #     diff_x, diff_y = calculate_diff_from_dfs()
-    #     next_coords_df_mod = next_coords_df.applymap(my_calc)
-    #     return next_coords_df_mod
-    #     # new_coords_test_organized = [[j[:2] for j in i] for i in new_coords_test_organized]
-    #     # next_coords_df_mod = next_coords_df_mod.applymap(lambda pt:[round(pt[0],1), round(pt[1], 1)])
-    #     # next_coords_df_mod_zeroed = next_coords_df_mod.apply(lambda col: col.where(~col.map(tuple).duplicated(), other=np.nan))
-    #
-    #     # new_coords_test_organized = [[[round(k, 1) for k in j] for j in i] for i in new_coords_test_organized]
-    #     # new_coords_test_organized = [ModuleAgnostic.findUniqueListsInListOfLists(i) for i in next_coords_df_mod_zeroed]
-    #     # new_coords_test_organized[int(opp_direction_list[str(direction)])] = old_data_organized[int(direction)][::-1]
-    #
-    #     # next_coords_df_mod= next_coords_df_mod.apply(lambda col: ))
-    #
-    #     # diff_x, diff_y = last_coords[starting_pts][0] - new_coords[matched_pt][0], last_coords[starting_pts][1] - new_coords[matched_pt][1]
-    #
-    #     # corners = [current_plat_df['south'].iloc[-1], current_plat_df['east'].iloc[-1], current_plat_df['north'].iloc[-1], current_plat_df['west'].iloc[-1]]
-    #     # current_plat_df = current_plat_df.apply(lambda col: col.where(~col.map(tuple).duplicated(),other=[[None, None]] * len(col)))
-    #     # current_plat_df = current_plat_df.apply(lambda col: col.map(
-    #     #     (lambda seen=set(): lambda pt: pt if (tuple(pt) not in seen and not seen.add(tuple(pt))) else [None,
-    #     #                                                                                                    None])()
-    #     # ))
-    #
-    #     # next_plat_lst = self.extract_coords_and_add_direction(next_plat_dict_out)
-    #     # current_plat_lst = self.extract_coords_and_add_direction(current_plat_dict_out)
-    #     # current_plat_lst[0][0] = current_plat_lst[-1][-1]
-    #     # current_plat_lst_organized = [[j[:2] for j in i] for i in current_plat_lst]
-    #     # current_plat_lst_organized = [[[round(k, 1) for k in j] for j in i] for i in current_plat_lst_organized]
-    #     # current_plat_lst_organized = [unique_lists(i) for i in current_plat_lst_organized]
-    #     # corners = [current_plat_dict_out['south'][-1], current_plat_dict_out['east'][-1], current_plat_dict_out['north'][-1], current_plat_dict_out['west'][-1]]
-
-    # def coords_stitcher_2(self, new_coords, last_coords, direction, direction_boo):
-    #
-    #     new_coords = [list(i) for i in new_coords]
-    #     directions_dict = {"W": '0', "N": '1', "E": "2", "S": "3"}
-    #     direction = directions_dict[direction]
-    #     # test_corners, old_data_organized = ModuleAgnostic.cornerGeneratorProcess(last_coords)
-    #
-    #     # old_data_organized = [[j[:2] for j in i] for i in old_data_organized]
-    #     # old_data_organized = [[[round(k, 1) for k in j] for j in i] for i in old_data_organized]
-    #     # old_data_organized = [ModuleAgnostic.findUniqueListsInListOfLists(i) for i in old_data_organized]
-    #
-    #     lst_dict = {"0": [0, 4], "1": [4, 8], "2": [8, 12], "3": [12, 16]}
-    #     matched_lst_dict = {"0": [12, 8], "1": [16, 12], "2": [4, 0], "3": [8, 4]}
-    #     opp_direction_list = {"0": '2', "1": '3', "2": '0', "3": '1'}
-    #     lst_dict_boo = {True: 0, False: 1}
-    #     starting_pts = lst_dict[str(direction)][lst_dict_boo[direction_boo]]
-    #     matched_pt = matched_lst_dict[str(direction)][lst_dict_boo[direction_boo]]
-    #
-    #     new_coords = [list(i) for i in new_coords]
-    #     diff_x, diff_y = last_coords[starting_pts][0] - new_coords[matched_pt][0], last_coords[starting_pts][1] - new_coords[matched_pt][1]
-    #
-    #     new_coords_test = [[i[0] + diff_x, i[1] + diff_y] for i in new_coords]
-    #
-    #     # test_corners, new_coords_test_organized = ModuleAgnostic.cornerGeneratorProcess(new_coords_test)
-    #     # new_coords_test_organized = [[j[:2] for j in i] for i in new_coords_test_organized]
-    #     # new_coords_test_organized = [[[round(k, 1) for k in j] for j in i] for i in new_coords_test_organized]
-    #     # new_coords_test_organized = [ModuleAgnostic.findUniqueListsInListOfLists(i) for i in new_coords_test_organized]
-    #     # new_coords_test_organized[int(opp_direction_list[str(direction)])] = old_data_organized[int(direction)][::-1]
-    #
-    #     return new_coords_test
-    # def stitcher_process(self, next_plat_df, current_plat_df, next_plat_coords, current_plat_coords, next_plat_conc, dir_val):
-    #
-    #     coords = [0] * 20
-    #     if dir_val == "E":
-    #         # aligned = self.glue_plat(
-    #         #     orientation='east',
-    #         #     current_plat_coords=current_plat_coords,
-    #         #     next_plat_coords=next_plat_coords,
-    #         #     do_scale=True  # or False if you know they are same size
-    #         # )
-    #         self.directionE(next_plat_df, next_plat_coords, current_plat_coords, next_plat_conc, dir_val)
-    #         # return coords, valsLst
-
-    # def glue_plat(self,
-    #               orientation: str,
-    #               current_plat_coords: dict,
-    #               next_plat_coords: dict,
-    #               do_scale: bool = True
-    #               ) -> list[tuple[float, float]]:
-    #     """Return a new_plat vertex list, rigidly‐transformed so that
-    #        its 'join side' sits exactly on the specified side of the
-    #        current plat, with no gap."""
-    #     # map orientation → which sides to align
-    #     new_plat = [tuple(item[:2]) for k, v in next_plat_coords.items() for item in v]
-    #     old_plat = [tuple(item[:2]) for k, v in current_plat_coords.items() for item in v]
-    #     side_map = {
-    #         'north': ('north', 'south'),
-    #         'south': ('south', 'north'),
-    #         'east': ('east', 'west'),
-    #         'west': ('west', 'east'),
-    #     }
-    #     base_name, new_name = side_map[orientation]
-    #     base = np.array(current_plat_coords[base_name])
-    #     new = np.array(next_plat_coords[new_name])
-    #     # endpoints
-    #     p1_orig, p2_orig = base[0], base[-1]
-    #     p1_new, p2_new = new[0], new[-1]
-    #     # side‐vectors
-    #     v_orig = p2_orig - p1_orig
-    #     v_new = p2_new - p1_new
-    #
-    #     # lengths
-    #     L_orig = np.linalg.norm(v_orig)
-    #     L_new = np.linalg.norm(v_new)
-    #
-    #     # optional uniform scale if L_new != L_orig
-    #     scale = 1.0
-    #     if abs(L_orig - L_new) > 1e-6:
-    #         scale = L_orig / L_new
-    #
-    #     # rotation angle to carry v_new → v_orig
-    #     ang_new = np.arctan2(v_new[1], v_new[0])
-    #     ang_orig = np.arctan2(v_orig[1], v_orig[0])
-    #     theta = ang_orig - ang_new
-    #
-    #     # rotation matrix
-    #     R = np.array([[np.cos(theta), -np.sin(theta)],
-    #                   [np.sin(theta), np.cos(theta)]])
-    #
-    #     # your full list of new‐plat vertices:
-    #     coords_new = np.array(new_plat)  # shape (N,2)
-    #     # 1) move so p1_new sits at (0,0)
-    #     coords0 = coords_new - p1_new[np.newaxis, :]
-    #     # 2) scale
-    #     coords1 = coords0 * scale
-    #     # 3) rotate
-    #     coords2 = coords1.dot(R.T)
-    #     # 4) translate so (0,0) → p1_orig
-    #     aligned_new_plat = coords2 + p1_orig[np.newaxis, :]
-    #
-    #     #
-    #     # # optional scale
-    #     # scale = (np.linalg.norm(v_orig) / np.linalg.norm(v_new)) if do_scale else 1.0
-    #     # # rotation
-    #     # ang_new = np.arctan2(v_new[1], v_new[0])
-    #     # ang_orig = np.arctan2(v_orig[1], v_orig[0])
-    #     # theta = ang_orig - ang_new
-    #     # R = np.array([[np.cos(theta), -np.sin(theta)],
-    #     #               [np.sin(theta), np.cos(theta)]])
-    #     # # apply to all new_plat pts
-    #     # pts = np.array(new_plat)
-    #     # pts = (pts - p1_new) * scale
-    #     # pts = pts.dot(R.T)
-    #     # pts = pts + p1_orig
-    #
-    #     # self.grapher_two_plots(old_plat, pts)
-    #     # return [tuple(p) for p in pts]
-
-    # def stitcher_process2(self, newPlat, section, direction, path, coordLst, valsLstTot):
-    #     valsLst = getPlatVals(newPlat, section, path)
-    #     coords = [0] * 20
-    #     if direction == "E":
-    #         coords, valsLst = self.directionE(coords, coordLst, valsLst, valsLstTot)
-    #         return coords, valsLst
-    # elif direction == 'W':
-    #     coords, valsLst = ExcelGetNewCoords.directionW(coords, coordLst, valsLst, valsLstTot)
-    #     return coords, valsLst
-    # elif direction == 'S':
-    #     coords, valsLst = ExcelGetNewCoords.directionS(coords, coordLst, valsLst, valsLstTot)
-    #     return coords, valsLst
-    # elif direction == 'N':
-    #     coords, valsLst = ExcelGetNewCoords.directionN(coords, coordLst, valsLst, valsLstTot)
-    #     return coords, valsLst
-
-    # def directionE(self, next_plat_df, next_plat_coords, current_plat_coords, conc, direction):
-    #     coords = [0] * 20
-    #     # updated_coords = []
-    #
-    #     original_plat = [tuple(item[:2]) for k, v in current_plat_coords.items() for item in v]
-    #     new_plat = [tuple(item[:2]) for k, v in next_plat_coords.items() for item in v]
-    #
-    #     old_line_s = current_plat_coords['south']
-    #     old_line_n = current_plat_coords['north']
-    #     old_line_e = current_plat_coords['east']
-    #     old_line_w = current_plat_coords['west']
-    #
-    #     line_s = np.array(next_plat_coords['south'])
-    #     line_n = np.array(next_plat_coords['north'])
-    #     line_e = next_plat_coords['east']
-    #     line_w = next_plat_coords['west']
-    #
-    #     new_line_w = old_line_e[::-1]
-    #     south_pt = new_line_w[-1]
-    #     north_pt = new_line_w[0]
-    #
-    #
-    #     new_line_s = (line_s + [south_pt]).tolist()
-    #     new_line_n = (line_n + [north_pt]).tolist()
-    #     new_line_e = []
-    #     # coords = new_line_s + new_line_w
-    #     coords = new_line_w
-    #     # coords[0] = original_plat[4]
-    #     # for i in range(6):
-    #     #     coords[14 + i] = original_plat[10 - i]
-    #     #
-    #     # for i in range(4):
-    #     #     starting_pt =
-    #     #
-    #     # for i in range(4):
-    #     #     coords[i + 1] = list(self.intersect_circle_and_line(coords[i][0], coords[i][1], lineS[i][1], lineS[i][0], 'E'))
-    #         # coords[13 - i] = list(
-    #         #     self.intersect_circle_and_line(coords[14 - i][0], coords[14 - i][1], lineN[i][1], lineN[i][0], 'E'))
-    #     # coords[9] = coords[10]
-    #     # coords[5] = coords[4]
-    #     # for i in range(3):
-    #     #     coords[8 - i] = list(
-    #     #         self.intersectCircleAndLine(coords[9 - i][0], coords[9 - i][1], lineE[i][1], lineE[i][0], 'S'))
-    #
-    #     # self.grapher_two_plots(original_plat, coords)
-    #     return coords
-    #     pass
-
-    # def directionE2(self, coords, coordLst, valsLst, valsLstTot):
-    #     lineS = [valsLst[0], valsLst[1], valsLst[2], valsLst[3]]
-    #     lineN = [valsLst[11], valsLst[10], valsLst[9], valsLst[8]]
-    #     lineE = [valsLst[7], valsLst[6], valsLst[5], valsLst[4]]
-    #     lineW = [valsLst[12], valsLst[13], valsLst[14], valsLst[15]]
-    #
-    #     if len(coordLst) == 4:
-    #         coordLst = list(itertools.chain.from_iterable(coordLst))
-    #
-    #     coords[0] = coordLst[4]
-    #
-    #     for i in range(6):
-    #         coords[14 + i] = coordLst[10 - i]
-    #
-    #     for i in range(4):
-    #         coords[i + 1] = list(self.intersectCircleAndLine(coords[i][0], coords[i][1], lineS[i][1], lineS[i][0], 'E'))
-    #         coords[13 - i] = list(
-    #             self.intersectCircleAndLine(coords[14 - i][0], coords[14 - i][1], lineN[i][1], lineN[i][0], 'E'))
-    #
-    #     coords[9] = coords[10]
-    #     coords[5] = coords[4]
-    #
-    #     for i in range(3):
-    #         coords[8 - i] = list(
-    #             self.intersectCircleAndLine(coords[9 - i][0], coords[9 - i][1], lineE[i][1], lineE[i][0], 'S'))
-    #
-    #     return coords, valsLst
-
-    # def intersect_circle_and_line(self, a, b, mr, r, dir):
-    #     θ = math.radians(mr)
-    #     dx = r * math.cos(θ)
-    #     dy = r * math.sin(θ)
-    #     return [a + dx, b + dy]
-    #
-    # def intersectCircleAndLine(self, a, b, mr, r, dir):
-    #     if mr == 0 or mr == 180 or mr == 90 and r == 0:
-    #         return a, b
-    #
-    #     if mr < 90:
-    #         m = math.tan(math.radians(90 - mr))
-    #     if 95 > mr >= 90:
-    #         m = math.tan(math.radians(90 - mr))
-    #     if mr >= 180:
-    #         m = math.tan(math.radians(90 - (mr - 180)))
-    #     if 180 > mr > 175:
-    #         m = math.tan(math.radians(90 - (mr - 180)))
-    #
-    #     d = b - (m * a)
-    #
-    #     den = (1 + m ** 2)
-    #     ang = (r ** 2 * den) - (b - m * a - d) ** 2
-    #     sqAng = math.sqrt(ang)
-    #     x1 = (a + b * m - d * m + sqAng) / den
-    #     x2 = (a + b * m - d * m - sqAng) / den
-    #
-    #     y1 = (d + (a * m) + (b * m ** 2) + (m * sqAng)) / den
-    #     y2 = (d + (a * m) + (b * m ** 2) - (m * sqAng)) / den
-    #
-    #     if dir == 'E':
-    #         if x1 > a:
-    #             return [x1, y1]
-    #         elif x2 > a:
-    #             return [x2, y2]
-    #
-    #     elif dir == 'W':
-    #         if a > x1:
-    #             return [x1, y1]
-    #         elif a > x2:
-    #             return [x2, y2]
-    #
-    #     elif dir == 'S':
-    #         if y1 < b:
-    #             return [x1, y1]
-    #         elif y2 < b:
-    #             return [x2, y2]
-    #
-    #     elif dir == 'N':
-    #         if y1 > b:
-    #             return [x1, y1]
-    #         elif y2 > b:
-    #             return [x2, y2]
-    #
-    # def gather_new_plat(self, version):
-    #     pass
-
     def graph_plat_and_well(self, poly, well):
         x, y = poly.exterior.xy
         x_coords_1 = [point[0] for point in well]
@@ -2755,451 +1995,3 @@ def get_starter_pt(row, current_plat):
         fewl = 'FWL'
     out = find_point_from_footages(current_plat, float(fnsl_val), fnsl, float(fewl_val), fewl)
     return out
-
-# class PlatEditorProcess:
-#     def __init__(self, conn, plat_df, plat_coords, shl, well_df):
-#         # self.load_surveys()
-#         # self.write_data_to_db()
-#         self.well_path = well_df
-#         self.location_db = conn
-#         self.initial_plat_conc, self.initial_plat = next(iter(plat_df))
-#         self.inital_plat_coords = plat_coords
-#         self.all_plats = [plat_df]
-#         self.shl = shl
-#         adj_sections = find_adjacent_sections(self.location_db, self.initial_plat_conc[0])
-#         fix_adj_sections(self.location_db, adj_sections, self.initial_plat_conc)
-#         self.run_finder_process(self.inital_plat_coords, self.well_path, self.initial_plat_conc[0])
-#
-#     # def find_relevant_datasets(self):
-#     #     used_concs = self.used_data_df['Conc'].unique()
-#     #     query = f"select * from section_plat_data"
-#     #     output = pd.read_sql(query, self.location_db).drop_duplicates(keep="first")
-#     #     output['new_code'] = output['new_code'].apply(lambda row: row[:9])
-#     #     output = output[output['new_code'].isin(used_concs)]
-#     #     output = output.astype({"Length": float, "Degrees": float, "Minutes": float, "Seconds": float})
-#     #     output = output.astype({"Minutes": int, "Seconds": int})
-#     #     # output_foo = output.apply(
-#     #     #     self.decimal_converter(output['Side'], output['Degrees'], output['Minutes'], output['Seconds'],
-#     #     #                            output['Alignment']))
-#     #     output_foo = output.apply(
-#     #         lambda row: self.decimal_converter(row['Side'], row['Degrees'], row['Minutes'], row['Seconds'],
-#     #                                            row['Alignment']), axis=1)
-#     #     grouped = output.groupby(['new_code', 'Version'])
-#     #     return grouped
-#     def decimal_converter(self, side, deg, minutes, sec, dir_val):
-#         """
-#         Simplified version with clearer logic (mathematically equivalent to above).
-#         """
-#         dec_val_base = deg + minutes / 60 + sec / 3600
-#         side_lower = side.lower()
-#
-#         # Base orientations for each side
-#         if 'west' in side_lower:
-#             base_azimuth = 90
-#         elif 'east' in side_lower:
-#             base_azimuth = 270
-#         elif 'north' in side_lower:
-#             if dir_val in [3, 2]:  # SW, NE
-#                 base_azimuth = 90
-#             else:  # SE, NW
-#                 base_azimuth = 270
-#         elif 'south' in side_lower:
-#             if dir_val in [4, 1]:  # NW, SE
-#                 base_azimuth = 90
-#             else:  # NE, SW
-#                 base_azimuth = 270
-#         else:
-#             return dec_val_base
-#
-#         # Determine if we add or subtract the bearing
-#         if ((side_lower.startswith('west') and dir_val in [4, 1]) or
-#                 (side_lower.startswith('east') and dir_val in [4, 1]) or
-#                 (side_lower.startswith('north') and dir_val not in [3, 2]) or
-#                 (side_lower.startswith('south') and dir_val in [4, 1])):
-#             return base_azimuth + dec_val_base
-#         else:
-#             return base_azimuth - dec_val_base
-#
-#     def run_finder_process(self, init_plat, well_path, conc):
-#         dirLst = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
-#         starter_pt = get_starter_pt(self.well_path.iloc[0], init_plat)
-#         current_plat = Polygon([i[:2] for i in init_plat])
-#         xMin, xMax, yMin, yMax = current_plat.bounds
-#         used_pt = starter_pt
-#         well_path['rel_plat_conc'] = False
-#         used_conc = conc
-#         for x, row in well_path.iterrows():
-#             delta_x, delta_y = row['delta_x'] * 0.3048, row['delta_y'] * 0.3048
-#             used_pt = [used_pt[0] + delta_x, used_pt[1] + delta_y]
-#             dir_val, index = get_direction(used_pt, xMin, xMax, yMin, yMax)
-#             index = dirLst.index(dir_val)
-#             if not dir_val:
-#                 return
-#             if current_plat.contains(Point(used_pt)):
-#                 well_path.at[x, 'rel_plat_conc'] = conc
-#             else:
-#                 # adj_sections = find_adjacent_sections(self.location_db, conc)
-#                 new_plat = get_plat_adjacency_dict(conc, index)
-#
-#     def get_new_plat_data(self):
-#         pass
-#
-#     def get_new_coords_plat(self, newPlat, section, direction, path, coordLst, valsLstTot):
-#         valsLst = getPlatVals(newPlat, section, path)
-#         coords = [0] * 20
-#         if direction == "E":
-#             coords, valsLst = ExcelGetNewCoords.directionE(coords, coordLst, valsLst, valsLstTot)
-#             return coords, valsLst
-#         elif direction == 'W':
-#             coords, valsLst = ExcelGetNewCoords.directionW(coords, coordLst, valsLst, valsLstTot)
-#             return coords, valsLst
-#         elif direction == 'S':
-#             coords, valsLst = ExcelGetNewCoords.directionS(coords, coordLst, valsLst, valsLstTot)
-#             return coords, valsLst
-#         elif direction == 'N':
-#             coords, valsLst = ExcelGetNewCoords.directionN(coords, coordLst, valsLst, valsLstTot)
-#             return coords, valsLst
-#
-#     def decimal_converter(self, side, deg, minutes, sec, dir_val):
-#         dec_val_base = deg + minutes / 60 + sec / 3600
-#         if 'west' in side.lower():
-#             if dir_val in [4, 1]:
-#                 decVal = 90 + dec_val_base
-#             else:
-#                 decVal = 90 - dec_val_base
-#         if 'east' in side.lower():
-#             if dir_val in [4, 1]:
-#                 decVal = 270 + dec_val_base
-#             else:
-#                 decVal = 270 - dec_val_base
-#         if 'north' in side.lower():
-#             if dir_val in [3, 2]:
-#                 decVal = 360 - (270 + dec_val_base)
-#             else:
-#                 decVal = 270 + dec_val_base
-#         if 'south' in side.lower():
-#             if dir_val in [4, 1]:
-#                 decVal = 90 + dec_val_base
-#             else:
-#                 decVal = 360 - (90 + dec_val_base)
-#         return side, decVal
-#
-#     def dms_to_radians(self, deg, minu, sec):
-#         total_deg = deg + minu / 60.0 + sec / 3600.0
-#         return np.deg2rad(total_deg)
-#
-#     def build_initial_coord_list(self, shl_xy, plat_df):
-#         """
-#         Assume:
-#           - shl_xy is the (x, y) coordinate of the SHL, which we treat as the first corner.
-#           - plat_df has exactly 4 rows, each describing one side of that same section.
-#             Columns: ['Side','Length','Degrees','Minutes','Seconds', ...].
-#           - The rows of plat_df must be in the exact sequential order of sides around the section.
-#             E.g., start at the SHL corner, then the next row leads to the next corner, etc.
-#         Returns:
-#           - coord_list: a length-4 list of (x, y) tuples representing the corners in order.
-#         """
-#         x0, y0 = shl_xy
-#         corners = [(x0, y0)]
-#
-#         for _, row in plat_df.iterrows():
-#             theta = self.dms_to_radians(row['Degrees'], row['Minutes'], row['Seconds'])
-#             length = row['Length']
-#             dx = length * np.sin(theta)
-#             dy = length * np.cos(theta)
-#             x1 = x0 + dx
-#             y1 = y0 + dy
-#             corners.append((x1, y1))
-#             x0, y0 = x1, y1
-#         # If the last corner isn’t exactly the SHL, we can drop the repeated closure.
-#         # We only want four distinct corners; the final appended might be equal to the first.
-#         unique_corners = corners[:4]
-#
-#         return unique_corners
-#
-#
-# # section_relative
-# # BaseData
-# # def write_data_to_db(self):
-# #     src_path = r'C:\Users\coltongoodrich\Documents\GitHub\RewriteAPD2\APD_Data.db'
-# #     dst_path = r'C:\Work\Databases\Board_DB_Plss_Sections.db'
-# #     with sqlite3.connect(src_path) as src_conn:
-# #         df = pd.read_sql_query("SELECT * FROM SectionPlatData", src_conn)
-# #     # # Append it into the destination DB
-# #     with sqlite3.connect(dst_path) as dst_conn:
-# #         df.to_sql(
-# #             'section_plat_data',
-# #             dst_conn,
-# #             if_exists='append',  # or 'replace' / 'fail'
-# #             index=False
-# #         )
-# #     pass
-#
-#
-# def mainPlats(platData, xMin, xMax, yMin, yMax, wellPath, path, coordLst, platAlphaCol, valsLst, minMaxSum, modPath):
-#     dirLst = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
-#     section = platData[0]
-#     allCoords = [coordLst]
-#     maxLsts = [minMaxSum]
-#     valsLstTot = [valsLst]
-#     platLst = []
-#     i = 0
-#     sectionVals = [section]
-#     while len(wellPath) > 0:
-#         # using the current section, return the adjacent sections
-#         lst = platAdjacentLsts(section)
-#         # finds the direction that the well is traveling
-#
-#         direction, wellPath = getDirection(xMin, xMax, yMin, yMax, wellPath)
-#
-#         # if the direction equals null, the well has reached the end of the sections.
-#         if direction == 'Null':
-#             return allCoords, maxLsts, valsLstTot, wellPath, platLst
-#
-#         # generate an index for figuring where the next section goes
-#         index = dirLst.index(direction)
-#
-#         # marks down the previous section, and using the index value, looks for the next section
-#         oldSection = section
-#         section = lst[index]
-#
-#         # this is used to check if the well is crossing section lines and adjusts accordingly
-#         platData[1], platData[2], platData[3], platData[4] = TSRMainCheck(direction, section, platData, oldSection)
-#         # get values for adjacent corners
-#         # this is the plat data
-#         valsLst2 = getPlatVals(platData, section, path)
-#
-#         valsAddLst = []
-#         valsAddLst2 = []
-#         countLst = 0
-#         for k in range(4):
-#             valsAddLst.append(
-#                 valsLst2[countLst][0] + valsLst2[countLst + 1][0] + valsLst2[countLst + 2][0] + valsLst2[countLst + 3][
-#                     0])
-#             valsAddLst2.append(
-#                 valsLstTot[-1][countLst][0] + valsLstTot[-1][countLst + 1][0] + valsLstTot[-1][countLst + 2][0] +
-#                 valsLstTot[-1][countLst + 3][0])
-#             countLst += 4
-#
-#         # check to see if the sides match. This is for checking if there are corners that are different between plats.
-#         # this is used to get the new coordinates and values for the plat
-#
-#         if section in sectionVals:
-#             indexSection = sectionVals.index(section)
-#             coordLst, valsLst = allCoords[indexSection], valsLstTot[indexSection]
-#             if len(coordLst) == 4:
-#                 coordLst = ModuleAgnostic.manyToOne(coordLst)
-#         else:
-#             coordLst, valsLst = getNewCoords(platData, section, direction, path, coordLst, valsLstTot)
-#
-#         # generates a new corners list based off the new data
-#
-#         # generates the min maxes for helping determine the well's next direction.
-#         xMin, xMax, yMin, yMax = getXMinMax(coordLst)
-#         writeGraphic(coordLst, path, platAlphaCol[i + 1], modPath)
-#
-#         # append to a amalgamation list for each specific value
-#         platLst.append([section, platData[1], platData[2], platData[3], platData[4], platData[5]])
-#         allCoords.append(coordLst)
-#         maxLsts.append([xMin, xMax, yMin, yMax])
-#
-#         valsLstTot.append(valsLst)
-#         i += 1
-#         sectionVals.append(section)
-#
-#     return allCoords, maxLsts, valsLstTot, wellPath, platLst
-#
-#
-# def platAdjacentLsts(index):
-#     lst = [[0, 0, 0, 0, 0, 0, 0, 0],
-#            [36, 31, 6, 7, 12, 11, 2, 35],
-#            [35, 36, 1, 12, 11, 10, 3, 34],
-#            [34, 35, 2, 11, 10, 9, 4, 33],
-#            [33, 34, 3, 10, 9, 8, 5, 32],
-#            [32, 33, 4, 9, 8, 7, 6, 31],
-#            [31, 32, 5, 8, 7, 12, 1, 36],
-#            [6, 5, 8, 17, 18, 13, 12, 1],
-#            [5, 4, 9, 16, 17, 18, 7, 6],
-#            [4, 3, 10, 15, 16, 17, 8, 5],
-#            [3, 2, 11, 14, 15, 16, 9, 4],
-#            [2, 1, 12, 13, 14, 15, 10, 3],
-#            [1, 6, 7, 18, 13, 14, 11, 2],
-#            [12, 7, 18, 19, 24, 23, 14, 11],
-#            [11, 12, 13, 24, 23, 22, 15, 10],
-#            [10, 11, 14, 23, 22, 21, 16, 9],
-#            [9, 10, 15, 22, 21, 20, 17, 8],
-#            [8, 9, 16, 21, 20, 19, 18, 7],
-#            [7, 8, 17, 20, 19, 24, 13, 12],
-#            [18, 17, 20, 29, 30, 25, 24, 13],
-#            [17, 16, 21, 28, 29, 30, 19, 18],
-#            [16, 15, 22, 27, 28, 29, 20, 17],
-#            [15, 14, 23, 26, 27, 28, 21, 16],
-#            [14, 13, 24, 25, 26, 27, 22, 15],
-#            [13, 18, 19, 30, 25, 26, 23, 14],
-#            [24, 19, 30, 31, 36, 35, 26, 23],
-#            [23, 24, 25, 36, 35, 34, 27, 22],
-#            [22, 23, 26, 35, 34, 33, 28, 21],
-#            [21, 22, 27, 34, 33, 32, 29, 20],
-#            [20, 21, 28, 33, 32, 31, 30, 19],
-#            [19, 20, 29, 32, 31, 36, 25, 24],
-#            [30, 29, 32, 5, 6, 1, 36, 25],
-#            [29, 28, 33, 4, 5, 6, 31, 30],
-#            [28, 27, 34, 3, 4, 5, 32, 29],
-#            [27, 26, 35, 2, 3, 4, 33, 28],
-#            [26, 25, 36, 1, 2, 3, 34, 27],
-#            [25, 30, 31, 6, 1, 2, 35, 26]]
-#     return lst[index]
-#
-#
-# def getDirection(xMin, xMax, yMin, yMax, wellPath):
-#     minMaxLst = [False, False, False, False]
-#     NSBooLst = [False, False]
-#     EWBooLst = [False, False]
-#     vLst = []
-#     dirLst = []
-#     for i in range(len(wellPath)):
-#         if wellPath[i][0] > xMax:
-#             minMaxLst[0] = True
-#             EWBooLst[0] = True
-#             vLst.append(i)
-#             dirLst.append('E')
-#
-#         elif wellPath[i][0] < xMin:
-#             minMaxLst[1] = True
-#             EWBooLst[1] = True
-#             vLst.append(i)
-#             dirLst.append('W')
-#
-#         if wellPath[i][1] > yMax:
-#             minMaxLst[2] = True
-#             NSBooLst[0] = True
-#             vLst.append(i)
-#             dirLst.append('N')
-#
-#         elif wellPath[i][1] < yMin:
-#             minMaxLst[3] = True
-#             NSBooLst[1] = True
-#             vLst.append(i)
-#             dirLst.append('S')
-#
-#     if True not in minMaxLst:
-#         return "Null", wellPath
-#
-#     # elif dirLst[0][1] == dirLst[1][1]:
-#     #     direction = dirLst[1][0]+dirLst[0][0]
-#     #     return direction, wellPath[vLst[0]:]
-#     else:
-#         modWellPath = wellPath[vLst[0]:]
-#
-#         # if True in NSBooLst and True not in EWBooLst:
-#         #     return dirLst[0], modWellPath
-#         # elif True not in NSBooLst and True in EWBooLst:
-#         #     return dirLst[0], modWellPath
-#         return dirLst[0][0], modWellPath
-#
-#
-# def getPlatVals(newPlat, section, path):
-#     valsLst, platWS = ExcelDataValues.getDataVals(path, section, newPlat[1], newPlat[2], newPlat[3], newPlat[4],
-#                                                   newPlat[5])
-#     return valsLst
-#
-#
-# def getXMinMax(coordLst):
-#     xMinlst = [coordLst[i][0] for i in range(len(coordLst))]
-#     yMinlst = [coordLst[i][1] for i in range(len(coordLst))]
-#     xMin, xMax = min(xMinlst), max(xMinlst)
-#     yMin, yMax = min(yMinlst), max(yMinlst)
-#
-#     return xMin, xMax, yMin, yMax
-#
-#
-# def writeGraphic(coordLst, path, alph, modPath):
-#     # modPath = os.path.join(path, 'Casing_Review V8-7Test.xlsm')
-#     # modPath = os.path.join(path, 'Casing_Review V8-7 Sage 16-19-18-2-1E-H2.xlsm')
-#     # modPath = os.path.join(path, 'Casing_Review V8-7 Myton City UT 16-23 3-2-25-36-7H.xlsm')
-#     wbxl = xw.Book(modPath)
-#     gSheet = wbxl.sheets['DisplayPlat']
-#
-#     for i in range(len(coordLst)):
-#         gSheet.range(alph[0] + str(i + 3)).value = coordLst[i][0]
-#         gSheet.range(alph[1] + str(i + 3)).value = coordLst[i][1]
-#
-#
-# def TSRMainCheck(direction, section, platData, oldSection):
-#     foundBoo = False
-#     if direction == 'N':
-#         edgeSections = [1, 2, 3, 4, 5, 6]
-#         if oldSection in edgeSections:
-#             foundBoo = True
-#
-#     elif direction == 'S':
-#         edgeSections = [31, 32, 33, 34, 35, 36]
-#         if oldSection in edgeSections:
-#             foundBoo = True
-#
-#     elif direction == 'E':
-#         edgeSections = [1, 12, 13, 24, 25, 36]
-#         if oldSection in edgeSections:
-#             foundBoo = True
-#
-#     elif direction == 'W':
-#         edgeSections = [6, 7, 18, 19, 30]
-#         if oldSection in edgeSections:
-#             foundBoo = True
-#
-#     if not foundBoo:
-#         return platData[1], platData[2], platData[3], platData[4]
-#
-#     else:
-#         township, townshipDir = changeTownship(platData[1], platData[2], direction)
-#         township, townshipDir = changeTownship(platData[1], platData[2], direction)
-#         rng, rngDir = changeRange(platData[3], platData[4], direction)
-#
-#         return township, townshipDir, rng, rngDir
-#
-#
-# def changeRange(rng, rngDir, direction):
-#     if direction == 'W':
-#         # if the section is a western range moving to the west, increase the range by 1
-#         if rngDir == 2:
-#             rng += 1
-#         # if the section is an eastern range moving west:
-#         elif rngDir == 1:
-#             # if it is already at the 1E line, switch it to 1W
-#             if rng == 1:
-#                 rngDir = 2
-#             # otherwise, decrease the number by 1
-#             else:
-#                 rng -= 1
-#
-#     elif direction == 'E':
-#         # if the section is a western range moving to the east:
-#         if rngDir == 2:
-#             # if it is already at the 1W line, switch it
-#             if rng == 1:
-#                 rngDir = 1
-#             else:
-#                 rng -= 1
-#         elif rngDir == 1:
-#             rng += 1
-#     return rng, rngDir
-#
-#
-# def changeTownship(township, townshipDir, direction):
-#     if direction == 'N':
-#         if townshipDir == 2:
-#             if township == 1:
-#                 townshipDir = 1
-#             else:
-#                 township -= 1
-#         elif townshipDir == 1:
-#             township += 1
-#     elif direction == 'S':
-#         if townshipDir == 2:
-#             township += 1
-#         elif townshipDir == 1:
-#             if township == 1:
-#                 townshipDir = 2
-#             else:
-#                 township -= 1
-#     return township, townshipDir

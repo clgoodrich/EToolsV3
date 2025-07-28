@@ -1,551 +1,758 @@
-"""
-Missing Section Detection Demo
+import traceback
 
-This demonstrates the enhanced well path tracer's ability to detect when
-well paths exit into areas where section data is missing, and provide
-specific recommendations for adding new sections.
-"""
-
+from shapely.ops import substring
+import copy
+import itertools
+# from main_project_well_path_tracer import WellPathTracer
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QLineEdit, QSpinBox,
+                             QCheckBox,
+                             QDialog, QTabWidget, QTextBrowser, QTableWidget, QLabel, QTableView, QRadioButton,
+                             QGraphicsView,
+                             QComboBox, QMessageBox, QFileDialog, QButtonGroup)
+import math
+from shapely.geometry import Polygon, Point, LineString
+from PyQt5.QtGui import QStandardItemModel, QStandardItem
 import pandas as pd
+from shapely.geometry import Polygon
 import numpy as np
-from shapely.geometry import Point, LineString, Polygon
+import ModuleAgnostic
+import regex as re
 import matplotlib.pyplot as plt
-from typing import Dict, List, Tuple
-import warnings
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from shapely.geometry import Point, LineString, Polygon, MultiPoint
+from shapely.geometry.base import BaseGeometry
+import operator
+from main_project_clearance import ClearanceProcess
 
-warnings.filterwarnings('ignore')
+
+# from main_project_well_path_tracer import main_tracer_process
 
 
-def create_scenario_with_missing_sections():
+def get_direction_sides(all_plats_df, current_plat_conc, intersection_pt):
+    used_df = all_plats_df[all_plats_df['conc'] == current_plat_conc]
+    grouped_df = used_df.groupby('side')
+    dict_index = {'e': 2, 'w': 6, 'n': 0, 's': 4}
+    for r, group_df in grouped_df:
+        line_string_side = Polygon(group_df[['x', 'y']].values.tolist())
+        on_line3 = intersection_pt.within(line_string_side.buffer(1e-8))
+        # if on_line3:
+        #     print(r)
+    for r, group_df in grouped_df:
+        line_string_side = Polygon(group_df[['x', 'y']].values.tolist())
+        on_line3 = intersection_pt.within(line_string_side.buffer(1e-8))
+        if on_line3:
+            return r[0], dict_index[r[0]]
+
+
+def well_path_prox(intersection, side_dict_all, direction, tol=1e-8):
+    pt = intersection if isinstance(intersection, Point) else Point(intersection)
+
+    # pick just the one side
+    side_key = direction.lower()
+    if side_key == 'n':
+        # coords = side_dict_all['north']
+        coords = side_dict_all[side_dict_all['side'] == 'north'][['x', 'y']].values.tolist()
+    elif side_key == 's':
+        # coords = side_dict_all['south']
+        coords = side_dict_all[side_dict_all['side'] == 'south'][['x', 'y']].values.tolist()
+
+    elif side_key == 'e':
+        # coords = side_dict_all['east']
+        coords = side_dict_all[side_dict_all['side'] == 'east'][['x', 'y']].values.tolist()
+
+    elif side_key == 'w':
+        # coords = side_dict_all['west']
+        coords = side_dict_all[side_dict_all['side'] == 'west'][['x', 'y']].values.tolist()
+
+    else:
+        raise KeyError(f"Direction must be one of 'n','s','e','w', not {direction!r}")
+
+    # the “start” and “end” of that side’s line
+    p_start = Point(coords[0])  # corner A
+    p_end = Point(coords[-1])  # corner B
+
+    # whichever corner is nearer the intersection…
+    return pt.distance(p_start) < pt.distance(p_end)
+
+
+def get_offset_added_delta(x, y, dx, dy):
+    return x + float(dx), y + float(dy)
+
+
+def get_dataframe_from_qtableview():
+    # Get the model
+    model = self.ui.dx_survey_table_mod.model()
+    if model is None:
+        print("The QTableView does not have a model.")
+        return None
+    # Get the number of rows and columns
+    rows = model.rowCount()
+    columns = model.columnCount()
+    # Create a list to store all the data
+    data = []
+    # Get column headers
+    headers = []
+    for column in range(columns):
+        header = model.headerData(column, Qt.Horizontal, Qt.DisplayRole)
+        headers.append(str(header))
+    # Iterate through each cell in the table
+    for row in range(rows):
+        row_data = []
+        for column in range(columns):
+            index = model.index(row, column)
+            # Get the data for the current cell
+            cell_data = model.data(index, Qt.DisplayRole)
+            row_data.append(cell_data)
+        data.append(row_data)
+
+    # Create pandas DataFrame
+    df = pd.DataFrame(data, columns=headers)
+    return df
+
+
+def df_to_polygon(df):
+    # all_cells = np.ravel(df.to_numpy(), order='F').tolist()
+    all_cells = df[['x', 'y']].values.tolist()
+    coords_unique = [list(t) for t in dict.fromkeys(map(tuple, all_cells))]
+
+    ring = [tuple(pt) for pt in coords_unique]
+    return Polygon(ring)
+
+
+def update_original_dataframe(df_o, df_new):
+    df2 = df_o.set_index(['conc', 'side', 'point_i'])
+    repl2 = df_new.set_index(['conc', 'side', 'point_i'])
+
+    # 2) restrict repl2 to just the columns you want to overwrite
+    #    (here: 'x' and 'y')
+    repl2 = repl2[['x', 'y']]
+
+    # 3) update df2 in place
+    df2.update(repl2)
+
+    # 4) (optionally) drop the index back to columns
+    df_new = df2.reset_index()
+    return df_new
+
+
+def check_for_multipoint(intersection_pt, intersection_pt_current):
+    all_pts = []
+    if not isinstance(intersection_pt, MultiPoint):
+        return intersection_pt
+    elif intersection_pt == Point(0, 0):
+        return intersection_pt_current
+    else:
+        for geom in intersection_pt.geoms:
+            # all_pts.append(geom)
+            if not geom.equals(intersection_pt_current):
+                return geom
+        # return all_pts[1]
+
+
+def check_intersection_pts(intersection_result, intersection_segment):
+    if isinstance(intersection_result, MultiPoint):
+        # Sort intersection points by their position along the LineString
+        sorted_points = sorted(intersection_result.geoms,
+                               key=lambda pt: intersection_segment.project(pt))
+
+        first_crossed_point = sorted_points[0]
+
+    elif intersection_result.geom_type == "Point":
+        first_crossed_point = intersection_result
+
+    else:
+        # Handle other unexpected cases (like no intersection, LineString, etc.)
+        first_crossed_point = None
+    return first_crossed_point
+
+
+def check_full_inter_pts(intersection_result, current_well_path_section, current_plat_coords, intersection_segment):
+    print('intersect')
+    dict_index = {'e': 2, 'w': 6, 'n': 0, 's': 4}
+
+    cardinal_direction = None
+    if isinstance(intersection_result, MultiPoint):
+        pts_1 = sorted(intersection_result.geoms,
+                       key=lambda pt: intersection_segment.project(pt))
+    elif intersection_result.geom_type == "Point":
+        pts_1 = [intersection_result]
+    else:
+        pts_1 = []
+
+    # Now get distances (normalized between 0 and 1)
+    line_length = intersection_segment.length
+    cut_distances = [0.0] + [intersection_segment.project(pt) / line_length for pt in pts_1] + [1.0]
+
+    # Slice line into segments between cut distances
+    segments = []
+    for i in range(len(cut_distances) - 1):
+        start_frac = cut_distances[i]
+        end_frac = cut_distances[i + 1]
+        seg = substring(intersection_segment, start_frac, end_frac, normalized=True)
+        segments.append(seg)
+
+    first_segment = segments[0]  # from earlier code
+    first_coords_set = set(first_segment.coords)
+
+    # 2. Create coordinate tuples from the DataFrame
+    all_coords = list(zip(current_well_path_section['e_offset_delta'], current_well_path_section['n_offset_delta']))
+
+    # 3. Filter OUT rows that are part of the first segment
+    mask = [pt not in first_coords_set for pt in all_coords]
+    everything_but_first = current_well_path_section[mask]
+
+    # NEW CODE: Determine which boundary side the intersection passes through
+    from shapely.geometry import LineString
+    intersection_point = pts_1[0]
+
+    for side in current_plat_coords['side'].unique():
+        side_coords = current_plat_coords[current_plat_coords['side'] == side][['x', 'y']].values
+        side_line = LineString(side_coords)
+        if side_line.distance(intersection_point) < 1e-6:  # tolerance for floating point precision
+            cardinal_direction = side[0]
+            return everything_but_first, pts_1[0], cardinal_direction, dict_index[cardinal_direction]
+    # print(everything_but_first)
+    return everything_but_first, [0, 0], None, 0
+
+
+def plot_shapely_and_dataframe(polygon, point, dataframe,
+                               title="Shapely Objects and DataFrame Visualization"):
     """
-    Create a test scenario where the well path clearly exits into areas
-    where section data is missing
+    Plot a shapely polygon, point, and pandas dataframe offset data.
+
+    Args:
+        polygon: Shapely Polygon object
+        point: Shapely Point object
+        dataframe: Pandas DataFrame with 'e_offset_delta' and 'n_offset_delta' columns
+        title: Plot title
     """
+    fig, ax = plt.subplots(figsize=(10, 8))
 
-    # Create two known sections with a gap between them
-    sections_data = []
+    # Plot polygon
+    if polygon and not polygon.is_empty:
+        x, y = polygon.exterior.xy
+        ax.plot(x, y, 'b-', linewidth=2, label='Polygon Boundary')
+        ax.fill(x, y, alpha=0.3, color='lightblue', label='Polygon Area')
 
-    # Section 1: 0107S19ES (Western section)
-    section1_data = {
-        'conc': ['0107S19ES'] * 20,
-        'side': ['west', 'west', 'west', 'west', 'west',
-                 'north', 'north', 'north', 'north', 'north',
-                 'east', 'east', 'east', 'east', 'east',
-                 'south', 'south', 'south', 'south', 'south'],
-        'point_i': [0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4],
-        'x': [0.0, 500.0, 1000.0, 1500.0, 2000.0,
-              2000.0, 2500.0, 3000.0, 3500.0, 4000.0,
-              4000.0, 3500.0, 3000.0, 2500.0, 2000.0,
-              2000.0, 1500.0, 1000.0, 500.0, 0.0],
-        'y': [0.0, 0.0, 0.0, 0.0, 0.0,
-              0.0, 500.0, 1000.0, 1500.0, 2000.0,
-              2000.0, 2500.0, 3000.0, 3500.0, 4000.0,
-              4000.0, 4000.0, 4000.0, 4000.0, 4000.0]
-    }
-    sections_data.append(pd.DataFrame(section1_data))
+    # Plot point
+    if point and not point.is_empty:
+        ax.scatter(point.x, point.y, color='red', s=100, marker='o',
+                   label='Point', zorder=5, edgecolors='black')
 
-    # Section 3: 0107S19ET (Eastern section - note the gap where section 2 should be)
-    section3_data = {
-        'conc': ['0107S19ET'] * 20,
-        'side': ['west', 'west', 'west', 'west', 'west',
-                 'north', 'north', 'north', 'north', 'north',
-                 'east', 'east', 'east', 'east', 'east',
-                 'south', 'south', 'south', 'south', 'south'],
-        'point_i': [0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4],
-        'x': [8000.0, 8500.0, 9000.0, 9500.0, 10000.0,
-              10000.0, 10500.0, 11000.0, 11500.0, 12000.0,
-              12000.0, 11500.0, 11000.0, 10500.0, 10000.0,
-              10000.0, 9500.0, 9000.0, 8500.0, 8000.0],
-        'y': [0.0, 0.0, 0.0, 0.0, 0.0,
-              0.0, 500.0, 1000.0, 1500.0, 2000.0,
-              2000.0, 2500.0, 3000.0, 3500.0, 4000.0,
-              4000.0, 4000.0, 4000.0, 4000.0, 4000.0]
-    }
-    sections_data.append(pd.DataFrame(section3_data))
+    # Plot dataframe offset data
+    if not dataframe.empty and 'e_offset_delta' in dataframe.columns and 'n_offset_delta' in dataframe.columns:
+        ax.scatter(dataframe['e_offset_delta'], dataframe['n_offset_delta'],
+                   color='green', alpha=0.7, s=50, marker='^',
+                   label='Offset Data', zorder=4)
 
-    # Combine sections
-    all_sections_df = pd.concat(sections_data, ignore_index=True)
+        # Add measured_depth labels if column exists
+        if 'measured_depth' in dataframe.columns:
+            for idx, row in dataframe.iterrows():
+                ax.annotate(f"{row['measured_depth']:.1f}",
+                            (row['e_offset_delta'], row['n_offset_delta']),
+                            xytext=(5, 5), textcoords='offset points',
+                            fontsize=8, alpha=0.8, ha='left')
 
-    # Create well path that travels from section 1, through missing area, to section 3
-    well_path_points = []
-
-    # Start in section 1
-    for i in range(20):
-        x = 1000 + i * 50
-        y = 2000 + i * 20
-        well_path_points.append((x, y))
-
-    # Exit section 1 and travel through missing section area
-    for i in range(40):
-        x = 2000 + i * 150  # Travel east through gap
-        y = 2400 + i * 10
-        well_path_points.append((x, y))
-
-    # Enter section 3
-    for i in range(20):
-        x = 8000 + i * 50
-        y = 2800 + i * 15
-        well_path_points.append((x, y))
-
-    # Create well path DataFrame
-    well_data = []
-    for i, (x, y) in enumerate(well_path_points):
-        well_data.append({
-            'e_offset_delta': x,
-            'n_offset_delta': y,
-            'easting': x + 552265,
-            'northing': y + 4443487,
-            'point_index': i
-        })
-
-    return all_sections_df, pd.DataFrame(well_data)
-
-
-def create_complex_missing_section_scenario():
-    """
-    Create a more complex scenario with multiple missing sections and re-entries
-    """
-
-    # Create a grid of sections with gaps
-    sections_data = []
-    section_size = 4000
-
-    # Create sections at positions (0,0), (0,1), (1,1), leaving gaps at (1,0) and (0,2)
-    section_positions = [
-        (0, 0, "0107S19ES"),  # Southwest
-        (0, 1, "0106S19ES"),  # Northwest
-        (1, 1, "0106S19ET"),  # Northeast
-        # Missing: (1, 0) "0107S19ET" - Southeast
-        # Missing: (0, 2) "0105S19ES" - Far Northwest
-    ]
-
-    for grid_x, grid_y, section_id in section_positions:
-        base_x = grid_x * section_size
-        base_y = grid_y * section_size
-
-        section_data = {
-            'conc': [section_id] * 20,
-            'side': ['west', 'west', 'west', 'west', 'west',
-                     'north', 'north', 'north', 'north', 'north',
-                     'east', 'east', 'east', 'east', 'east',
-                     'south', 'south', 'south', 'south', 'south'],
-            'point_i': [0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4],
-            'x': [base_x, base_x + 1000, base_x + 2000, base_x + 3000, base_x + 4000,
-                  base_x + 4000, base_x + 4000, base_x + 4000, base_x + 4000, base_x + 4000,
-                  base_x + 4000, base_x + 3000, base_x + 2000, base_x + 1000, base_x,
-                  base_x, base_x, base_x, base_x, base_x],
-            'y': [base_y, base_y, base_y, base_y, base_y,
-                  base_y, base_y + 1000, base_y + 2000, base_y + 3000, base_y + 4000,
-                  base_y + 4000, base_y + 4000, base_y + 4000, base_y + 4000, base_y + 4000,
-                  base_y + 4000, base_y + 3000, base_y + 2000, base_y + 1000, base_y]
-        }
-        sections_data.append(pd.DataFrame(section_data))
-
-    all_sections_df = pd.concat(sections_data, ignore_index=True)
-
-    # Create complex well path that exposes multiple missing sections
-    well_path_points = []
-
-    # Start in 0107S19ES (0,0)
-    for i in range(15):
-        x = 500 + i * 100
-        y = 2000 + i * 50
-        well_path_points.append((x, y))
-
-    # Exit east into missing section (1,0) - "0107S19ET"
-    for i in range(25):
-        x = 2000 + i * 120
-        y = 2750 + i * 20
-        well_path_points.append((x, y))
-
-    # Continue into existing section (1,1) - "0106S19ET"
-    for i in range(20):
-        x = 5000 + i * 80
-        y = 3250 + i * 40
-        well_path_points.append((x, y))
-
-    # Exit north into missing section (0,2) area
-    for i in range(30):
-        x = 6600 - i * 80
-        y = 4000 + i * 100
-        well_path_points.append((x, y))
-
-    # Re-enter known section (0,1) - "0106S19ES"
-    for i in range(15):
-        x = 4200 - i * 100
-        y = 7000 + i * 30
-        well_path_points.append((x, y))
-
-    # Create well path DataFrame
-    well_data = []
-    for i, (x, y) in enumerate(well_path_points):
-        well_data.append({
-            'e_offset_delta': x,
-            'n_offset_delta': y,
-            'easting': x + 552265,
-            'northing': y + 4443487,
-            'point_index': i
-        })
-
-    return all_sections_df, pd.DataFrame(well_data)
-
-
-def visualize_missing_section_analysis(sections_df: pd.DataFrame,
-                                       well_path_df: pd.DataFrame,
-                                       tracer_result,
-                                       title: str = "Missing Section Detection Analysis"):
-    """
-    Create comprehensive visualization showing missing section alerts
-    """
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
-
-    # Left plot: Full overview
-    ax = ax1
-
-    # Plot existing sections
-    for section_id in sections_df['conc'].unique():
-        section_data = sections_df[sections_df['conc'] == section_id]
-
-        coords = [(row['x'], row['y']) for _, row in section_data.iterrows()]
-        if len(coords) > 2:
-            polygon = Polygon(coords)
-            if polygon.is_valid:
-                x_coords, y_coords = polygon.exterior.xy
-                ax.plot(x_coords, y_coords, 'b-', linewidth=2, alpha=0.7)
-                ax.fill(x_coords, y_coords, alpha=0.3, color='lightblue')
-
-                centroid = polygon.centroid
-                ax.text(centroid.x, centroid.y, section_id,
-                        ha='center', va='center', fontsize=9, fontweight='bold')
-
-    # Plot well path
-    x_coords = well_path_df['e_offset_delta'].values
-    y_coords = well_path_df['n_offset_delta'].values
-    ax.plot(x_coords, y_coords, 'r-', linewidth=3, alpha=0.8, label='Well Path')
-
-    # Mark start and end
-    ax.plot(x_coords[0], y_coords[0], 'go', markersize=10, label='Start')
-    ax.plot(x_coords[-1], y_coords[-1], 'rs', markersize=10, label='End')
-
-    # Highlight untraced segments
-    if tracer_result.untraced_segments:
-        for i, segment in enumerate(tracer_result.untraced_segments):
-            seg_coords = list(segment.coords)
-            seg_x = [coord[0] for coord in seg_coords]
-            seg_y = [coord[1] for coord in seg_coords]
-            ax.plot(seg_x, seg_y, 'orange', linewidth=5, alpha=0.7,
-                    label='Untraced Segment' if i == 0 else "")
-
-    # Show missing section alerts
-    if tracer_result.missing_section_alerts:
-        for i, alert in enumerate(tracer_result.missing_section_alerts):
-            # Mark suggested location
-            ax.plot(alert.suggested_location.x, alert.suggested_location.y,
-                    'r*', markersize=15, label='Missing Section Alert' if i == 0 else "")
-
-            # Add text annotation
-            ax.annotate(f'Missing\nSection #{i + 1}',
-                        xy=(alert.suggested_location.x, alert.suggested_location.y),
-                        xytext=(10, 10), textcoords='offset points',
-                        bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.7),
-                        fontsize=8, ha='left')
-
-            # Draw arrow from exit point to suggested location
-            ax.annotate('', xy=(alert.suggested_location.x, alert.suggested_location.y),
-                        xytext=(alert.exit_point.x, alert.exit_point.y),
-                        arrowprops=dict(arrowstyle='->', color='red', lw=2, alpha=0.7))
-
-    ax.set_xlabel('X Coordinate (units)')
-    ax.set_ylabel('Y Coordinate (units)')
-    ax.set_title('Overview: Well Path and Missing Sections')
-    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    ax.grid(True, alpha=0.3)
-    ax.set_aspect('equal', adjustable='box')
-
-    # Right plot: Focus on missing section areas
-    ax = ax2
-
-    if tracer_result.missing_section_alerts:
-        # Focus on the first missing section area
-        alert = tracer_result.missing_section_alerts[0]
-
-        # Set view around the missing section
-        center_x = alert.suggested_location.x
-        center_y = alert.suggested_location.y
-        view_size = 6000
-
-        ax.set_xlim(center_x - view_size / 2, center_x + view_size / 2)
-        ax.set_ylim(center_y - view_size / 2, center_y + view_size / 2)
-
-        # Plot existing sections in view
-        for section_id in sections_df['conc'].unique():
-            section_data = sections_df[sections_df['conc'] == section_id]
-            coords = [(row['x'], row['y']) for _, row in section_data.iterrows()]
-            if len(coords) > 2:
-                polygon = Polygon(coords)
-                if polygon.is_valid and polygon.intersects(
-                        Polygon([(center_x - view_size / 2, center_y - view_size / 2),
-                                 (center_x + view_size / 2, center_y - view_size / 2),
-                                 (center_x + view_size / 2, center_y + view_size / 2),
-                                 (center_x - view_size / 2, center_y + view_size / 2)])):
-                    x_coords, y_coords = polygon.exterior.xy
-                    ax.plot(x_coords, y_coords, 'b-', linewidth=2)
-                    ax.fill(x_coords, y_coords, alpha=0.3, color='lightblue')
-
-                    centroid = polygon.centroid
-                    ax.text(centroid.x, centroid.y, section_id,
-                            ha='center', va='center', fontsize=10, fontweight='bold')
-
-        # Plot well path in view
-        well_mask = ((well_path_df['e_offset_delta'] >= center_x - view_size / 2) &
-                     (well_path_df['e_offset_delta'] <= center_x + view_size / 2) &
-                     (well_path_df['n_offset_delta'] >= center_y - view_size / 2) &
-                     (well_path_df['n_offset_delta'] <= center_y + view_size / 2))
-
-        well_in_view = well_path_df[well_mask]
-        if not well_in_view.empty:
-            ax.plot(well_in_view['e_offset_delta'], well_in_view['n_offset_delta'],
-                    'r-', linewidth=4, alpha=0.8)
-
-        # Highlight the missing section area
-        ax.plot(alert.suggested_location.x, alert.suggested_location.y,
-                'r*', markersize=20)
-
-        # Draw proposed section boundary (estimated)
-        section_size = 4000  # Estimated section size
-        proposed_bounds = [
-            (alert.suggested_location.x - section_size / 2, alert.suggested_location.y - section_size / 2),
-            (alert.suggested_location.x + section_size / 2, alert.suggested_location.y - section_size / 2),
-            (alert.suggested_location.x + section_size / 2, alert.suggested_location.y + section_size / 2),
-            (alert.suggested_location.x - section_size / 2, alert.suggested_location.y + section_size / 2),
-            (alert.suggested_location.x - section_size / 2, alert.suggested_location.y - section_size / 2)
-        ]
-
-        prop_x = [coord[0] for coord in proposed_bounds]
-        prop_y = [coord[1] for coord in proposed_bounds]
-        ax.plot(prop_x, prop_y, 'r--', linewidth=3, alpha=0.7, label='Proposed Section')
-        ax.fill(prop_x, prop_y, alpha=0.2, color='red')
-
-        ax.text(alert.suggested_location.x, alert.suggested_location.y - section_size / 3,
-                'MISSING\nSECTION', ha='center', va='center',
-                fontsize=12, fontweight='bold', color='red')
-
-    ax.set_xlabel('X Coordinate (units)')
-    ax.set_ylabel('Y Coordinate (units)')
-    ax.set_title('Detail: Missing Section Area')
+    # Formatting
+    ax.set_xlabel('Easting / E-Offset')
+    ax.set_ylabel('Northing / N-Offset')
+    ax.set_title(title)
+    ax.legend()
     ax.grid(True, alpha=0.3)
     ax.set_aspect('equal', adjustable='box')
 
     plt.tight_layout()
-    return fig
+    plt.show()
 
 
-def demonstrate_missing_section_detection():
+def get_starter_pt(row, current_plat):
+    if row['FNL'] < row['FSL']:
+        fnsl_val = row['FNL']
+        fnsl = 'FNL'
+    else:
+        fnsl_val = row['FSL']
+        fnsl = 'FSL'
+    if row['FEL'] < row['FWL']:
+        fewl_val = row['FEL']
+        fewl = 'FEL'
+    else:
+        fewl_val = row['FWL']
+        fewl = 'FWL'
+    out = find_point_from_footages(current_plat, float(fnsl_val), fnsl, float(fewl_val), fewl)
+    return out
+
+
+def tracer_process_2(well_path_dict, original_all_plats_df, current_plat_coords, well_path, current_plat_conc, currently_used_plat_data):
+    well_paths_lst = [k for k, v in well_path_dict.items()]
+    all_plats_df = original_all_plats_df
+    # well_path = well_path_dict[i].clearance_data
+    result_coords = current_plat_coords[['x', 'y', 'side']].values.tolist()
+    # print(current_plat_coords)
+    starter_pt = get_starter_pt(well_path.iloc[0], result_coords)
+    starter_utm = well_path.iloc[0][['easting', 'northing']].values.tolist()
+    dx_start, dy_start = (float(well_path['easting'].iloc[0])) - starter_pt[0] * 0.3048, (
+        float(well_path['northing'].iloc[0])) - starter_pt[1] * 0.3048
+    well_path[['e_offset_delta', 'n_offset_delta']] = (well_path.apply(
+        lambda row: get_offset_added_delta(starter_pt[0], starter_pt[1], row['e_offset'], row['n_offset']), axis=1,
+        result_type='expand'))
+    well_path['rel_data_order'] = 99
+    current_well_path_section = copy.deepcopy(well_path)
+    current_plat_coords_modified = [i[:2] for i in result_coords]
+    current_polygon = Polygon(current_plat_coords_modified)
+    used_conc_sections = [current_plat_conc]
+    counter = 2
+    intersection_pt_current = Point(0, 0)
+    print("____________________________________________")
+    while True:
+        polygon_plat = current_polygon
+        # pts = [Point(x, y) for x, y in zip(current_well_path_section.e_offset_delta, current_well_path_section.n_offset_delta)]
+        intersection_segment = LineString(
+            list(zip(current_well_path_section['e_offset_delta'], current_well_path_section['n_offset_delta'])))
+        boundary = polygon_plat.exterior
+        intersection_pt = intersection_segment.intersection(boundary)
+
+        # print(current_well_path_section, intersection_pt_current)
+
+        # plot_shapely_and_dataframe(polygon_plat, intersection_pt_current, current_well_path_section)
+
+        # intersection_pt = check_intersection_pts(intersection_pt, intersection_segment)
+        # intersection_pt_current = intersection_pt
+        try:
+            current_well_path_section, intersection_pt, dir_val, index = check_full_inter_pts(intersection_pt, current_well_path_section, current_plat_coords, intersection_segment)
+            intersection_pt_current = intersection_pt
+        except KeyError:
+            all_plats_df[['x_delta', 'y_delta']] = (
+                all_plats_df.apply(
+                    lambda row: get_offset_added_delta(row['x'] * 0.3048, row['y'] * 0.3048, dx_start, dy_start),
+                    axis=1,
+                    result_type='expand'))
+            # print(all_plats_df)
+            # graph_plats_and_well(all_plats_df, list(zip(well_path.easting, well_path.northing)), title)
+            return all_plats_df
+        print(intersection_pt, dir_val, index)
+        next_plat_df = currently_used_plat_data[currently_used_plat_data['range'] == counter]
+        try:
+            next_plat_conc = next_plat_df['conc'].iloc[0]
+            if next_plat_conc == [used_conc_sections[-1]]:
+                break
+            if next_plat_conc not in used_conc_sections:
+                rewritten_coords = all_plats_df[all_plats_df['conc'] == next_plat_conc]
+            else:
+                used_conc_sections.append(next_plat_conc)
+
+                next_plat_coords_dict = all_plats_df[all_plats_df['conc'] == next_plat_conc]
+
+                well_prox_boo = well_path_prox(intersection=intersection_pt_current, side_dict_all=next_plat_coords_dict,
+                                               direction=dir_val)
+                rewritten_coords = coords_stitcher(next_plat_coords_dict,
+                                                   all_plats_df[all_plats_df['conc'] == current_plat_conc],
+                                                   dir_val, well_prox_boo)
+                print(rewritten_coords)
+
+
+        except IndexError as f:
+            error_traceback = traceback.format_exc()
+            print(f"Error details:\n{error_traceback}")
+            print('broke here 2')
+
+            break
+
+        current_polygon = df_to_polygon(rewritten_coords)
+        new_dict = pd.DataFrame(data=rewritten_coords.to_dict(orient='list'))
+        try:
+            all_plats_df = update_original_dataframe(all_plats_df, new_dict)
+            counter += 1
+            current_plat_conc = next_plat_conc
+        except ValueError as e:
+            print('broke here 3')
+            all_plats_df[['x_delta', 'y_delta']] = (
+                all_plats_df.apply(
+                    lambda row: get_offset_added_delta(row['x'] / 0.3048, row['y'] / 0.3048, starter_utm[0],
+                                                       starter_utm[1]), axis=1,
+                    result_type='expand'))
+            return all_plats_df
+    return pd.DataFrame()
+
+def tracer_process(well_path_dict, original_all_plats_df, current_plat_coords, well_path, current_plat_conc, currently_used_plat_data):
+    well_paths_lst = [k for k, v in well_path_dict.items()]
+    all_plats_df = original_all_plats_df
+    # well_path = well_path_dict[i].clearance_data
+    result_coords = current_plat_coords[['x', 'y', 'side']].values.tolist()
+    starter_pt = get_starter_pt(well_path.iloc[0], result_coords)
+    starter_utm = well_path.iloc[0][['easting', 'northing']].values.tolist()
+    dx_start, dy_start = (float(well_path['easting'].iloc[0]) / 0.3048) - starter_pt[0], (float(well_path['northing'].iloc[0]) / 0.3048) - starter_pt[1]
+    well_path[['e_offset_delta', 'n_offset_delta']] = (well_path.apply(lambda row: get_offset_added_delta(starter_pt[0], starter_pt[1], row['e_offset'], row['n_offset']), axis=1, result_type='expand'))
+    well_path['rel_data_order'] = 99
+    # print(well_path[['e_offset_delta', 'n_offset_delta']])
+
+    current_plat_coords_modified = [i[:2] for i in result_coords]
+    current_polygon = Polygon(current_plat_coords_modified)
+    counter = 2
+    intersection_pt_current = Point(0, 0)
+    while True:
+        polygon_plat = current_polygon
+        pts = [Point(x, y) for x, y in zip(well_path.e_offset_delta, well_path.n_offset_delta)]
+        mask = [polygon_plat.contains(pt) for pt in pts]
+        well_path.loc[mask, 'rel_data_order'] = counter - 1
+        used_well_path_df = well_path[well_path['rel_data_order'] >= counter - 1]
+        intersection_segment = LineString(list(zip(used_well_path_df['e_offset_delta'], used_well_path_df['n_offset_delta'])))
+        boundary = polygon_plat.exterior
+        intersection_pt = intersection_segment.intersection(boundary)
+        intersection_pt = check_for_multipoint(intersection_pt, intersection_pt_current)
+        intersection_pt_current = intersection_pt
+        try:
+            dir_val, index = get_direction_sides(all_plats_df, current_plat_conc, intersection_pt)
+        except (AttributeError, TypeError) as e:
+            print(e)
+            all_plats_df[['x_delta', 'y_delta']] = (
+                all_plats_df.apply(lambda row: get_offset_added_delta(row['x'] / 0.3048, row['y'] / 0.3048, starter_utm[0], starter_utm[1]), axis=1,
+                                     result_type='expand'))
+            # break
+            return all_plats_df
+
+        next_plat_df = currently_used_plat_data[currently_used_plat_data['range'] == counter]
+        try:
+            next_plat_conc = next_plat_df['conc'].iloc[0]
+        except IndexError as f:
+            break
+        next_plat_coords_dict = all_plats_df[all_plats_df['conc'] == next_plat_conc]
+
+        well_prox_boo = well_path_prox(intersection=intersection_pt, side_dict_all=next_plat_coords_dict, direction=dir_val)
+        rewritten_coords = coords_stitcher(next_plat_coords_dict, all_plats_df[all_plats_df['conc'] == current_plat_conc], dir_val, well_prox_boo)
+        current_polygon = df_to_polygon(rewritten_coords)
+        new_dict = pd.DataFrame(data=rewritten_coords.to_dict(orient='list'))
+
+        try:
+            all_plats_df = update_original_dataframe(all_plats_df, new_dict)
+            counter += 1
+            current_plat_conc = next_plat_conc
+        except ValueError as e:
+            all_plats_df[['x_delta', 'y_delta']] = (
+                all_plats_df.apply(lambda row: get_offset_added_delta(row['x'] / 0.3048, row['y'] / 0.3048, starter_utm[0], starter_utm[1]), axis=1,
+                                     result_type='expand'))
+            # break
+            return all_plats_df
+    return pd.DataFrame()
+def coords_stitcher(next_coords_df, current_coords_df, direction, direction_boo):
+    def get_point_indices():
+        """
+        Determines the correct starting and matched indices based on direction.
+
+        Args:
+            direction (str): The cardinal direction ("W", "N", "E", "S").
+            direction_boo (bool): True to select the first index pair, False for the second.
+
+        Returns:
+            tuple: A tuple containing the (starting_point_index, matched_point_index).
+        """
+        # Consolidate all mappings into a single, clear dictionary.
+        # Format: direction: ([start_indices], [matched_indices])
+        # POINT_MAPPING = {
+        #     "w": ([0, 4], [12, 8]),
+        #     "n": ([4, 8], [16, 12]),
+        #     "e": ([8, 12], [4, 0]),
+        #     "s": ([12, 16], [8, 4]),
+        # }
+        POINT_MAPPING = {
+            "w": ([0, 4], [14, 10]),
+            "n": ([5, 9], [19, 15]),
+            "e": ([10, 14], [4, 0]),
+            "s": ([15, 19], [9, 5]),
+        }
+        lst_dict = {"0": [0, 4], "1": [4, 8], "2": [8, 12], "3": [12, 16]}
+        matched_lst_dict = {"0": [12, 8], "1": [16, 12], "2": [4, 0], "3": [8, 4]}
+        # Use a simple integer (0 or 1) to select from the lists.
+        selector = 0 if direction_boo else 1
+
+        # Directly look up the lists of options for the given direction.
+        start_options, match_options = POINT_MAPPING[direction]
+
+        # Select the specific index from each list and return the pair.
+        return start_options[selector], match_options[selector]
+
+    def calculate_diff_from_dfs():
+        """
+        Calculates the difference between two coordinates selected from DataFrames.
+
+        The function translates legacy list-based indices into DataFrame locations
+        to select the appropriate points for calculation.
+
+        Args:
+            current_coords_df (pd.DataFrame): DataFrame with 'west', 'north', 'east', 'south' columns.
+            next_coords_df (pd.DataFrame): DataFrame with 'west', 'north', 'east', 'south' columns.
+            starting_pts (int): The legacy index for the point in current_coords_df.
+            matched_pt (int): The legacy index for the point in next_coords_df.
+
+        Returns:
+            tuple: A tuple containing the difference in x and y (diff_x, diff_y).
+        """
+        # Map for converting index to column name
+
+        column_map = {0: 'west', 1: 'north', 2: 'east', 3: 'south'}
+
+        # 1. Get location for the starting point in current_coords_df
+        start_col = column_map[starting_pts // 5]
+
+        start_row = (starting_pts % 5)
+
+        current_point = \
+            current_coords_df[(current_coords_df['side'] == start_col) & (current_coords_df['point_i'] == start_row)][
+                ['x', 'y']].iloc[0].values.tolist()
+        # current_point = current_coords_df.loc[start_row, start_col]
+        # 2. Get location for the matched point in next_coords_df
+        matched_col = column_map[matched_pt // 5]
+        matched_row = matched_pt % 5
+
+        next_point = \
+            next_coords_df[(next_coords_df['side'] == matched_col) & (next_coords_df['point_i'] == matched_row)][
+                ['x', 'y']].iloc[0].values.tolist()
+        # next_point = next_coords_df.loc[matched_row, matched_col]
+
+        # 3. Perform the calculation
+        diff_x_pt = current_point[0] - next_point[0]
+        diff_y_pt = current_point[1] - next_point[1]
+
+        return diff_x_pt, diff_y_pt
+
+    def my_calc(x, y):
+        return x + diff_x_used, y + diff_y_used
+
+    def update_original_dataframe(df_o, df_new):
+        dir_dict = {'n': ['north', 'south'],
+                    's': ['south', 'north'],
+                    'e': ['west', 'east'],
+                    'w': ['east', 'west']}
+        dir_lst = dir_dict[direction]
+        north_coords = df_o[df_o['side'] == dir_lst[0]][['x', 'y']].iloc[::-1].reset_index(drop=True)
+        south_indices = df_new[df_new['side'] == dir_lst[1]].index
+        df_new.loc[south_indices, ['x', 'y']] = north_coords.values
+        #
+        # df2 = df_o.set_index(['conc', 'side', 'point_i'])
+        # repl2 = df_new.set_index(['conc', 'side', 'point_i'])
+        #
+        # # 2) restrict repl2 to just the columns you want to overwrite
+        # #    (here: 'x' and 'y')
+        # repl2 = repl2[['x', 'y']]
+        #
+        # # 3) update df2 in place
+        # df2.update(repl2)
+        #
+        # # 4) (optionally) drop the index back to columns
+        # df_new = df2.reset_index()
+        return df_new
+
+    # to run this on every cell in every column:
+    # result_df = df.applymap(my_calc)
+    opp_direction_list = {"0": '2', "1": '3', "2": '0', "3": '1'}
+    cols = ['south', 'east', 'north', 'west']
+    # current_coords_df  = pd.DataFrame(data = current_plat_dict_out)
+    # next_coords_df = pd.DataFrame(data = next_plat_dict_out)
+    # next_coords_df_mod = copy.copy(next_coords_df)
+    # current_coords_df_mod = copy.copy(current_coords_df)
+    # idx_w0 = current_coords_df_mod.loc[(current_coords_df_mod.side == 'west') & (current_coords_df_mod.point_i == 0), :].index[0]
+    # idx_sN = current_coords_df_mod.loc[current_coords_df_mod.side == 'south'].nlargest(1, 'point_i').index[0]
+    # current_coords_df_mod.loc[0, ['x', 'y']] = current_coords_df_mod.loc[19, ['x', 'y']].values
+    # current_coords_df_mod = current_coords_df_mod.apply(lambda row: round_row(row['x'], row['y']))
+    # current_coords_df_mod['west'].iloc[0] = current_coords_df_mod['south'].iloc[4]
+    # current_coords_df_mod.loc[0, 'west'] = current_coords_df_mod.loc[4, 'south']
+    # current_coords_df_mod = current_coords_df.applymap(lambda pt:[round(pt[0],1), round(pt[1], 1)])
+    # current_coords_df_zeroed = current_coords_df_mod.apply(lambda col: col.where(~col.map(tuple).duplicated(), other=np.nan))
+    starting_pts, matched_pt = get_point_indices()
+    diff_x_used, diff_y_used = calculate_diff_from_dfs()
+
+    next_coords_df[['x', 'y']] = next_coords_df.apply(lambda row: my_calc(row['x'], row['y']), axis=1,
+                                                      result_type='expand')
+    next_coords_df = update_original_dataframe(current_coords_df, next_coords_df)
+
+    # next_coords_df_mod = next_coords_df.applymap(my_calc)
+    return next_coords_df
+def find_point_from_footages(polygon_coords, ns_distance, ns_type, ew_distance, ew_type):
     """
-    Run comprehensive demonstration of missing section detection
+    Find point within polygon using any combination of boundary distance references.
+
+    Args:
+        polygon_coords: List of [x, y, side] where side is 'north', 'south', 'east', or 'west'
+        ns_distance: North-South distance (feet)
+        ns_type: 'FNL' (From North Line) or 'FSL' (From South Line)
+        ew_distance: East-West distance (feet)
+        ew_type: 'FEL' (From East Line) or 'FWL' (From West Line)
+
+    Returns:
+        [x, y] coordinates of the intersection point
     """
-    print("=" * 80)
-    print("MISSING SECTION DETECTION DEMONSTRATION")
-    print("=" * 80)
+    # Separate coordinates by side
+    sides = {}
+    for coord in polygon_coords:
+        x, y, side = coord
+        if side not in sides:
+            sides[side] = []
+        sides[side].append([x, y])
+    sides['west'].append(sides['north'][0])
+    sides['north'].append(sides['east'][0])
+    sides['east'].append(sides['south'][0])
+    sides['south'].append(sides['west'][0])
+    # Get the appropriate boundary segments based on ns_type
+    if ns_type == 'FNL':
+        ns_coords = sides.get('north', [])
+        ns_offset_side = 'right'  # South is right when going east
+    else:  # FSL
+        ns_coords = sides.get('south', [])
+        ns_offset_side = 'left'  # North is left when going west
+    # Get the appropriate boundary segments based on ew_type
+    if ew_type == 'FEL':
+        ew_coords = sides.get('east', [])
+        ew_offset_side = 'left'  # West is left when going north
+    else:  # FWL
+        ew_coords = sides.get('west', [])
+        ew_offset_side = 'right'  # East is right when going south
 
-    # Test Case 1: Simple missing section
-    print("\n🔍 TEST CASE 1: Simple Missing Section Scenario")
-    print("-" * 50)
+    # Create line segments for each boundary
+    ns_segments = []
+    if len(ns_coords) > 0:
+        for i in range(len(ns_coords) - 1):
+            ns_segments.append((tuple(ns_coords[i]), tuple(ns_coords[i + 1])))
 
-    sections_df1, well_path_df1 = create_scenario_with_missing_sections()
+    ew_segments = []
+    if len(ew_coords) > 0:
+        for i in range(len(ew_coords) - 1):
+            ew_segments.append((tuple(ew_coords[i]), tuple(ew_coords[i + 1])))
+    # Create parallel segments
+    ns_parallel_segments = []
+    for segment in ns_segments:
+        line = LineString(segment)
+        try:
+            parallel = line.parallel_offset(ns_distance, 'right')
+            #
+            # if ns_type == 'FNL':
+            #     parallel = line.parallel_offset(ns_distance, ns_offset_side)
+            # elif ns_type == 'FSL':
+            #     parallel = line.parallel_offset(-ns_distance, ns_offset_side)
+            if hasattr(parallel, 'coords'):
+                ns_parallel_segments.append(tuple(parallel.coords))
+        except:
+            continue
+    ew_parallel_segments = []
+    for segment in ew_segments:
+        line = LineString(segment)
+        # try:
+        parallel = line.parallel_offset(ew_distance, 'right')
+        # new_data = line_str_seg.parallel_offset(distance, 'right', resolution=1, join_style=2, mitre_limit=5)
+        if hasattr(parallel, 'coords'):
+            ew_parallel_segments.append(list(parallel.coords))
+        # except as e:
+        #     continue
+    # Find intersection
+    for ns_seg in ns_parallel_segments:
+        line1 = LineString(ns_seg)
+        for ew_seg in ew_parallel_segments:
+            line2 = LineString(ew_seg)
+            intersection = line1.intersection(line2)
 
-    # Import and use the enhanced tracer
-    from well_path_tracer import WellPathTracer, extract_well_coordinates_from_clearance_data
+            if hasattr(intersection, 'x') and hasattr(intersection, 'y'):
+                return [intersection.x, intersection.y]
 
-    tracer = WellPathTracer(tolerance=0.1, debug=True)
-    well_path1 = extract_well_coordinates_from_clearance_data(well_path_df1)
-
-    print(f"Created scenario with {len(sections_df1['conc'].unique())} sections")
-    print(f"Well path length: {well_path1.length:.2f} units")
-
-    result1 = tracer.trace_well_path(well_path1, sections_df1)
-
-    print(f"\nAnalysis Results:")
-    print(f"✓ Sections visited: {len(result1.sections_visited)}")
-    print(f"✓ Untraced segments: {len(result1.untraced_segments)}")
-    print(f"🚨 Missing section alerts: {len(result1.missing_section_alerts)}")
-
-    if result1.missing_section_alerts:
-        print(f"\nMISSING SECTION DETAILS:")
-        for i, alert in enumerate(result1.missing_section_alerts, 1):
-            print(f"  Alert #{i}:")
-            print(f"    Exit from: {alert.exit_section_id} (via {alert.exit_side})")
-            print(f"    Trajectory: {alert.trajectory_direction}")
-            print(f"    Confidence: {alert.confidence_score:.2f}")
-            print(f"    Suggested location: ({alert.suggested_location.x:.0f}, {alert.suggested_location.y:.0f})")
-
-    # Test Case 2: Complex missing sections with re-entries
-    print(f"\n🔍 TEST CASE 2: Complex Missing Sections Scenario")
-    print("-" * 50)
-
-    sections_df2, well_path_df2 = create_complex_missing_section_scenario()
-    well_path2 = extract_well_coordinates_from_clearance_data(well_path_df2)
-
-    print(f"Created complex scenario with {len(sections_df2['conc'].unique())} sections")
-    print(f"Well path length: {well_path2.length:.2f} units")
-
-    result2 = tracer.trace_well_path(well_path2, sections_df2)
-
-    print(f"\nComplex Analysis Results:")
-    print(f"✓ Sections visited: {len(result2.sections_visited)}")
-    print(f"✓ Total visits: {sum(result2.sections_visited.values())}")
-    print(f"✓ Re-entries: {sum(result2.sections_visited.values()) - len(result2.sections_visited)}")
-    print(f"✓ Untraced segments: {len(result2.untraced_segments)}")
-    print(f"🚨 Missing section alerts: {len(result2.missing_section_alerts)}")
-
-    # Generate comprehensive report
-    print(f"\n📋 COMPREHENSIVE ANALYSIS REPORT (Test Case 2):")
-    print("=" * 60)
-    report = tracer.create_traversal_report(result2)
-    print(report)
-
-    # Create visualizations
-    print(f"\n📊 Creating visualizations...")
-    try:
-        # Simple scenario
-        fig1 = visualize_missing_section_analysis(
-            sections_df1, well_path_df1, result1,
-            "Simple Missing Section Detection"
-        )
-        plt.figure(fig1.number)
-        plt.savefig('missing_section_simple.png', dpi=300, bbox_inches='tight')
-
-        # Complex scenario
-        fig2 = visualize_missing_section_analysis(
-            sections_df2, well_path_df2, result2,
-            "Complex Missing Section Detection"
-        )
-        plt.figure(fig2.number)
-        plt.savefig('missing_section_complex.png', dpi=300, bbox_inches='tight')
-
-        print("✓ Visualizations saved:")
-        print("  - missing_section_simple.png")
-        print("  - missing_section_complex.png")
-
-    except Exception as e:
-        print(f"✗ Visualization error: {e}")
-
-    return result1, result2
+    return None
 
 
-def integration_guidance():
-    """
-    Provide guidance for integrating missing section detection with existing system
-    """
-    print("\n" + "=" * 80)
-    print("INTEGRATION GUIDANCE FOR EXISTING SYSTEM")
-    print("=" * 80)
 
-    print("""
-🔧 INTEGRATION STEPS:
+def triangulatorWithKnownDataProcess(tsr_data, well_path, pts, df, conc, survey_data, well_parameter_data, shl, versions, conc_data, v_labels):
+    survey_data = alterSurveyForLargeSpacingBetweenPts(survey_data)
+    used_points = [pts[i][versions[i]] for i in range(len(pts))]
+    counter = 0
+    initial_data = df[df['new_code'] == conc].to_numpy().tolist()
+    initial_data = initial_data[:16]
+    plat_north_ref = initial_data[0][-3]
+    plat_north_refs_lst = [plat_north_ref]
+    foo = [survey_data[0] + [0] * 11]
+    survey_data = survey_data[1:]
+    known_conc_data = [conc]
+    dirLst = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+    lst = [[0, 0, 0, 0, 0, 0, 0, 0],
+           [36, 31, 6, 7, 12, 11, 2, 35],
+           [35, 36, 1, 12, 11, 10, 3, 34],
+           [34, 35, 2, 11, 10, 9, 4, 33],
+           [33, 34, 3, 10, 9, 8, 5, 32],
+           [32, 33, 4, 9, 8, 7, 6, 31],
+           [31, 32, 5, 8, 7, 12, 1, 36],
+           [6, 5, 8, 17, 18, 13, 12, 1],
+           [5, 4, 9, 16, 17, 18, 7, 6],
+           [4, 3, 10, 15, 16, 17, 8, 5],
+           [3, 2, 11, 14, 15, 16, 9, 4],
+           [2, 1, 12, 13, 14, 15, 10, 3],
+           [1, 6, 7, 18, 13, 14, 11, 2],
+           [12, 7, 18, 19, 24, 23, 14, 11],
+           [11, 12, 13, 24, 23, 22, 15, 10],
+           [10, 11, 14, 23, 22, 21, 16, 9],
+           [9, 10, 15, 22, 21, 20, 17, 8],
+           [8, 9, 16, 21, 20, 19, 18, 7],
+           [7, 8, 17, 20, 19, 24, 13, 12],
+           [18, 17, 20, 29, 30, 25, 24, 13],
+           [17, 16, 21, 28, 29, 30, 19, 18],
+           [16, 15, 22, 27, 28, 29, 20, 17],
+           [15, 14, 23, 26, 27, 28, 21, 16],
+           [14, 13, 24, 25, 26, 27, 22, 15],
+           [13, 18, 19, 30, 25, 26, 23, 14],
+           [24, 19, 30, 31, 36, 35, 26, 23],
+           [23, 24, 25, 36, 35, 34, 27, 22],
+           [22, 23, 26, 35, 34, 33, 28, 21],
+           [21, 22, 27, 34, 33, 32, 29, 20],
+           [20, 21, 28, 33, 32, 31, 30, 19],
+           [19, 20, 29, 32, 31, 36, 25, 24],
+           [30, 29, 32, 5, 6, 1, 36, 25],
+           [29, 28, 33, 4, 5, 6, 31, 30],
+           [28, 27, 34, 3, 4, 5, 32, 29],
+           [27, 26, 35, 2, 3, 4, 33, 28],
+           [26, 25, 36, 1, 2, 3, 34, 27],
+           [25, 30, 31, 6, 1, 2, 35, 26]]
+    section_degrees_data = [used_points[0]]
+    section = int(float(tsr_data[0][6]))
+    data = used_points[0]
+    md_lst = [i[0] for i in survey_data]
+    inc_lst = [i[1] for i in survey_data]
+    azi_lst = [i[2] for i in survey_data]
+    north_reference, magnetic_declination, convergence_angle, target_azimuth = well_parameter_data[0], well_parameter_data[1], float(well_parameter_data[2]), float(well_parameter_data[3])
+    min_curv_data = wmc.mainCalculation(md_lst, inc_lst, azi_lst, convergence_angle, north_reference, plat_north_ref, magnetic_declination, target_azimuth)
+    df = editDFForTriangulator(df, versions, v_labels, conc_data)
+    offset_pts_lst = [[i[8] + shl[0], i[7] + shl[1]] for i in min_curv_data]
+    test_path = copy.deepcopy(offset_pts_lst)
+    prev_section_data = tsr_data[0][6:]
 
-1. UPDATE MAIN TRACER CALL:
-   Replace your existing main_tracer_process call with enhanced version:
+    while True:
+        corners, sides_generated = ma.cornerGeneratorProcess(data)
+        sides_generated = [[j[:-1] for j in i] for i in sides_generated]
+        segment_lst = [[[i[j], i[j + 1]] for j in range(len(i) - 1)] for i in sides_generated]
+        # test_path, direction = findIntersectionBetweenWellAndSection(segment_lst, offset_pts_lst, shl)
+        intersection, direction, well_index_end, foo, well_path_tester = findWellPathBoundaryIntersection(segment_lst, survey_data, well_parameter_data, plat_north_ref, foo, shl)
+        if not well_path_tester or direction == 'Null':
+            return min_curv_data, known_conc_data, section_degrees_data, plat_north_refs_lst
+        index = dirLst.index(direction)
+        new_section = lst[section][index]
+        township, townshipDir, rng, rngDir, prev_section_data = modifySection(section, new_section, prev_section_data)
+        conc_info = [new_section, township, townshipDir, rng, rngDir, tsr_data[0][-1]]
+        new_conc = ma.reTranslateData(conc_info)
+        if new_conc in known_conc_data:
+            known_index = known_conc_data.index(new_conc)
+            data = section_degrees_data[known_index]
+            counter += 1
+        else:
+            old_well_path_tester = well_path_tester[:well_index_end + 1]
+            proxBoo = getBooProx(data, old_well_path_tester, direction)
+            known_conc_data.append(new_conc)
+            data_new = df[df['new_code'] == new_conc].to_numpy().tolist()
 
-   # OLD:
-   tracer_output = self.main_tracer_process(current_plat_coords, current_plat_conc, 
-                                           original_all_plats_df, clearance_data, title)
-
-   # NEW:
-   from well_path_tracer import enhanced_main_tracer_process
-   result = enhanced_main_tracer_process(current_plat_coords, current_plat_conc,
-                                        original_all_plats_df, clearance_data, debug=True)
-
-2. HANDLE MISSING SECTION ALERTS:
-   Add logic to process missing section alerts:
-
-   if result.missing_section_alerts:
-       for alert in result.missing_section_alerts:
-           # Show alert to user
-           self.show_missing_section_alert(alert)
-
-           # Suggest adding to rel_all_sections_tabs
-           next_tab_num = self.get_next_available_tab_number()
-           suggested_tab = f"tab_rel_{next_tab_num}"
-
-           # Optionally auto-populate section data
-           if alert.confidence_score > 0.7:
-               self.suggest_section_addition(alert, suggested_tab)
-
-3. UI INTEGRATION:
-   Add missing section alerts to your UI:
-
-   def show_missing_section_alert(self, alert):
-       msg = QMessageBox()
-       msg.setIcon(QMessageBox.Warning)
-       msg.setWindowTitle("Missing Section Detected")
-       msg.setText(alert.recommended_action)
-       msg.setDetailedText(f"Suggested location: ({alert.suggested_location.x:.0f}, {alert.suggested_location.y:.0f})")
-       msg.exec_()
-
-4. AUTO-SECTION GENERATION (Optional):
-   For high-confidence alerts, automatically generate section data:
-
-   def auto_generate_section_data(self, alert):
-       # Create section coordinates based on alert.suggested_location
-       # Use typical section size and orientation
-       # Add to next available tab in rel_all_sections_tabs
-
-5. WORKFLOW INTEGRATION:
-   Modify your workflow to handle iterative section addition:
-
-   while True:
-       result = enhanced_main_tracer_process(...)
-
-       if not result.missing_section_alerts:
-           break  # All sections covered
-
-       # Show alerts to user
-       # Wait for user to add sections
-       # Re-run analysis
-
-🎯 BENEFITS:
-✓ Automatically detect missing section coverage
-✓ Provide specific location recommendations  
-✓ Suggest section IDs based on geometric analysis
-✓ Prioritize alerts by confidence score
-✓ Integrate seamlessly with existing rel_all_sections_tabs workflow
-✓ Reduce manual guesswork in section placement
-✓ Ensure complete well path coverage
-
-🔍 TESTING:
-- Test with known incomplete section sets
-- Verify alert accuracy with field data
-- Validate suggested section IDs match surveying conventions
-- Confirm integration with existing UI workflow
-""")
-
-
-if __name__ == "__main__":
-    print("Missing Section Detection Demo Starting...")
-
-    try:
-        # Run demonstrations
-        result1, result2 = demonstrate_missing_section_detection()
-
-        # Show integration guidance
-        integration_guidance()
-
-        print("\n" + "=" * 80)
-        print("✅ MISSING SECTION DETECTION DEMO COMPLETED")
-        print("=" * 80)
-        print("\nKey Capabilities Demonstrated:")
-        print("✓ Automatic detection of well paths exiting into unmapped areas")
-        print("✓ Confidence-based alerting system")
-        print("✓ Specific location recommendations for new sections")
-        print("✓ Section ID suggestions based on geometric analysis")
-        print("✓ Integration guidance for existing rel_all_sections_tabs workflow")
-        print("✓ Visual analysis tools for validation")
-
-        print(f"\nThe enhanced tracer is ready to eliminate guesswork in section placement!")
-
-    except Exception as e:
-        print(f"\nDemo failed: {e}")
-        import traceback
-
-        traceback.print_exc()
+            if len(data_new) == 0:
+                data_new = GUIDataAdd.addDataIfAGRCNotFound(conn, new_conc, conc_info)
+            data_new = sorted(data_new, key=lambda x: x[-1], reverse=True)
+            plat_north_ref = data_new[0][-3]
+            plat_north_refs_lst.append(plat_north_ref)
+            all_data = west_data + east_data + north_data + south_data
+            data_new_deg, data_new_dec = ma.dataConverterPlatToUtm(all_data)
+            # data_new_dec = ma.convertToDecimal(copy.deepcopy(data_new))
+            # data_new_deg = ma.pointsConverter(data_new_dec)
+            rewritten_coords = coordsAdjuster(data_new_deg, data, direction, proxBoo)
+            data = rewritten_coords
+            section_degrees_data.append(data)
+            counter += 1
+        section = new_section
+    return min_curv_data, known_conc_data, section_degrees_data, plat_north_refs_lst
