@@ -27,10 +27,7 @@ from PyQt5.QtCore import QRegExp
 from PyQt5.QtGui import QDesktopServices, QDoubleValidator, QRegExpValidator
 from PyQt5.QtWidgets import QApplication, QMainWindow
 from EToolsLimited import Ui_Dialog
-import sys
-import os
-sys.path.append(os.path.dirname(__file__))
-from file_helper import get_plss_sections_path
+
 import matplotlib.pyplot as plt
 
 import math
@@ -362,7 +359,7 @@ class SQLConnector:
     def _create_connection_string(self):
         """Create connection string with caching."""
         credentials = self._get_credentials()
-        # credentials = {}
+        credentials = {}
         if credentials:
             # Production connection
             params = {
@@ -492,8 +489,7 @@ def setup_db():
     apd_data_dir = os.path.join(path_used_db, 'Board_DB_Plss_Sections.db')
     return sqlite3.connect(apd_data_dir)
 
-# def setup_db():
-#     return sqlite3.connect(get_plss_sections_path())
+
 class ETools(QMainWindow):
     def __init__(self, flag=True):
         super().__init__()
