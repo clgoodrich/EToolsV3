@@ -362,7 +362,7 @@ class SQLConnector:
     def _create_connection_string(self):
         """Create connection string with caching."""
         credentials = self._get_credentials()
-        credentials = {}
+        # credentials = {}
         if credentials:
             # Production connection
             params = {
@@ -487,13 +487,13 @@ def calculate_convergence_angle(latitude, longitude):
 
 
 # noinspection PyTestUnpassedFixture
-# def setup_db():
-#     path_used_db = r'C:\Work\Databases'
-#     apd_data_dir = os.path.join(path_used_db, 'Board_DB_Plss_Sections.db')
-#     return sqlite3.connect(apd_data_dir)
-
 def setup_db():
-    return sqlite3.connect(get_plss_sections_path())
+    path_used_db = r'C:\Work\Databases'
+    apd_data_dir = os.path.join(path_used_db, 'Board_DB_Plss_Sections.db')
+    return sqlite3.connect(apd_data_dir)
+
+# def setup_db():
+#     return sqlite3.connect(get_plss_sections_path())
 class ETools(QMainWindow):
     def __init__(self, flag=True):
         super().__init__()
