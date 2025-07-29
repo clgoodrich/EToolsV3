@@ -50,15 +50,15 @@ import geopandas as gpd
 
 from scipy.spatial import ConvexHull
 from rdp import rdp
-from welltrajconvert.wellbore_trajectory import *
 from shapely.geometry import Point, Polygon
 import numpy.typing as npt
 import pandas as pd
 import numpy as np
 import math
-from typing import Optional, Tuple, Union, TypeVar
+from typing import Optional, Tuple, Union, TypeVar, List, Any, Dict
 from numpy.typing import NDArray
-import ModuleAgnostic as ma
+import os
+
 T = TypeVar('T', bound=List[Any])
 
 

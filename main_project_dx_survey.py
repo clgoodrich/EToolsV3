@@ -45,7 +45,9 @@ Dependencies:
 """
 
 import copy
-from welltrajconvert.wellbore_trajectory import *
+
+import utm
+# from welltrajconvert.wellbore_trajectory import *
 from shapely.geometry import Point
 import welleng as we
 from pyproj import Geod, Proj, CRS
@@ -56,7 +58,7 @@ import math
 from datetime import datetime
 from welleng.survey import SurveyHeader
 from pygeomag import GeoMag
-from typing import Optional, Tuple, Dict, Literal, Any
+from typing import Optional, Tuple, Dict, Literal, Any, List
 
 
 class FastSurveyHeader(SurveyHeader):
