@@ -45,9 +45,7 @@ Dependencies:
     - scipy
 """
 import sqlite3
-
 import geopandas as gpd
-
 from scipy.spatial import ConvexHull
 from rdp import rdp
 from shapely.geometry import Point, Polygon
@@ -55,7 +53,7 @@ import numpy.typing as npt
 import pandas as pd
 import numpy as np
 import math
-from typing import Optional, Tuple, Union, TypeVar, List, Any, Dict
+from typing import Optional, Tuple, Union, TypeVar, List, Any, Dict, Set
 from numpy.typing import NDArray
 import os
 
@@ -66,7 +64,23 @@ def _reorganize_lst_points_with_angle(
         lst: List[List[float]],
         centroid: List[float]
 ) -> List[List[float]]:
-    """
+    """Reorganizes polygon points by calculating angles relative to centroid.
+
+    Calculates the angular position of each point relative to the centroid and
+    appends this angle value to each point. Angles are measured in degrees from
+    0 to 360, with 0 degrees pointing east and increasing counterclockwise.
+
+    Args:
+        lst: List of polygon vertex coordinates as [x, y] pairs
+        centroid: Centroid coordinates as [x, y] for angular reference
+
+    Returns:
+        List of points with appended angle values: [[x, y, angle], ...]
+
+    Notes:
+        - Angles are calculated using atan2 for proper quadrant handling
+        - Results are normalized to 0-360 degree range
+        - Original point coordinates are preserved in returned list
     """
     # Calculate angles relative to centroid and append to points
     lst_arrange = [
@@ -85,7 +99,30 @@ def _calculate_well_to_line_clearance_detailed(
         well_trajectory: Union[List[List[float]], npt.NDArray],
         line_points: Union[List[List[float]], npt.NDArray]
 ) -> List[Dict[str, Any]]:
-    """
+    """Calculates detailed clearance metrics between well trajectory and boundary line.
+
+    Performs vectorized calculation of distances, projection parameters, and
+    intersection angles between well trajectory points and a boundary line segment.
+    Optimized for performance with large trajectory datasets.
+
+    Args:
+        well_trajectory: Array of well trajectory points as [x, y] coordinates
+        line_points: Two points defining the boundary line segment as [[x1, y1], [x2, y2]]
+
+    Returns:
+        List of dictionaries containing detailed clearance metrics for each trajectory point:
+        - point_index: Index of the trajectory point
+        - well_point: Coordinates of trajectory point [x, y]
+        - distance: Perpendicular distance to line segment
+        - closest_surface_point: Coordinates of closest point on line segment
+        - intersection_angle: Angle between well-to-surface vector and line segment (degrees)
+        - original_segment: Original line segment points
+
+    Notes:
+        - Uses vectorized operations for computational efficiency
+        - Handles numerical stability with epsilon padding
+        - Calculates acute angles for consistent interpretation
+        - Projects points onto extended line and clamps to segment bounds
     """
     # Convert inputs to numpy arrays
     well_trajectory = np.array(well_trajectory)
@@ -145,7 +182,25 @@ def _calculate_well_to_line_clearance_detailed(
 def _optimized_corner_process(
         trajectory: Union[List[List[float]], npt.NDArray]
 ) -> List[List[float]]:
-    """
+    """Identifies corner points in a polygon boundary with adaptive simplification.
+
+    Uses convex hull and Ramer-Douglas-Peucker (RDP) algorithm to simplify polygon
+    boundaries while preserving significant corner points. Adaptively adjusts
+    simplification epsilon based on coordinate scale.
+
+    Args:
+        trajectory: List or array of polygon vertices as [x, y] coordinates
+
+    Returns:
+        List of detected corner points with centroid-relative angles:
+        [[x, y, angle], ...] where angle is in degrees (0-360)
+
+    Notes:
+        - Uses ConvexHull for robust point ordering
+        - Applies adaptive RDP simplification based on coordinate magnitude
+        - Identifies corners using angle threshold detection
+        - Returns corner coordinates with centroid-relative angles
+        - Scale-aware processing handles both survey and plat coordinate systems
     """
     # Convert to numpy array for vector operations
     trajectory = np.array(trajectory)
@@ -187,7 +242,22 @@ def _optimized_corner_process(
 
 
 def _remove_dupes_list_of_lists(lst: List[List[T]]) -> List[List[T]]:
-    """
+    """Removes duplicate sublists from a list of lists while preserving order.
+
+    Efficiently identifies and removes duplicate sublists by converting to a hashable
+    representation, maintaining the original order of first appearance.
+
+    Args:
+        lst: List containing sublists that may have duplicates
+
+    Returns:
+        List with duplicate sublists removed, preserving original list types
+
+    Notes:
+        - Preserves the first occurrence of each unique sublist
+        - Maintains original data types (sublists stay as lists)
+        - Uses set lookup for O(1) membership testing
+        - Memory usage scales with number of unique sublists
     """
     # Initialize data structures for tracking duplicates
     dup_free: List[List[T]] = []
@@ -371,7 +441,6 @@ def _process_row(
                         key=lambda i: abs(angles[i] - 90))
 
     # Set all segments except closest to 90 to NaN
-
     for i in range(1, num_segments + 1):
         if i != closest_to_90 + 1:  # Add 1 since segment numbering starts at 1
             row[f'distance{i}_{dir_val}'] = np.nan
@@ -387,7 +456,30 @@ def _results_finder(
         dir_val: str,
         well_trajectory: NDArray[np.float64]
 ) -> pd.DataFrame:
-    """
+    """Calculates clearance distances between well trajectory and boundary segments.
+
+    Performs vectorized computation of distances, closest points, and intersection angles
+    between well trajectory points and multiple boundary line segments. Optimized for
+    performance with large datasets.
+
+    Args:
+        segments: List of line segments, each defined by two points [[x1, y1], [x2, y2]]
+        dir_val: Direction identifier string ('East', 'West', 'North', 'South')
+        well_trajectory: Array of trajectory points with format [[x, y, index], ...]
+
+    Returns:
+        DataFrame containing clearance metrics for each trajectory point:
+        - point_index: Index of trajectory point
+        - distance_{dir_val}: Perpendicular distance to closest segment (in feet)
+        - closest_surface_point_{dir_val}: Coordinates of closest point on segment
+        - intersection_angle_{dir_val}: Angle between well-to-surface vector and segment
+        - segments_{dir_val}: The line segment with minimum distance
+
+    Notes:
+        - Uses vectorized operations for computational efficiency
+        - Converts distance units from meters to feet (dividing by 0.3048)
+        - Calculates acute angles (0-90°) for consistent interpretation
+        - Returns minimum distance results for each trajectory point
     """
     # Extract trajectory components for vectorized operations
     well_indices: NDArray = well_trajectory[:, 2]
@@ -571,7 +663,25 @@ def _regular_corner_class(
 def _corner_generator_process(
         data_lengths: List[List[float]]
 ) -> Tuple[List[List[float]], List[List[List[float]]]]:
-    """
+    """Processes polygon points to identify corners and classify sides.
+
+    Identifies corner points in a polygon and organizes all polygon points into
+    directional sides (west, north, east, south) for boundary analysis.
+
+    Args:
+        data_lengths: List of polygon vertex coordinates as [x, y] pairs
+
+    Returns:
+        Tuple containing:
+        - List of corner points with angles: [[x, y, angle], ...]
+        - List of four directional sides: [west_side, north_side, east_side, south_side]
+          where each side is a list of points with angles
+
+    Notes:
+        - Uses optimized corner detection with adaptive simplification
+        - Calculates centroid-relative angles for consistent orientation
+        - Sorts and deduplicates points to ensure clean boundaries
+        - Handles polygon sides with proper geometric ordering
     """
     # Optimize corner point detection
     corner_arrange = _optimized_corner_process(data_lengths)
@@ -657,6 +767,49 @@ def _id_sides(polygon: List[List[float]]) -> Tuple[List[List[List[float]]], ...]
     return right_lst_segments, left_lst_segments, up_lst_segments, down_lst_segments
 
 
+def find_conc_part(test_plat: pd.DataFrame, point_df: pd.DataFrame) -> pd.DataFrame:
+    """Assigns concentration zones to points using spatial join.
+
+    Performs a spatial join between survey points and plat polygons to determine
+    which concentration zone contains each point. Uses geopandas for efficient
+    spatial operations.
+
+    Args:
+        test_plat: DataFrame containing plat polygons with 'geometry' column
+        point_df: DataFrame containing survey points with 'shp_pt' column
+
+    Returns:
+        DataFrame with survey points assigned to concentration zones
+
+    Notes:
+        - Converts input DataFrames to GeoDataFrames if needed
+        - Uses 'within' predicate for spatial relationship testing
+        - Joins concentration information to original point data
+        - Handles coordinate reference system alignment
+        - Final step in concentration assignment workflow
+    """
+    # Convert test_plat to GeoDataFrame if not already
+    if not isinstance(test_plat, gpd.GeoDataFrame):
+        test_plat_gdf = gpd.GeoDataFrame(test_plat, geometry='geometry')
+    else:
+        test_plat_gdf = test_plat
+
+    # Convert point_df to GeoDataFrame using shp_pt column
+    plat_gdf = gpd.GeoDataFrame(
+        point_df,
+        geometry=point_df['shp_pt'],
+        crs=test_plat_gdf.crs  # Ensure both GeoDataFrames have the same CRS
+    )
+
+    # Perform spatial join to determine which plat contains each point
+    joined = gpd.sjoin(plat_gdf, test_plat_gdf[['Conc', 'label', 'geometry']],
+                      how='inner', predicate='within')
+
+    # Convert result back to regular DataFrame, dropping geometry column
+    df_out = pd.DataFrame(joined.drop(columns='geometry'))
+    return df_out
+
+
 class ClearanceProcess:
     """Processes clearance data for well surveys and plats.
 
@@ -664,12 +817,8 @@ class ClearanceProcess:
     and adjacent plats, calculating concentrations and clearance metrics.
 
     Attributes:
-        df (pd.DataFrame): Survey data with shape points
-        plats (pd.DataFrame): Plat boundary data
-        adjacent_plats (pd.DataFrame): Data for adjacent plat boundaries
-        all_polygons_concs (np.ndarray): Unique concentration values
-        whole_df (pd.DataFrame): Complete processed dataset
-        clearance_data (pd.DataFrame): Filtered clearance results
+        whole_df (pd.DataFrame): Complete processed dataset with all survey points
+        clearance_data (pd.DataFrame): Filtered clearance results with boundary distances
         used_conc (List[Union[str, float]]): List of used concentration values
 
     Notes:
@@ -688,74 +837,80 @@ class ClearanceProcess:
 
         Args:
             df_used: DataFrame containing survey points and associated data
+                Must include 'shp_pt' column with shapely Point objects
             df_plat: DataFrame containing plat boundary information
-            adjacent_plats: DataFrame containing adjacent plat information
+                Must include 'geometry' column with shapely Polygon objects
+            bypass_db: If True, skips database lookup and uses df_plat directly
+                Useful for relative clearance calculations with transformed plats
 
         Notes:
             - Automatically calculates concentrations upon initialization
             - Creates empty whole_df for later processing
-            - Triggers _main_clearance processing during initialization
+            - Triggers main_clearance processing during initialization
+            - When bypass_db=True, uses find_conc_part to determine concentration zones
+            - When bypass_db=False, uses fnd_conc with database lookup
 
         Raises:
             ValueError: If required columns are missing from input DataFrames
             TypeError: If geometry objects are not properly formatted
         """
-        # Store input DataFrames
-
-        # Calculate concentrations for each survey point
+        # Initialize list of used concentration values
         self.used_conc = []
 
+        # Determine point concentrations based on bypass_db flag
         if bypass_db:
             # For second process - use df_plat directly as test_plat
-
-            df_used = self.find_conc_part2(df_plat, df_used)
+            df_used = find_conc_part(df_plat, df_used)
         else:
             # For first process - normal database lookup
             df_used = self.fnd_conc(df_plat, df_used)
 
-
-        # Extract unique concentration values
-        # all_polygons_concs = df_used['label'].unique()
-
         # Initialize empty DataFrame for complete dataset
         self.whole_df = pd.DataFrame()
 
-        # Process clearance data
-
+        # Process clearance data and store results
         self.clearance_data = self.main_clearance(df_plat, df_used)
 
-        # Extract used concentration values
-
-
-    def main_clearance(self, df_plat, df_used) -> pd.DataFrame:
+    def main_clearance(self, df_plat: pd.DataFrame, df_used: pd.DataFrame) -> pd.DataFrame:
         """Processes clearance calculations for well trajectories against plat boundaries.
 
         Calculates distances from well trajectory points to the boundaries of their
         containing plats in all cardinal directions (FNL, FSL, FEL, FWL).
+
+        Args:
+            df_plat: DataFrame containing plat boundary information
+                Must include 'label' and 'geometry' columns
+            df_used: DataFrame containing survey points with assigned concentrations
+                Must include 'point_index', 'easting', 'northing', and 'label' columns
 
         Returns:
             pd.DataFrame: Original survey data merged with calculated boundary distances
                 Contains columns:
                 - All original survey columns
                 - point_index: Index of trajectory point
-                - FNL: Distance to north line
-                - FSL: Distance to south line
-                - FEL: Distance to east line
-                - FWL: Distance to west line
+                - FNL: Distance to north line (feet)
+                - FSL: Distance to south line (feet)
+                - FEL: Distance to east line (feet)
+                - FWL: Distance to west line (feet)
 
         Notes:
-            - Processes each concentration (Conc) group separately
+            - Processes each concentration (label) group separately
             - Segments plat boundaries into directional components
             - Calculates minimum distances to each boundary
             - Merges directional results into comprehensive dataset
             - Handles missing plat geometries with error reporting
+            - Distance values are returned in feet
 
         Raises:
             IndexError: When plat geometry is missing for a concentration
         """
-        # Process each unique concentration
+        # Process each unique concentration and calculate clearances
         self.whole_df = self._loop_through_list(df_plat, df_used)
+
+        # Sort results by first column (typically point_index)
         self.whole_df = self.whole_df.sort_values(by=self.whole_df.columns[0])
+
+        # Rename direction columns to standard notation
         self.whole_df = self.whole_df.rename(
             columns={
                 'distance_East': 'FEL',
@@ -768,11 +923,29 @@ class ClearanceProcess:
         # Extract relevant columns and merge with original data
         edited_df = self.whole_df[['point_index', 'FNL', 'FSL', 'FEL', "FWL"]]
         result = pd.merge(df_used, edited_df, on='point_index')
+
+        # Store unique concentration values used in processing
         self.used_conc = result['label'].unique().tolist()
 
         return result
 
-    def load_relative_clearance(self, df_plat, df_used):
+    def load_relative_clearance(self, df_plat: pd.DataFrame, df_used: pd.DataFrame) -> None:
+        """Calculates relative clearance measurements for alternative plat configurations.
+
+        Similar to main_clearance but calculates distances relative to an alternative
+        plat configuration, useful for comparing clearances between different plat
+        boundaries or well placements.
+
+        Args:
+            df_plat: DataFrame containing alternative plat boundary information
+            df_used: DataFrame containing survey points with assigned concentrations
+
+        Notes:
+            - Results are stored with 'rel_' prefix (rel_fel, rel_fwl, rel_fnl, rel_fsl)
+            - Uses same processing logic as main_clearance
+            - Designed for comparison scenarios and what-if analysis
+            - Does not modify clearance_data, creates a separate result set
+        """
         rel_df = self._loop_through_list(df_plat, df_used)
         rel_df = rel_df.sort_values(by=rel_df.columns[0])
         rel_df = rel_df.rename(
@@ -783,36 +956,66 @@ class ClearanceProcess:
                 'distance_South': 'rel_fsl'
             }
         )
+        # Note: This method needs implementation to store or return the results
 
-    def find_single_point(self, pt):
-        def find_if_contained():
+    def find_single_point(self, pt: List[float]) -> Optional[pd.DataFrame]:
+        """Calculates clearance metrics for a single point against plat boundaries.
 
+        Determines which plat contains the given point and calculates clearance
+        distances to all sides of that plat. Useful for isolated point analysis
+        without processing an entire trajectory.
+
+        Args:
+            pt: Point coordinates as [x, y]
+
+        Returns:
+            DataFrame with clearance measurements if point is contained in a plat,
+            None otherwise
+
+        Notes:
+            - Checks all plats in self.plats to find containing plat
+            - Returns None if point is not contained in any plat
+            - Uses same directional processing as trajectory points
+            - Result includes FNL, FSL, FEL, FWL distance measurements
+        """
+        def find_if_contained() -> Union[str, bool]:
+            """Finds which plat contains the point, if any."""
             for idx, row in self.plats.iterrows():
                 if row['geometry'].contains(Point(pt)):
                     return row['Conc']
             return False
 
+        # Check if point is contained in any plat
         output = find_if_contained()
         if not output:
-            return
+            return None
+
+        # Filter to the containing plat
         used_plat = self.plats[self.plats['Conc'] == output]
 
+        # Extract plat geometries
         conc_geometries: Dict[str, List[Tuple[float, float]]] = {
             conc: list(geom.exterior.coords)
             for conc, geom in used_plat.set_index('label')['geometry'].items()
         }
+
         # Pre-compute directional boundary segments
         boundary_segments: Dict[str, Tuple[List[List[float]], ...]] = {
             conc: _id_sides(geom_coords)
             for conc, geom_coords in conc_geometries.items()
         }
+
+        # Get the concentration value
         conc = [i for i, v in boundary_segments.items()]
+
+        # Format single point for processing
         well_trajectory = np.array([[pt[0], pt[1], 1]])
 
         # Get boundary segments for current concentration
         segments = boundary_segments.get(conc[0])
         if segments is None:
             print(f'No geometry found for concentration: {conc}')
+            return None
 
         # Unpack directional segments
         right_lst_segments, left_lst_segments, up_lst_segments, down_lst_segments = segments
@@ -840,15 +1043,35 @@ class ClearanceProcess:
             'distance_South': 'FSL'
         }, inplace=True)
 
-        # Reset index for merging
+        # Reset index for standard format
         combined_df.reset_index(inplace=True)
         return combined_df
 
-    def _loop_through_list(self, df_plat, df_used) -> pd.DataFrame:
-        """
+    def _loop_through_list(self, df_plat: pd.DataFrame, df_used: pd.DataFrame) -> pd.DataFrame:
+        """Processes clearance calculations for all trajectory points grouped by concentration.
+
+        Core processing function that handles clearance calculations for all trajectory
+        points against their containing plat boundaries. Segments processing by
+        concentration group for efficiency.
+
+        Args:
+            df_plat: DataFrame containing plat boundary information
+            df_used: DataFrame containing survey points with assigned concentrations
+
+        Returns:
+            DataFrame with complete clearance results for all trajectory points
+
+        Notes:
+            - Groups trajectory points by 'label' (concentration zone)
+            - Pre-computes boundary segments for all plats
+            - Processes each concentration group independently
+            - Calculates clearances for all four cardinal directions
+            - Combines results into comprehensive dataset
+            - Handles potential missing geometries with error reporting
         """
         # Group trajectory points by concentration zone
         grouped: pd.core.groupby.DataFrameGroupBy = df_used.groupby('label')
+
         # Pre-compute geometry coordinates dictionary
         conc_geometries: Dict[str, List[Tuple[float, float]]] = {
             conc: list(geom.exterior.coords)
@@ -858,9 +1081,12 @@ class ClearanceProcess:
         # Pre-compute directional boundary segments
         boundary_segments = {
             conc: _id_sides(geom_coords)
-            for conc, geom_coords in conc_geometries.items()}
+            for conc, geom_coords in conc_geometries.items()
+        }
+
         # Initialize results list
         concat_lst: List[pd.DataFrame] = []
+
         # Process each concentration group
         for conc, group in grouped:
             # Extract trajectory points
@@ -890,14 +1116,6 @@ class ClearanceProcess:
             # Combine directional results
             combined_df: pd.DataFrame = pd.concat(direction_results.values(), axis=1)
 
-            # Rename distance columns to standard notation
-            combined_df.rename(columns={
-                'distance_East': 'FEL',
-                'distance_West': 'FWL',
-                'distance_North': 'FNL',
-                'distance_South': 'FSL'
-            }, inplace=True)
-
             # Reset index for merging
             combined_df.reset_index(inplace=True)
 
@@ -919,42 +1137,100 @@ class ClearanceProcess:
 
         return final_df
 
-    def geo_transform(self, df):
-        def transform_string(s):
+    def geo_transform(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Transforms tabular plat boundary data into shapely geometries.
+
+        Converts coordinate points into shapely Point objects and groups them into
+        Polygon geometries by concentration. Adds centroid calculation and formats
+        concentration labels for consistent processing.
+
+        Args:
+            df: DataFrame containing plat boundary coordinates
+                Must include 'Conc', 'Easting', 'Northing' columns
+
+        Returns:
+            DataFrame with processed geometries, containing:
+            - Conc: Concentration identifier
+            - geometry: Shapely Polygon object for boundary
+            - centroid: Shapely Point object for plat centroid
+            - label: Formatted concentration label
+
+        Notes:
+            - Converts numerical concentration codes to formatted string labels
+            - Groups points by concentration to form complete polygons
+            - Calculates centroid for each polygon
+            - Essential preprocessing step for spatial operations
+        """
+        def transform_string(s: str) -> str:
+            """Formats concentration string into standard notation.
+
+            Example: '123456E' -> '12 34E 56E E'
+            """
             part1 = str(int(s[:2]))
             part2 = str(int(s[2:4])) + s[4]
             part3 = str(int(s[5:7])) + s[7]
             part4 = s[-1]
 
             return f"{part1} {part2} {part3} {part4}"
+
+        # Create Point geometry for each coordinate pair
         df['geometry'] = df.apply(lambda row: Point(row['Easting'], row['Northing']), axis=1)
         used_fields = df[['Conc', 'Easting', 'Northing', 'geometry']]
-        used_fields['geometry'] = used_fields.apply(lambda row: Point(row['Easting'], row['Northing']), axis=1)
-        polygons = used_fields.groupby('Conc').apply(lambda x: Polygon(zip(x['Easting'], x['Northing']))).reset_index()
+
+        # Group by concentration and create polygons
+        polygons = used_fields.groupby('Conc').apply(
+            lambda x: Polygon(zip(x['Easting'], x['Northing']))
+        ).reset_index()
+
+        # Merge polygon geometries with original data
         merged_data = used_fields.merge(polygons, on='Conc')
         merged_data = merged_data.drop('geometry', axis=1).rename(columns={0: 'geometry'})
-        df_new = merged_data.groupby('Conc').apply(lambda x: Polygon(zip(x['Easting'], x['Northing']))).reset_index()
 
+        # Create final DataFrame with polygons and metadata
+        df_new = merged_data.groupby('Conc').apply(
+            lambda x: Polygon(zip(x['Easting'], x['Northing']))
+        ).reset_index()
+
+        # Format final output with standardized columns
         df_new.columns = ['Conc', 'geometry']
         df_new['centroid'] = df_new.apply(lambda x: x['geometry'].centroid, axis=1)
         df_new['label'] = df_new.apply(lambda x: transform_string(x['Conc']), axis=1)
 
         return df_new
 
-    def fnd_conc(self, plat_df, point_df):
+    def fnd_conc(self, plat_df: pd.DataFrame, point_df: pd.DataFrame) -> pd.DataFrame:
+        """Finds concentration zones for survey points using database lookup.
+
+        Queries a local SQLite database to determine which concentration zone (plat)
+        contains each survey point. Uses spatial filtering to optimize database queries.
+
+        Args:
+            plat_df: DataFrame containing plat information (not used directly)
+            point_df: DataFrame containing survey points with 'shp_pt' column
+
+        Returns:
+            DataFrame with survey points assigned to concentration zones
+
+        Notes:
+            - Connects to a local SQLite database at a fixed path
+            - Uses bounding box filtering for efficient spatial queries
+            - Transforms raw database results into shapely geometries
+            - Performs spatial join to assign concentration zones to points
+            - Essential preprocessing step for clearance calculations
+        """
+        # Connect to local database
         path_used_db = r'C:\Work\Databases'
         apd_data_dir = os.path.join(path_used_db, 'Board_DB_Plss_Sections.db')
         conn_db = sqlite3.connect(apd_data_dir)
 
-        def get_points_bbox(points_series):
-            """
-            Calculate bbox from a series of Shapely points
+        def get_points_bbox(points_series: pd.Series) -> Tuple[float, float, float, float]:
+            """Calculate bounding box from a series of Shapely points.
 
-            Parameters:
-            points_series: pandas Series containing Shapely Point objects
+            Args:
+                points_series: pandas Series containing Shapely Point objects
 
             Returns:
-            tuple: (minx, miny, maxx, maxy)
+                tuple: (minx, miny, maxx, maxy)
             """
             # Create a list of coordinates
             coords = [(pt.x, pt.y) for pt in points_series]
@@ -964,13 +1240,15 @@ class ClearanceProcess:
             # Calculate bounds
             return min(x_coords), min(y_coords), max(x_coords), max(y_coords)
 
-        def get_coordinate_query(bbox, buffer_distance=1000):
-            """
-            Query using coordinate columns directly
+        def get_coordinate_query(bbox: Tuple[float, float, float, float], buffer_distance: float = 1000) -> str:
+            """Generate SQL query using coordinate columns with buffer.
 
-            Parameters:
-            bbox: tuple of (minx, miny, maxx, maxy)
-            buffer_distance: amount to expand search area
+            Args:
+                bbox: tuple of (minx, miny, maxx, maxy)
+                buffer_distance: amount to expand search area
+
+            Returns:
+                SQL query string filtering by coordinate bounds
             """
             return f"""
             SELECT *
@@ -982,30 +1260,25 @@ class ClearanceProcess:
                 AND Northing <= {bbox[3] + buffer_distance}
             """
 
-        # Usage:
+        # Calculate bounding box of all points
         bbox = get_points_bbox(point_df['shp_pt'])
+
+        # Query database for plats within bounding box
         spatial_query = get_coordinate_query(bbox)
         filtered_data = pd.read_sql(spatial_query, conn_db)
+
+        # Extract unique concentration values
         conc_vals = filtered_data['Conc'].unique()
         concs = [str(i) for i in conc_vals]
         concs = ', '.join([f"'{str(elem)}'" for elem in concs])
+
+        # Query complete plat data for matching concentrations
         query = f"""select * from BaseData where Conc IN ({concs})"""
         filtered_data = pd.read_sql(query, conn_db)
+
+        # Transform database results into shapely geometries
         test_plat = self.geo_transform(filtered_data)
 
-        return self.find_conc_part2(test_plat, point_df)
+        # Assign concentration zones to points
+        return find_conc_part(test_plat, point_df)
 
-    def find_conc_part2(self, test_plat, point_df):
-        if not isinstance(test_plat, gpd.GeoDataFrame):
-            test_plat_gdf = gpd.GeoDataFrame(test_plat, geometry='geometry')
-        else:
-            test_plat_gdf = test_plat
-        plat_gdf = gpd.GeoDataFrame(
-            point_df,
-            geometry=point_df['shp_pt'],
-            crs=test_plat_gdf.crs  # Ensure both GeoDataFrames have the same CRS
-        )
-        #
-        joined = gpd.sjoin(plat_gdf, test_plat_gdf[['Conc', 'label', 'geometry']], how='inner', predicate='within')
-        df_out = pd.DataFrame(joined.drop(columns='geometry'))
-        return df_out

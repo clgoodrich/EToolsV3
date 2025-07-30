@@ -1,33 +1,45 @@
 import sys
 import os
+from PyQt5.QtWidgets import QApplication, QDialog
+
+from src.mainProject import ETools
+import traceback
 
 # Add the src directory to Python path so we can import our modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
-
 # Set up the environment
 os.environ['QT_AUTO_SCREEN_SCALE_FACTOR'] = '1'
 
-from PyQt5.QtWidgets import QApplication, QDialog
-from PyQt5.QtCore import Qt
-from EToolsLimited import Ui_Dialog
 
+def except_hook(cls: type, exception: Exception, tb) -> None:
+    """Enhanced exception handler for debugging Qt applications.
+
+    This custom exception handler provides detailed error information
+    without calling the default handler, preventing error cascades.
+
+    Args:
+        cls: Exception class
+        exception: Exception instance
+        tb: Traceback object
+    """
+
+    traceback.print_tb(tb)
 
 def main():
-    # Create the application
+    sys.excepthook = except_hook
+
+    # Create Qt application
     app = QApplication(sys.argv)
 
-    # Enable high DPI scaling
-    app.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-    app.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+    # Create main window
+    w = ETools()
 
-    # Create and show the main dialog
-    dialog = QDialog()
-    ui = Ui_Dialog()
-    ui.setupUi(dialog)
-    dialog.show()
+    # Show window
+    w.show()
 
-    # Start the event loop
+    # Run application event loop
     sys.exit(app.exec_())
+
 
 
 if __name__ == '__main__':

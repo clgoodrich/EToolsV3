@@ -1,9 +1,6 @@
 import traceback
-
 from shapely.ops import substring
 import copy
-import itertools
-# from main_project_well_path_tracer import WellPathTracer
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QLineEdit, QSpinBox,
                              QCheckBox,
@@ -11,18 +8,11 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout
                              QGraphicsView,
                              QComboBox, QMessageBox, QFileDialog, QButtonGroup)
 import math
-from shapely.geometry import Polygon, Point, LineString
 from PyQt5.QtGui import QStandardItemModel, QStandardItem
 import pandas as pd
-from shapely.geometry import Polygon
-import numpy as np
-import ModuleAgnostic
-import regex as re
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from shapely.geometry import Point, LineString, Polygon, MultiPoint
-from shapely.geometry.base import BaseGeometry
-import operator
 from main_project_clearance import ClearanceProcess
 from main_project_well_path_tracer import tracer_process
 
