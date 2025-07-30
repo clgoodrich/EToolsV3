@@ -14,6 +14,7 @@ import ModuleAgnostic as ma
 import numpy as np
 import copy
 from PyQt5.QtCore import QTimer
+import sys
 import weakref
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QLineEdit, QSpinBox,
                              QCheckBox,
@@ -1635,16 +1636,50 @@ class ZoomPan:
         return onMotion
 
 
-def except_hook(cls, exception, traceback):
-    sys.__excepthook__(cls, exception, traceback)
+# def except_hook(cls, exception, traceback):
+#     sys.__excepthook__(cls, exception, traceback)
+#
+#
+# if __name__ == "__main__":
+#     import sys
+#     app = QApplication(sys.argv)
+#     # w = EngineeringTools()
+#     w = ETools()
+#     w.show()
+#     sys.excepthook = except_hook
+#     sys.exit(app.exec_())
+
+
+def except_hook(cls, exception, tb):
+    """Enhanced exception handler"""
+    print(f"Exception Type: {cls.__name__}")
+    print(f"Exception Message: {str(exception)}")
+    print("Traceback:")
+    traceback.print_tb(tb)
+    # Don't call sys.excepthook to avoid recursion
 
 
 if __name__ == "__main__":
-    import sys
+    try:
+        sys.excepthook = except_hook
 
-    app = QApplication(sys.argv)
-    # w = EngineeringTools()
-    w = ETools()
-    w.show()
-    sys.excepthook = except_hook
-    sys.exit(app.exec_())
+        app = QApplication(sys.argv)
+        print("QApplication created successfully")
+
+        # Test your class creation
+        w = ETools()  # This might be where it crashes
+        print("ETools instance created successfully")
+
+        w.show()
+        print("Widget shown successfully")
+
+        sys.exit(app.exec_())
+
+    except Exception as e:
+        print(f"Python Exception: {type(e).__name__}: {e}")
+        traceback.print_exc()
+    except SystemExit:
+        print("Application exited normally")
+    except:
+        print("Unknown error occurred")
+        traceback.print_exc()
