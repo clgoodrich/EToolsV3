@@ -910,15 +910,16 @@ class ETools(QMainWindow):
         self.ui.add_dx_data_pushbutton.pressed.connect(self.recalculate_data_with_new_md_input)
         # self.ui.runDXSurveyPushbutton.pressed.connect(self.process_when_dx_button_pushed)
         self.ui.runDXSurveyPushbutton.pressed.connect(lambda: self.process_when_dx_button_pushed())
+        self.ui.db_connect_pushbotton.pressed.connect(lambda: self.process_when_dx_button_pushed())
 
-        self.ui.locate_more_wells_push_button.pressed.connect(self.find_more_sections_and_report)
+        # self.ui.locate_more_wells_push_button.pressed.connect(self.find_more_sections_and_report)
         self.ui.dx_new_row_pushbutton.clicked.connect(self.open_dialog_new_row)
         self.ui.dx_delete_row_pushbutton.clicked.connect(self.open_dialog_delete)
-        self.ui.plat_searcher_combo_box.activated.connect(self.plat_searcher_combo_process)
-        self.ui.data_return_box.anchorClicked.connect(QDesktopServices.openUrl)
+        # self.ui.plat_searcher_combo_box.activated.connect(self.plat_searcher_combo_process)
+        # self.ui.data_return_box.anchorClicked.connect(QDesktopServices.openUrl)
         self.ui.load_as_drilled_survey_box.clicked.connect(lambda: self.press_new_survey_button('drilled'))
         self.ui.load_planned_survey_box.clicked.connect(lambda: self.press_new_survey_button('planned'))
-        self.ui.data_return_box.setOpenLinks(False)
+        # self.ui.data_return_box.setOpenLinks(False)
 
     def open_dialog_new_row(self) -> None:
         """Open dialog for adding a new survey point and process the input.
@@ -1225,7 +1226,7 @@ class ETools(QMainWindow):
                                north_ref=north_ref, ui=self.ui, conn=self.conn)
 
         # Initialize UI components
-        self.find_more_sections_combo_box()
+        # self.find_more_sections_combo_box()
         self.main_processes_program(north_ref)
 
         # Create data writer for export and display
