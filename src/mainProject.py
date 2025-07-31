@@ -857,6 +857,7 @@ class ETools(QMainWindow):
         self.survey_importer = None
         self.wcr_process = None
         self.drawer = None
+        self.db = None
 
         # Configure pandas display options for debugging
         pd.set_option('display.max_columns', None)
@@ -877,12 +878,12 @@ class ETools(QMainWindow):
         self.well = None
         self.survey_type_lst = []
 
-        # Initialize database connection with error handling
-        try:
-            self.db = DatabaseManager()
-        except sqlalchemy.exc.OperationalError:
-            # Continue without database if connection fails
-            pass
+        # # Initialize database connection with error handling
+        # try:
+        #     self.db = DatabaseManager()
+        # except sqlalchemy.exc.OperationalError:
+        #     # Continue without database if connection fails
+        #     pass
 
         # Initialize survey importer
         self.survey_importer = SurveyImporter()
@@ -890,6 +891,7 @@ class ETools(QMainWindow):
         # Set up UI from Qt Designer file
         self.ui = Ui_Dialog()
         self.ui.setupUi(self)
+        self.ui.db_connect_pushbutton.pressed.connect(self.connect_to_db)
 
         # Connect to local SQLite database for PLSS data
         self.conn = setup_db()
@@ -910,7 +912,6 @@ class ETools(QMainWindow):
         self.ui.add_dx_data_pushbutton.pressed.connect(self.recalculate_data_with_new_md_input)
         # self.ui.runDXSurveyPushbutton.pressed.connect(self.process_when_dx_button_pushed)
         self.ui.runDXSurveyPushbutton.pressed.connect(lambda: self.process_when_dx_button_pushed())
-        self.ui.db_connect_pushbotton.pressed.connect(lambda: self.process_when_dx_button_pushed())
 
         # self.ui.locate_more_wells_push_button.pressed.connect(self.find_more_sections_and_report)
         self.ui.dx_new_row_pushbutton.clicked.connect(self.open_dialog_new_row)
@@ -920,6 +921,19 @@ class ETools(QMainWindow):
         self.ui.load_as_drilled_survey_box.clicked.connect(lambda: self.press_new_survey_button('drilled'))
         self.ui.load_planned_survey_box.clicked.connect(lambda: self.press_new_survey_button('planned'))
         # self.ui.data_return_box.setOpenLinks(False)
+
+    def connect_to_db(self):
+        # Initialize database connection with error handling
+        try:
+            self.db = DatabaseManager()
+            self.db_connect_popup()
+            if self.ui.well_api_val != "":
+                self.run_api_when_entered()
+        except sqlalchemy.exc.OperationalError:
+            self.no_db_connect_popup()
+            self.db = None
+        print('connected')
+        return self.db
 
     def open_dialog_new_row(self) -> None:
         """Open dialog for adding a new survey point and process the input.
@@ -1045,6 +1059,16 @@ class ETools(QMainWindow):
         QMessageBox.warning(self, "Attention", "Invalid API Detected! Fix it! (Possibly a string?)",
                             QMessageBox.Ok)
 
+    def no_db_connect_popup(self) -> None:
+        """Display warning dialog for invalid API number input."""
+        QMessageBox.warning(self, "Attention", "No database connected",
+                            QMessageBox.Ok)
+
+    def db_connect_popup(self) -> None:
+        """Display warning dialog for invalid API number input."""
+        QMessageBox.warning(self, "Attention", "Database connected!",
+                            QMessageBox.Ok)
+
     def api_loaded(self) -> None:
         """Display confirmation dialog when API is successfully loaded."""
         QMessageBox.warning(self, "Attention", "API Loaded!", QMessageBox.Ok)
@@ -1069,7 +1093,6 @@ class ETools(QMainWindow):
         """
         query = f"""SELECT APDNo, Well_Nm FROM [dbo].[tblAPD] WHERE API_WellNo = '{self.api_val}{self.lateral}'"""
         self.apd_num = self.db.query_to_dataframe(query)['APDNo'].unique()[0]
-        print(self.apd_num)
         self.well_name = self.db.query_to_dataframe(query)['Well_Nm'].unique()[0]
 
     def sql_query_survey(self, db_process: DatabaseManager, api: str, lateral: str) -> tuple:
@@ -1099,7 +1122,6 @@ class ETools(QMainWindow):
                 WHERE dsh.APINumber = '{api}' and dsh.LateralName = '{lateral}' order by MeasuredDepth"""
 
         survey_dx = db_process.query_to_dataframe(query)
-        print(survey_dx)
         try:
             # Extract header information
             well_elevation = survey_dx['SurveySurfaceElevation'].iloc[0]
@@ -1178,7 +1200,7 @@ class ETools(QMainWindow):
         self.lateral = lateral_name
         self.retrieve_well_parameters()
 
-    def process_when_dx_button_pushed(self, survey = None) -> None:
+    def process_when_dx_button_pushed(self, survey_dx=None, well_elevation=None, north_ref=None) -> None:
         """Process directional survey data when the DX button is clicked.
 
         This method initiates the main survey processing workflow, including:
@@ -1192,11 +1214,13 @@ class ETools(QMainWindow):
         # Attempt to load survey from database
         try:
             survey_dx, well_elevation, north_ref = self.sql_query_survey(self.db, self.api_val, self.lateral)
+
         except:
             # Fall back to manual entry if database query fails
             well_elevation = self.ui.dx_survey_elevation.text()
             north_ref = self.ui.dx_survey_north_ref_line.text()
-            _get_data_from_qtableview(self.ui.dx_survey_table_mod)
+            survey_dx = _get_data_from_qtableview(self.ui.dx_survey_table_mod)
+            print('sfrgiojgsrdfnbjisgrhnoisge')
             error_traceback = traceback.format_exc()
 
             print(f"Error details:\n{error_traceback}")
@@ -1626,7 +1650,8 @@ class ETools(QMainWindow):
             result_boo = loader()
             if result_boo:  # If file was successfully selected
                 # Import and process the survey file
-                df, north_ref = self.survey_importer.load_and_process_data(label, self.db, self.api_val, self.file_path_dict)
+                df, north_ref = self.survey_importer.load_and_process_data(label, self.db, self.api_val,
+                                                                           self.file_path_dict)
 
                 # Extract elevation and prepare data
                 well_elevation = df['SurveySurfaceElevation'].iloc[0]
@@ -1634,11 +1659,11 @@ class ETools(QMainWindow):
                 self.ui.dx_survey_elevation.setText(str(well_elevation))
                 df = df.drop(['SurveySurfaceElevation'], axis=1)
                 df['LateralName'] = self.lateral
-
+                print(df)
                 # Combine with existing surveys
                 output_new_df = filter_out_same_citing()
                 if self.well is None:
-                    self.process_when_dx_button_pushed()
+                    self.process_when_dx_button_pushed(survey_dx=df, well_elevation=well_elevation, north_ref=north_ref)
                 test_combo = copy.copy(self.well.plat_df)
                 print(north_ref, well_elevation, test_combo)
                 # Update well with new survey data
