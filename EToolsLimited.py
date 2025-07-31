@@ -8815,6 +8815,9 @@ class Ui_Dialog(object):
         self.label.setGeometry(QtCore.QRect(595, 15, 81, 16))
         self.label.setObjectName("label")
         self.all_tabs.addTab(self.wcr_tab, "")
+        self.db_connect_pushbutton = QtWidgets.QPushButton(Dialog)
+        self.db_connect_pushbutton.setGeometry(QtCore.QRect(690, 5, 141, 41))
+        self.db_connect_pushbutton.setObjectName("db_connect_pushbutton")
 
         self.retranslateUi(Dialog)
         self.all_tabs.setCurrentIndex(0)
@@ -11434,6 +11437,7 @@ class Ui_Dialog(object):
         self.update_personal_wcr.setText(_translate("Dialog", "Update Personal Record"))
         self.label.setText(_translate("Dialog", "Perf Intervals"))
         self.all_tabs.setTabText(self.all_tabs.indexOf(self.wcr_tab), _translate("Dialog", "WCR"))
+        self.db_connect_pushbutton.setText(_translate("Dialog", "DB Connect"))
 
 
 if __name__ == "__main__":
