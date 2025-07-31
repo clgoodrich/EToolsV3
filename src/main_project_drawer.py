@@ -790,6 +790,7 @@ class DataDrawer:
 
         # Process each survey dataset with systematic color assignment
         for idx, (survey_key, survey_data) in enumerate(survey_dict.items()):
+            print(survey_key, survey_data)
             # Assign color using modulo to cycle through palette
             color = color_palette[idx % len(color_palette)]
 
@@ -849,24 +850,6 @@ class DataDrawer:
             6. Add traces to BOTH general and TSR figures for complete visualization
         """
 
-        def transform_string(s: str) -> str:
-            """Transform township/range string format for human-readable display.
-
-            Converts compressed township/range format (e.g., "01023N02E") into
-            readable format (e.g., "1 23N 2E"). This transformation improves
-            readability in hover displays and legend entries.
-
-            Args:
-                s: Township/range string in compressed format
-
-            Returns:
-                Formatted string with proper spacing and grouping
-            """
-            part1 = str(int(s[:2]))  # Section number
-            part2 = str(int(s[2:4])) + s[4]  # Township with direction
-            part3 = str(int(s[5:7])) + s[7]  # Range with direction
-            part4 = s[-1]  # Additional identifier
-            return f"{part1} {part2} {part3} {part4}"
 
         # Compile comprehensive custom data array for hover information
         # Array structure: [tvd, md, inc, az, fnl, fsl, fel, fwl, label]

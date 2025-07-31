@@ -198,7 +198,7 @@ def find_plats_data(
     # Refine query using concentration values from initial results
     conc_vals = filtered_data['Conc'].unique()
     filtered_data = _read_base_data_by_conc(conn_db, conc_vals)
-
+    print(filtered_data)
     # Transform to polygon geometries
     test_plat = _geo_transform(filtered_data)
     if not isinstance(test_plat, gpd.GeoDataFrame):

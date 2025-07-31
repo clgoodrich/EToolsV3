@@ -1536,7 +1536,6 @@ class SetupRelativeCoordsPage:
                     rewritten_coords = self.coords_stitcher(next_plat_coords_dict,
                                                             all_plats_df[all_plats_df['conc'] == current_plat_conc],
                                                             dir_val, well_prox_boo)
-                    print(rewritten_coords)
 
 
             except IndexError as f:

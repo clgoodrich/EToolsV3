@@ -32,7 +32,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout
                              QDateTimeEdit, QTreeWidget, QFormLayout, QHBoxLayout, QDialogButtonBox)
 from PyQt5.QtCore import QRegExp
 from PyQt5.QtGui import QDesktopServices, QDoubleValidator, QRegExpValidator, QStandardItemModel, QStandardItem
-from EToolsLimited import Ui_Dialog
+from src.EToolsLimited import Ui_Dialog
 import matplotlib.pyplot as plt
 import math
 import sqlalchemy
@@ -70,10 +70,6 @@ def _get_data_from_qtableview(table_view: QTableView) -> list[list[str]] | None:
         A 2D list where each inner list represents a row of cell values as strings.
         Returns None if the table_view doesn't have a QStandardItemModel.
 
-    Example:
-        >>> data = _get_data_from_qtableview(my_table_view)
-        >>> print(data[0])  # First row
-        ['Cell1', 'Cell2', 'Cell3']
     """
     model = table_view.model()
     if not isinstance(model, QStandardItemModel):
@@ -85,6 +81,122 @@ def _get_data_from_qtableview(table_view: QTableView) -> list[list[str]] | None:
     return [[model.data(model.index(row, col)) or ""
              for col in range(columns)]
             for row in range(rows)]
+
+
+class ManualDataInputDialog(QDialog):
+    """
+    Dialog for manual input of well elevation and north reference when database query fails
+    or returns empty values.
+    """
+
+    def __init__(self, current_elevation=None, current_north_ref=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Manual Data Entry Required")
+        self.setFixedSize(350, 180)
+        self.setModal(True)
+
+        # Store current values for pre-population
+        self.current_elevation = str(current_elevation) if current_elevation else ""
+        self.current_north_ref = str(current_north_ref) if current_north_ref else ""
+
+        self._setup_ui()
+        self._setup_validators()
+        self._populate_current_values()
+
+    def _setup_ui(self):
+        """Initialize the user interface components"""
+        main_layout = QVBoxLayout(self)
+
+        # Add informational label
+        info_label = QLabel("Database query returned empty values. Please enter the required data manually:")
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("color: #2c3e50; font-weight: bold; margin-bottom: 10px;")
+        main_layout.addWidget(info_label)
+
+        # Create form layout
+        form_layout = QFormLayout()
+
+        # Well elevation input
+        self.elevation_edit = QLineEdit()
+        self.elevation_edit.setPlaceholderText("Enter well elevation (feet)")
+        form_layout.addRow("Well Elevation:", self.elevation_edit)
+
+        # North reference input (dropdown)
+        self.north_ref_combo = QComboBox()
+        self.north_ref_combo.addItems(['t', 'g', 'true', 'grid'])
+        self.north_ref_combo.setEditable(True)  # Allow custom input
+        form_layout.addRow("North Reference:", self.north_ref_combo)
+
+        main_layout.addLayout(form_layout)
+
+        # Button box
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self._validate_and_accept)
+        button_box.rejected.connect(self.reject)
+        main_layout.addWidget(button_box)
+
+    def _setup_validators(self):
+        """Configure input validators for data integrity"""
+        # Elevation should be a positive or negative number (altitude can be below sea level)
+        elevation_validator = QDoubleValidator(-1000.0, 10000.0, 2)
+        self.elevation_edit.setValidator(elevation_validator)
+
+    def _populate_current_values(self):
+        """Pre-populate fields with current values if available"""
+        if self.current_elevation:
+            self.elevation_edit.setText(self.current_elevation)
+
+        if self.current_north_ref:
+            # Find matching combo box item or set as custom text
+            index = self.north_ref_combo.findText(self.current_north_ref.lower())
+            if index >= 0:
+                self.north_ref_combo.setCurrentIndex(index)
+            else:
+                self.north_ref_combo.setEditText(self.current_north_ref)
+
+    def _validate_and_accept(self):
+        """Validate inputs before accepting the dialog"""
+        elevation_text = self.elevation_edit.text().strip()
+        north_ref_text = self.north_ref_combo.currentText().strip()
+
+        # Validation checks
+        if not elevation_text:
+            QMessageBox.warning(self, "Validation Error",
+                                "Well elevation is required and cannot be empty.")
+            self.elevation_edit.setFocus()
+            return
+
+        if not north_ref_text:
+            QMessageBox.warning(self, "Validation Error",
+                                "North reference is required and cannot be empty.")
+            self.north_ref_combo.setFocus()
+            return
+
+        try:
+            # Validate elevation is a valid number
+            float(elevation_text)
+        except ValueError:
+            QMessageBox.warning(self, "Validation Error",
+                                "Well elevation must be a valid number.")
+            self.elevation_edit.setFocus()
+            return
+
+        # Validate north reference format
+        valid_north_refs = ['t', 'g', 'true', 'grid']
+        if north_ref_text.lower() not in valid_north_refs:
+            QMessageBox.warning(self, "Validation Error",
+                                f"North reference must be one of: {', '.join(valid_north_refs)}")
+            self.north_ref_combo.setFocus()
+            return
+
+        # All validations passed
+        self.accept()
+
+    def get_values(self):
+        """Return the validated input values"""
+        elevation = float(self.elevation_edit.text().strip())
+        north_ref = self.north_ref_combo.currentText().strip().lower()
+        return elevation, north_ref
 
 
 class UltraFastClearer:
@@ -214,14 +326,6 @@ class SingleInputDialog(QDialog):
     customizable title, label, and placeholder text. It includes standard
     OK/Cancel buttons and supports input validation.
 
-    Example:
-        >>> dialog = SingleInputDialog(
-        ...     title="Enter Row",
-        ...     label="Row Number:",
-        ...     placeholder="Enter a row number"
-        ... )
-        >>> if dialog.exec_() == QDialog.Accepted:
-        ...     value = dialog.get_value()
     """
 
     def __init__(self, title: str = "Input", label: str = "Value:",
@@ -408,7 +512,9 @@ class DatabaseManager:
     def __init__(self) -> None:
         """Initialize the database manager with connection and session factory."""
         # Initialize the connection
-        self.connector = SQLConnector()
+        file_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logininfo.txt")
+
+        self.connector = SQLConnector(login_file=file_path)
         self.engine = self.connector.get_engine()
 
         # Create a session factory
@@ -424,9 +530,6 @@ class DatabaseManager:
         Yields:
             SQLAlchemy session object for database operations.
 
-        Example:
-            >>> with db_manager.get_session() as session:
-            ...     session.query(Well).filter_by(api=api_number).first()
         """
         session = self.Session()
         try:
@@ -448,11 +551,6 @@ class DatabaseManager:
         Returns:
             List of result rows from the query execution.
 
-        Example:
-            >>> results = db.execute_raw_query(
-            ...     "SELECT * FROM Wells WHERE WellID = :well_id",
-            ...     {'well_id': 12345}
-            ... )
         """
         with self.engine.connect() as connection:
             result = connection.execute(query, params or {})
@@ -467,8 +565,6 @@ class DatabaseManager:
         Returns:
             pandas DataFrame containing the query results.
 
-        Example:
-            >>> df = db.query_to_dataframe("SELECT * FROM DirectionalSurveyData")
         """
         return pd.read_sql_query(query, self.engine)
 
@@ -638,10 +734,6 @@ def _get_convergence(lat: float, lon: float, from_crs: str = 'EPSG:32043') -> fl
         float: Meridian convergence angle in degrees.
             Positive values indicate convergence east of true north.
             Negative values indicate convergence west of true north.
-
-    Examples:
-        >>> _get_convergence(40.7608, -111.8910)  # Salt Lake City coordinates
-        -0.324  # Example return value
 
     Notes:
         - The function uses the Utah Central Zone State Plane by default, which is
@@ -816,7 +908,9 @@ class ETools(QMainWindow):
         self.ui.well_api_val.returnPressed.connect(self.run_api_when_entered)
         self.ui.lateral_name_line_edit.returnPressed.connect(self.run_api_when_entered)
         self.ui.add_dx_data_pushbutton.pressed.connect(self.recalculate_data_with_new_md_input)
-        self.ui.runDXSurveyPushbutton.pressed.connect(self.process_when_dx_button_pushed)
+        # self.ui.runDXSurveyPushbutton.pressed.connect(self.process_when_dx_button_pushed)
+        self.ui.runDXSurveyPushbutton.pressed.connect(lambda: self.process_when_dx_button_pushed())
+
         self.ui.locate_more_wells_push_button.pressed.connect(self.find_more_sections_and_report)
         self.ui.dx_new_row_pushbutton.clicked.connect(self.open_dialog_new_row)
         self.ui.dx_delete_row_pushbutton.clicked.connect(self.open_dialog_delete)
@@ -1004,7 +1098,7 @@ class ETools(QMainWindow):
                 WHERE dsh.APINumber = '{api}' and dsh.LateralName = '{lateral}' order by MeasuredDepth"""
 
         survey_dx = db_process.query_to_dataframe(query)
-
+        print(survey_dx)
         try:
             # Extract header information
             well_elevation = survey_dx['SurveySurfaceElevation'].iloc[0]
@@ -1083,7 +1177,7 @@ class ETools(QMainWindow):
         self.lateral = lateral_name
         self.retrieve_well_parameters()
 
-    def process_when_dx_button_pushed(self) -> None:
+    def process_when_dx_button_pushed(self, survey = None) -> None:
         """Process directional survey data when the DX button is clicked.
 
         This method initiates the main survey processing workflow, including:
@@ -1103,9 +1197,25 @@ class ETools(QMainWindow):
             north_ref = self.ui.dx_survey_north_ref_line.text()
             _get_data_from_qtableview(self.ui.dx_survey_table_mod)
             error_traceback = traceback.format_exc()
+
             print(f"Error details:\n{error_traceback}")
             pass
+        if not well_elevation or not north_ref:
+            dialog = ManualDataInputDialog(
+                current_elevation=well_elevation,
+                current_north_ref=north_ref,
+                parent=self
+            )
 
+            if dialog.exec_() == QDialog.Accepted:
+                # User provided manual input
+                well_elevation, north_ref = dialog.get_values()
+                print(f"Manual input received - Elevation: {well_elevation}, North Ref: {north_ref}")
+            else:
+                # User cancelled the dialog
+                QMessageBox.information(self, "Operation Cancelled",
+                                        "Manual data entry was cancelled. Process aborted.")
+                return  # Exit the method early
         # Update UI with survey parameters
         self.ui.dx_survey_elevation.setText(str(well_elevation))
 
@@ -1515,9 +1625,7 @@ class ETools(QMainWindow):
             result_boo = loader()
             if result_boo:  # If file was successfully selected
                 # Import and process the survey file
-                df, north_ref = self.survey_importer.load_and_process_data(
-                    label, self.db, self.api_val, self.file_path_dict
-                )
+                df, north_ref = self.survey_importer.load_and_process_data(label, self.db, self.api_val, self.file_path_dict)
 
                 # Extract elevation and prepare data
                 well_elevation = df['SurveySurfaceElevation'].iloc[0]
@@ -1528,8 +1636,10 @@ class ETools(QMainWindow):
 
                 # Combine with existing surveys
                 output_new_df = filter_out_same_citing()
+                if self.well is None:
+                    self.process_when_dx_button_pushed()
                 test_combo = copy.copy(self.well.plat_df)
-
+                print(north_ref, well_elevation, test_combo)
                 # Update well with new survey data
                 self.well.set_survey(output_new_df)
                 self.well.set_north_ref(north_ref)

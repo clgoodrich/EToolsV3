@@ -40,7 +40,7 @@ class SurveyProcessBase:
         # Step 2: Setup survey processing parameters dictionary
         self.survey_parameters = {"conv_angle": self.conv_angle, "north_ref": None}
         self.survey_parameters["north_ref"] = north_ref[0].lower()  # Extract first character and normalize
-
+        print(well_elevation)
         # Step 3: Trigger main survey processing workflow
         self.survey_process(self.survey_dx, well_elevation, north_ref)
 
@@ -81,9 +81,6 @@ class SurveyProcessBase:
         def kop_test(survey_df, label):
             try:
                 # Load survey data
-                # print(f"Loaded {len(survey_df)} survey points")
-                # print(f"Depth range: {survey_df['measured_depth'].min():.0f} - {survey_df['measured_depth'].max():.0f} ft")
-
                 # Convert inclination and azimuth to radians if they're in degrees
                 if survey_df['inclination'].max() > 10:  # Likely in degrees
                     survey_df['inclination'] = np.radians(survey_df['inclination'])

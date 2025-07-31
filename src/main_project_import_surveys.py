@@ -53,6 +53,7 @@ import pandas as pd
 import regex as re
 import sqlite3
 import utm
+from pandas import DataFrame
 from pdfminer.converter import PDFPageAggregator
 from pdfminer.layout import LAParams, LTAnno, LTChar, LTPage, LTTextBox, LTTextLine
 from pdfminer.pdfinterp import PDFPageInterpreter, PDFResourceManager
@@ -565,6 +566,9 @@ def _gather_process(parsed_data: List[List[Tuple]]) -> List[List[float]]:
 
 
 def _gather_elevation(parsed_data: List[List[Tuple]], shl: List[float]) -> Optional[float]:
+    def extract_float_value(text_data):
+        match = re.search(r'-?\d+\.?\d*', text)
+        return float(match.group()) if match else 0.0
     """Extract ground level elevation from PDF survey documents.
 
     Searches for elevation values near 'ground level' text references using
@@ -579,19 +583,19 @@ def _gather_elevation(parsed_data: List[List[Tuple]], shl: List[float]) -> Optio
         Elevation value in feet above sea level, or None if not found
     """
     n_lst = _parse_and_find(parsed_data, 'ground level', [''])
-
     for i in range(len(parsed_data)):
         for j in range(len(parsed_data[i])):
             text = parsed_data[i][j][4].lower().strip().replace("\n", " ").replace(",", "")
             x1, y1, x2, y2 = parsed_data[i][j][0], parsed_data[i][j][1], parsed_data[i][j][2], parsed_data[i][j][3]
-
             for k in range(len(n_lst)):
                 if i == n_lst[k][0]:  # Same page
                     x3, y3, x4, y4 = n_lst[k][2], n_lst[k][3], n_lst[k][4], n_lst[k][5]
+
                     # Check spatial proximity to ground level reference
                     if x4 < x1 and abs(y1 - y3) < 2 and abs(y2 - y4) < 4:
+                        output = extract_float_value(text)
                         try:
-                            return float(text)
+                            return float(output)
                         except ValueError:
                             pass
     return None
@@ -1037,7 +1041,7 @@ class SurveyImporter:
         self.file_path: Optional[str] = None
 
     def load_and_process_data(self, label: str, db: Any, api: str,
-                            file_path_dict: Dict[str, str]) -> Tuple[pd.DataFrame, str, Optional[Any]]:
+                            file_path_dict: Dict[str, str]) -> tuple[DataFrame, str]:
         """Main entry point for survey data loading and processing.
 
         Routes file processing based on extension and handles the complete import
@@ -1081,7 +1085,7 @@ class SurveyImporter:
         elif extension in ['.xls', '.xlsx', '.xlsm', '.xlsb']:
             return self.process_table_data(used_file, label, 'xl')
 
-        return df, north_ref, extra_plats
+        return df, north_ref
 
     def process_table_data(self, directory: str, label: str,
                           table_doc_type: str) -> Tuple[pd.DataFrame, str]:
