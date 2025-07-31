@@ -8816,7 +8816,7 @@ class Ui_Dialog(object):
         self.label.setObjectName("label")
         self.all_tabs.addTab(self.wcr_tab, "")
         self.db_connect_pushbutton = QtWidgets.QPushButton(Dialog)
-        self.db_connect_pushbutton.setGeometry(QtCore.QRect(690, 5, 141, 41))
+        self.db_connect_pushbutton.setGeometry(QtCore.QRect(690, 10, 141, 41))
         self.db_connect_pushbutton.setObjectName("db_connect_pushbutton")
 
         self.retranslateUi(Dialog)
