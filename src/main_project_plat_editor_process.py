@@ -1,6 +1,9 @@
 import traceback
+
 from shapely.ops import substring
 import copy
+import itertools
+# from main_project_well_path_tracer import WellPathTracer
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QLineEdit, QSpinBox,
                              QCheckBox,
@@ -8,13 +11,20 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout
                              QGraphicsView,
                              QComboBox, QMessageBox, QFileDialog, QButtonGroup)
 import math
+from shapely.geometry import Polygon, Point, LineString
 from PyQt5.QtGui import QStandardItemModel, QStandardItem
 import pandas as pd
+from shapely.geometry import Polygon
+import numpy as np
+import ModuleAgnostic
+import regex as re
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from shapely.geometry import Point, LineString, Polygon, MultiPoint
+from shapely.geometry.base import BaseGeometry
+import operator
 from main_project_clearance import ClearanceProcess
-from main_project_well_path_tracer import tracer_process
+from main_project_well_path_tracer import trace_well_with_reentry
 
 
 def decimal_converter(side, deg, minutes, sec, dir_val):
@@ -1227,20 +1237,17 @@ class SetupRelativeCoordsPage:
     #         current_plat_conc = next_plat_conc
 
     def main_tracer_process(self, current_plat_coords, current_plat_conc, original_all_plats_df, well_path, title):
-        print("_____________________________________________________________________")
-        print('current_plat_coords')
-        print(current_plat_coords)
-
-        print('current_plat_conc')
-        print(current_plat_conc)
-
-        print('original_all_plats_df')
-        print(original_all_plats_df)
-
-        print('well_path')
-        print(well_path)
-        print("_____________________________________________________________________")
-
+        # print("_______________________________________________________________")
+        #
+        # print('current_plat_coords')
+        # print(current_plat_coords)
+        # print('current_plat_conc')
+        # print(current_plat_conc)
+        # print('original_all_plats_df')
+        # print(original_all_plats_df)
+        # print('well_path')
+        # print(well_path)
+        # print("_______________________________________________________________")
         def get_direction_sides():
             used_df = all_plats_df[all_plats_df['conc'] == current_plat_conc]
             grouped_df = used_df.groupby('side')
@@ -1490,24 +1497,11 @@ class SetupRelativeCoordsPage:
         counter = 2
         intersection_pt_current = Point(0, 0)
         print("____________________________________________")
-
-        while True:
-            # determine out well path
-            # determine our polygon
-            intersection_segment = LineString(
-                list(zip(current_well_path_section['e_offset_delta'], current_well_path_section['n_offset_delta'])))
-            polygon_plat = current_polygon
-
-
-
-
-
         while True:
             polygon_plat = current_polygon
             # pts = [Point(x, y) for x, y in zip(current_well_path_section.e_offset_delta, current_well_path_section.n_offset_delta)]
             intersection_segment = LineString(
                 list(zip(current_well_path_section['e_offset_delta'], current_well_path_section['n_offset_delta'])))
-
             boundary = polygon_plat.exterior
             intersection_pt = intersection_segment.intersection(boundary)
 
@@ -1562,6 +1556,7 @@ class SetupRelativeCoordsPage:
                     rewritten_coords = self.coords_stitcher(next_plat_coords_dict,
                                                             all_plats_df[all_plats_df['conc'] == current_plat_conc],
                                                             dir_val, well_prox_boo)
+                    print(rewritten_coords)
 
 
             except IndexError as f:
@@ -1720,13 +1715,10 @@ class SetupRelativeCoordsPage:
         well_paths_lst = [k for k, v in self.well_path_dict.items()]
         all_plats_df = original_all_plats_df
         # for i in well_paths_lst:
-        output_tracer = tracer_process(well_path_dict = self.well_path_dict,
-            current_plat_coords=current_plat_coords,
-                       current_plat_conc=current_plat_conc,
-                       well_path = self.well_path_dict['pln_df_true_dx'].clearance_data,
-                       original_all_plats_df=original_all_plats_df,
-                       currently_used_plat_data=self.currently_used_plat_data)
-        print(output_tracer)
+        output_tracer1, foo2 = trace_well_with_reentry(current_plat_coords, current_plat_conc, original_all_plats_df,
+                                                 self.well_path_dict['pln_df_true_dx'].clearance_data,)
+        # print(output_tracer)
+        # print(foo)
         tracer_output = self.main_tracer_process(current_plat_coords, current_plat_conc, original_all_plats_df,
                                                  self.well_path_dict['pln_df_true_dx'].clearance_data, 'pln_df_true_dx')
         if not tracer_output.empty:
