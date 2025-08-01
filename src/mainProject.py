@@ -658,7 +658,6 @@ class SQLConnector:
             URL-encoded connection string for SQLAlchemy.
         """
         credentials = self._get_credentials()
-        print(credentials)
 
         if credentials:
             # Production connection to Utah Oil & Gas database
@@ -932,7 +931,6 @@ class ETools(QMainWindow):
         except sqlalchemy.exc.OperationalError:
             self.no_db_connect_popup()
             self.db = None
-        print('connected')
         return self.db
 
     def open_dialog_new_row(self) -> None:
@@ -1200,7 +1198,7 @@ class ETools(QMainWindow):
         self.lateral = lateral_name
         self.retrieve_well_parameters()
 
-    def process_when_dx_button_pushed(self, survey_dx=None, well_elevation=None, north_ref=None) -> None:
+    def process_when_dx_button_pushed(self, survey_dx_imported=None, well_elevation=None, north_ref=None) -> None:
         """Process directional survey data when the DX button is clicked.
 
         This method initiates the main survey processing workflow, including:
@@ -1220,9 +1218,11 @@ class ETools(QMainWindow):
             well_elevation = self.ui.dx_survey_elevation.text()
             north_ref = self.ui.dx_survey_north_ref_line.text()
             survey_dx = _get_data_from_qtableview(self.ui.dx_survey_table_mod)
-            print('sfrgiojgsrdfnbjisgrhnoisge')
-            error_traceback = traceback.format_exc()
+            if survey_dx is None:
+                survey_dx = survey_dx_imported
 
+
+            error_traceback = traceback.format_exc()
             print(f"Error details:\n{error_traceback}")
             pass
         if not well_elevation or not north_ref:
@@ -1645,7 +1645,7 @@ class ETools(QMainWindow):
                 return new_df
             except AttributeError:
                 return df
-
+        restrict_lock = False
         try:
             result_boo = loader()
             if result_boo:  # If file was successfully selected
@@ -1659,24 +1659,25 @@ class ETools(QMainWindow):
                 self.ui.dx_survey_elevation.setText(str(well_elevation))
                 df = df.drop(['SurveySurfaceElevation'], axis=1)
                 df['LateralName'] = self.lateral
-                print(df)
                 # Combine with existing surveys
                 output_new_df = filter_out_same_citing()
                 if self.well is None:
-                    self.process_when_dx_button_pushed(survey_dx=df, well_elevation=well_elevation, north_ref=north_ref)
+                    restrict_lock = True
+                    self.process_when_dx_button_pushed(survey_dx_imported=df, well_elevation=well_elevation, north_ref=north_ref)
                 test_combo = copy.copy(self.well.plat_df)
-                print(north_ref, well_elevation, test_combo)
                 # Update well with new survey data
                 self.well.set_survey(output_new_df)
                 self.well.set_north_ref(north_ref)
                 self.well.set_well_elevation(well_elevation)
                 self.well.set_plat_data(test_combo)
-                self.well.rerun_surveys()
+                if not restrict_lock:
+                    self.well.rerun_surveys()
 
                 # Update displays
                 self.writer.set_clear_survey(self.well.cl_dx_dict)
                 self.writer.set_spec_surveys(self.well.spec_surveys_dict)
-                self.main_processes_program(north_ref)
+                if not restrict_lock:
+                    self.main_processes_program(north_ref)
                 self.write_radio_buttons(self.well.cl_dx_dict, self.well.spec_surveys_dict)
 
                 # Re-enable buttons and show success message

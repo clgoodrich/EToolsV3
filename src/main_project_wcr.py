@@ -33,8 +33,105 @@ from PyQt5.QtWidgets import (
     QPushButton, QRadioButton, QButtonGroup, QMessageBox, QLabel,
     QScrollArea, QHeaderView, QAbstractItemView
 )
+import sys
+import pandas as pd
+from PyQt5.QtWidgets import (
+    QApplication, QDialog, QVBoxLayout, QFormLayout, QLineEdit,
+    QDialogButtonBox, QLabel, QMessageBox, QDateEdit
+)
+from PyQt5.QtGui import QDoubleValidator
+from PyQt5.QtCore import QDate
+
+class PerforationDataDialog(QDialog):
+    """
+    A simple dialog to input Top, Bottom, and Perforation Date.
+    The output is returned as a single-row pandas DataFrame.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Perforation Data Entry")
+        self.setModal(True)
+        self.setFixedSize(350, 200)
+
+        # To store the final validated data
+        self.final_data = None
+
+        self._setup_ui()
+
+    def _setup_ui(self):
+        """Initialize the user interface components."""
+        main_layout = QVBoxLayout(self)
+
+        # Informational label
+        info_label = QLabel("Please enter the perforation details below:")
+        info_label.setStyleSheet("font-weight: bold; margin-bottom: 10px;")
+        main_layout.addWidget(info_label)
+
+        # Form for inputs
+        form_layout = QFormLayout()
+
+        # Input fields
+        self.top_edit = QLineEdit()
+        self.bottom_edit = QLineEdit()
+        self.date_edit = QDateEdit()
+
+        # Set validators and properties
+        self.top_edit.setValidator(QDoubleValidator())
+        self.bottom_edit.setValidator(QDoubleValidator())
+        self.date_edit.setCalendarPopup(True)
+        self.date_edit.setDisplayFormat("MM/dd/yyyy")
+        self.date_edit.setDate(QDate.currentDate()) # Default to today's date
+
+        # Add rows to the form
+        form_layout.addRow("Top:", self.top_edit)
+        form_layout.addRow("Bottom:", self.bottom_edit)
+        form_layout.addRow("Perf Date:", self.date_edit)
+
+        main_layout.addLayout(form_layout)
+
+        # Dialog buttons (OK and Cancel)
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self._validate_and_accept)
+        button_box.rejected.connect(self.reject)
+        main_layout.addWidget(button_box)
+
+    def _validate_and_accept(self):
+        """Validate inputs before accepting the dialog."""
+        top_text = self.top_edit.text().strip()
+        bottom_text = self.bottom_edit.text().strip()
+
+        # 1. Check for empty fields
+        if not top_text or not bottom_text:
+            QMessageBox.warning(self, "Validation Error", "All fields are required.")
+            return
+
+        # 2. Check if Top is less than Bottom
+        try:
+            top_val = float(top_text)
+            bottom_val = float(bottom_text)
+            if top_val >= bottom_val:
+                QMessageBox.warning(self, "Validation Error", "'Top' must be less than 'Bottom'.")
+                return
+        except ValueError:
+             QMessageBox.warning(self, "Validation Error", "Top and Bottom must be valid numbers.")
+             return
 
 
+        # All validations passed, store the data
+        self.final_data = {
+            'Top': [top_val],
+            'Bottom': [bottom_val],
+            'Perf Date': [self.date_edit.date().toString("MM/dd/yyyy")]
+        }
+        self.accept()
+
+    def get_values(self):
+        """
+        Return the validated input values as a pandas DataFrame.
+        """
+        if self.final_data:
+            return pd.DataFrame(self.final_data)
+        return pd.DataFrame() # Return an empty DataFrame if dialog was cancelled
 
 class WCR_Main:
     """
@@ -852,6 +949,19 @@ class WCR_Main:
         self.ui.display_table_utm_locs.show()
 
     def wcr_perf_mods(self) -> Tuple[List[float], str]:
+        def run_perf_data_dialog_example():
+            """
+            Demonstrates creating the dialog and printing the output DataFrame.
+            """
+            dialog = PerforationDataDialog()
+
+            if dialog.exec_() == QDialog.Accepted:
+                perf_df = dialog.get_values()
+                return perf_df
+                print("\n✅ Data entry successful. DataFrame created:\n")
+                # print(perf_df)
+            else:
+                print("\n❌ Operation Cancelled: Data entry was cancelled.")
         """
         Retrieve perforation interval data from the database.
 
@@ -867,8 +977,11 @@ class WCR_Main:
                         join construct c on w.PKey = c.WellKey  
                         join [dbo].[vwDM_ConstructPerf] cp on c.PKey = cp.PKey
                         where wellid = {self.api} and [Zone Type] = 'Perforations'"""
-
-            tops = self.db.query_to_dataframe(sql_query)
+            try:
+                tops = self.db.query_to_dataframe(sql_query)
+            except Exception as e:
+                tops = run_perf_data_dialog_example()
+            print(tops)
             tops = tops.apply(lambda x: x.str.strip() if x.dtype == "object" else x)
 
             # Extract perforation data

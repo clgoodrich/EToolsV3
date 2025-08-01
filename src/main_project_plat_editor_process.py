@@ -1227,6 +1227,19 @@ class SetupRelativeCoordsPage:
     #         current_plat_conc = next_plat_conc
 
     def main_tracer_process(self, current_plat_coords, current_plat_conc, original_all_plats_df, well_path, title):
+        print("_____________________________________________________________________")
+        print('current_plat_coords')
+        print(current_plat_coords)
+
+        print('current_plat_conc')
+        print(current_plat_conc)
+
+        print('original_all_plats_df')
+        print(original_all_plats_df)
+
+        print('well_path')
+        print(well_path)
+        print("_____________________________________________________________________")
 
         def get_direction_sides():
             used_df = all_plats_df[all_plats_df['conc'] == current_plat_conc]
@@ -1477,11 +1490,24 @@ class SetupRelativeCoordsPage:
         counter = 2
         intersection_pt_current = Point(0, 0)
         print("____________________________________________")
+
+        while True:
+            # determine out well path
+            # determine our polygon
+            intersection_segment = LineString(
+                list(zip(current_well_path_section['e_offset_delta'], current_well_path_section['n_offset_delta'])))
+            polygon_plat = current_polygon
+
+
+
+
+
         while True:
             polygon_plat = current_polygon
             # pts = [Point(x, y) for x, y in zip(current_well_path_section.e_offset_delta, current_well_path_section.n_offset_delta)]
             intersection_segment = LineString(
                 list(zip(current_well_path_section['e_offset_delta'], current_well_path_section['n_offset_delta'])))
+
             boundary = polygon_plat.exterior
             intersection_pt = intersection_segment.intersection(boundary)
 

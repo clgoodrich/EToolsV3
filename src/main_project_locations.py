@@ -10,7 +10,13 @@ import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Polygon
 from typing import Tuple, Dict, Any, Union
-
+import sys
+from PyQt5.QtWidgets import (
+    QApplication, QDialog, QVBoxLayout, QFormLayout, QLineEdit,
+    QComboBox, QDialogButtonBox, QLabel, QMessageBox, QTabWidget, QWidget,
+    QGroupBox
+)
+from PyQt5.QtGui import QIntValidator, QDoubleValidator
 
 def retrieve_sql_location_data(
         api: str,
@@ -48,7 +54,6 @@ def retrieve_sql_location_data(
       [Zone_Name] as zone_name,[Wh_Qtr] as qtr_qtr,[Wh_X] as shl_x,[Wh_Y] as shl_y, [Bh_X] as bhl_x, [Bh_Y] as bhl_y
      from [dbo].[tblAPDLoc] where API LIKE '%{api}%' and API_EXT = '{lateral}'"""
     loc_df = db.query_to_dataframe(query)
-
     # Fallback strategy if primary query returns no results
     if loc_df.empty:
         # Resolve APD permit number from master table
@@ -198,7 +203,6 @@ def find_plats_data(
     # Refine query using concentration values from initial results
     conc_vals = filtered_data['Conc'].unique()
     filtered_data = _read_base_data_by_conc(conn_db, conc_vals)
-    print(filtered_data)
     # Transform to polygon geometries
     test_plat = _geo_transform(filtered_data)
     if not isinstance(test_plat, gpd.GeoDataFrame):
@@ -275,7 +279,198 @@ def find_relative_data(
     # Group by concentration and version for systematic processing
     grouped = output.groupby(['Conc', 'Version'])
     return grouped
+from PyQt5.QtWidgets import (
+    QApplication, QDialog, QVBoxLayout, QFormLayout, QLineEdit,
+    QComboBox, QDialogButtonBox, QLabel, QMessageBox
+)
+from PyQt5.QtGui import QIntValidator, QDoubleValidator
 
+class ManualFootageInputDialog(QDialog):
+    """
+    Dialog for manual input of well footage data, returning the result
+    as a pandas DataFrame. Includes an optional autofill for testing.
+    """
+
+    def __init__(self, parent=None, testing_enabled=False):
+        super().__init__(parent)
+        self.setWindowTitle("Manual Footage Data Entry")
+        self.setModal(True)
+        self.setFixedSize(450, 620)
+        self.testing_enabled = testing_enabled
+
+        # Sample data for the autofill feature
+        self.sample_data = [
+            {'section': 4, 'township': 3.0, 'township_dir': 'S', 'rng': 1.0, 'rng_dir': 'W', 'baseline': 'U', 'fnsl': 1054, 'fnsl_dir': 'FNL', 'fewl': 2304, 'fewl_dir': 'FEL', 'zone_name': 'Surface Location', 'qtr_qtr': 'LOT2', 'shl_x': 585048, 'shl_y': 4456625, 'bhl_x': 584548, 'bhl_y': 4460124},
+            {'section': 33, 'township': 2.0, 'township_dir': 'S', 'rng': 1.0, 'rng_dir': 'W', 'baseline': 'U', 'fnsl': 100, 'fnsl_dir': 'FSL', 'fewl': 1490, 'fewl_dir': 'FWL', 'zone_name': 'Uppermost Producing', 'qtr_qtr': 'SESW', 'shl_x': 585048, 'shl_y': 4456625, 'bhl_x': 584548, 'bhl_y': 4460124},
+            {'section': 28, 'township': 2.0, 'township_dir': 'S', 'rng': 1.0, 'rng_dir': 'W', 'baseline': 'U', 'fnsl': 100, 'fnsl_dir': 'FNL', 'fewl': 1490, 'fewl_dir': 'FWL', 'zone_name': 'Proposed Depth', 'qtr_qtr': 'NENW', 'shl_x': 585048, 'shl_y': 4456625, 'bhl_x': 584548, 'bhl_y': 4460124},
+            {'section': 4, 'township': 3.0, 'township_dir': 'S', 'rng': 1.0, 'rng_dir': 'W', 'baseline': 'U', 'fnsl': 453, 'fnsl_dir': 'FNL', 'fewl': 1627, 'fewl_dir': 'FWL', 'zone_name': 'Kickoff Point', 'qtr_qtr': 'LOT3', 'shl_x': 585048, 'shl_y': 4456625, 'bhl_x': 584548, 'bhl_y': 4460124}
+        ]
+
+        self._setup_ui()
+
+    def _setup_ui(self):
+        main_layout = QVBoxLayout(self)
+
+        info_label = QLabel("Enter data in the tabs below. Common fields are at the bottom.")
+        main_layout.addWidget(info_label)
+
+        # Tab widget for row-specific data
+        self.tab_widget = QTabWidget()
+        self.tabs = []
+        for i in range(4):
+            tab = QWidget()
+            form_layout = self._create_row_specific_layout(tab)
+            tab.setLayout(form_layout)
+            self.tab_widget.addTab(tab, f"Row {i + 1}")
+            self.tabs.append(tab)
+        main_layout.addWidget(self.tab_widget)
+
+        # Common SHL/BHL coordinates
+        common_group_box = QGroupBox("Common Surface and Bottom-Hole Locations")
+        common_layout = QFormLayout()
+        self.shl_x_edit = QLineEdit()
+        self.shl_y_edit = QLineEdit()
+        self.bhl_x_edit = QLineEdit()
+        self.bhl_y_edit = QLineEdit()
+        self.shl_x_edit.setValidator(QIntValidator())
+        self.shl_y_edit.setValidator(QIntValidator())
+        self.bhl_x_edit.setValidator(QIntValidator())
+        self.bhl_y_edit.setValidator(QIntValidator())
+        common_layout.addRow("SHL X:", self.shl_x_edit)
+        common_layout.addRow("SHL Y:", self.shl_y_edit)
+        common_layout.addRow("BHL X:", self.bhl_x_edit)
+        common_layout.addRow("BHL Y:", self.bhl_y_edit)
+        common_group_box.setLayout(common_layout)
+        main_layout.addWidget(common_group_box)
+
+        # Dialog buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self._validate_and_accept)
+        button_box.rejected.connect(self.reject)
+
+        if self.testing_enabled:
+            autofill_button = button_box.addButton("Test Autofill", QDialogButtonBox.ActionRole)
+            autofill_button.clicked.connect(self._autofill_data)
+
+        main_layout.addWidget(button_box)
+
+    def _create_row_specific_layout(self, parent):
+        form_layout = QFormLayout(parent)
+        widgets = {}
+        fields = {
+            "section": {"widget": QLineEdit, "validator": QIntValidator(1, 36)},
+            "township": {"widget": QLineEdit, "validator": QDoubleValidator(0.0, 100.0, 2)},
+            "township_dir": {"widget": QComboBox, "items": ['N', 'S']},
+            "rng": {"widget": QLineEdit, "validator": QDoubleValidator(0.0, 100.0, 2)},
+            "rng_dir": {"widget": QComboBox, "items": ['E', 'W']},
+            "baseline": {"widget": QLineEdit},
+            "fnsl": {"widget": QLineEdit, "validator": QIntValidator(0, 9999)},
+            "fnsl_dir": {"widget": QComboBox, "items": ['FNL', 'FSL']},
+            "fewl": {"widget": QLineEdit, "validator": QIntValidator(0, 9999)},
+            "fewl_dir": {"widget": QComboBox, "items": ['FEL', 'FWL']},
+            "zone_name": {"widget": QLineEdit},
+            "qtr_qtr": {"widget": QLineEdit},
+        }
+        for name, props in fields.items():
+            widget_instance = props["widget"]()
+            if "items" in props:
+                widget_instance.addItems(props["items"])
+            if "validator" in props:
+                widget_instance.setValidator(props["validator"])
+            form_layout.addRow(f"{name.replace('_', ' ').title()}:", widget_instance)
+            widgets[name] = widget_instance
+        parent.widgets = widgets
+        return form_layout
+
+    def _autofill_data(self):
+        """Populates the form with sample data for testing."""
+        first_row = self.sample_data[0]
+        self.shl_x_edit.setText(str(first_row['shl_x']))
+        self.shl_y_edit.setText(str(first_row['shl_y']))
+        self.bhl_x_edit.setText(str(first_row['bhl_x']))
+        self.bhl_y_edit.setText(str(first_row['bhl_y']))
+
+        for i, tab in enumerate(self.tabs):
+            if i < len(self.sample_data):
+                data_row = self.sample_data[i]
+                widgets = tab.widgets
+                for key, value in data_row.items():
+                    if key in widgets:
+                        widget = widgets[key]
+                        if isinstance(widget, QLineEdit):
+                            widget.setText(str(value))
+                        elif isinstance(widget, QComboBox):
+                            index = widget.findText(str(value))
+                            if index >= 0:
+                                widget.setCurrentIndex(index)
+
+    def _validate_and_accept(self):
+        """Validate all fields and accept the dialog."""
+        all_data = []
+        common_fields = {
+            "SHL X": self.shl_x_edit, "SHL Y": self.shl_y_edit,
+            "BHL X": self.bhl_x_edit, "BHL Y": self.bhl_y_edit
+        }
+        for name, field in common_fields.items():
+            if not field.text().strip():
+                QMessageBox.warning(self, "Validation Error", f"Common field '{name}' is required.")
+                field.setFocus()
+                return
+
+        for i, tab in enumerate(self.tabs):
+            widgets = tab.widgets
+            if not widgets["section"].text().strip():
+                continue
+            required_fields = {
+                "Section": widgets["section"], "Township": widgets["township"],
+                "Range": widgets["rng"], "FNSL": widgets["fnsl"],
+                "FEWL": widgets["fewl"]
+            }
+            for name, field in required_fields.items():
+                if not field.text().strip():
+                    self.tab_widget.setCurrentIndex(i)
+                    QMessageBox.warning(self, "Validation Error", f"'{name}' is required in Row {i + 1}.")
+                    field.setFocus()
+                    return
+            all_data.append(self._get_tab_values(tab))
+
+        if not all_data:
+            QMessageBox.warning(self, "Validation Error", "At least one row must be filled out.")
+            return
+
+        self.final_data = all_data
+        self.accept()
+
+    def _get_tab_values(self, tab):
+        """Extracts values and combines them with common coordinates."""
+        widgets = tab.widgets
+        row_data = {
+            "section": int(widgets["section"].text()),
+            "township": float(widgets["township"].text()),
+            "township_dir": widgets["township_dir"].currentText(),
+            "rng": float(widgets["rng"].text()),
+            "rng_dir": widgets["rng_dir"].currentText(),
+            "baseline": widgets["baseline"].text(),
+            "fnsl": int(widgets["fnsl"].text()),
+            "fnsl_dir": widgets["fnsl_dir"].currentText(),
+            "fewl": int(widgets["fewl"].text()),
+            "fewl_dir": widgets["fewl_dir"].currentText(),
+            "zone_name": widgets["zone_name"].text(),
+            "qtr_qtr": widgets["qtr_qtr"].text(),
+        }
+        row_data["shl_x"] = int(self.shl_x_edit.text())
+        row_data["shl_y"] = int(self.shl_y_edit.text())
+        row_data["bhl_x"] = int(self.bhl_x_edit.text())
+        row_data["bhl_y"] = int(self.bhl_y_edit.text())
+        return row_data
+
+    def get_values(self):
+        """
+        Return the validated input values as a pandas DataFrame.
+        """
+        if hasattr(self, 'final_data') and self.final_data:
+            return pd.DataFrame(self.final_data)
+        return pd.DataFrame() # Return an empty DataFrame if no data
 
 class TownShipAndRangeProcess:
     """Process and integrate township, range, and plat data for oil and gas well locations.
@@ -324,7 +519,13 @@ class TownShipAndRangeProcess:
             for consistency with COGCC regulatory requirements.
         """
         # Retrieve regulatory location data from APD database
-        loc_df, shl, bhl = retrieve_sql_location_data(api, lateral, db_process)
+        try:
+            loc_df, shl, bhl = retrieve_sql_location_data(api, lateral, db_process)
+
+        except Exception as e:
+            loc_df = self.run_dialog_example()
+            shl = loc_df[['shl_x', 'shl_y']].iloc[0].tolist()
+            bhl = loc_df[['bhl_x', 'bhl_y']].iloc[0].tolist()
 
         # Find plat boundaries intersecting with survey trajectory
         plat_df = find_plats_data(data=survey_dict, conn_db=location_db)
@@ -332,3 +533,18 @@ class TownShipAndRangeProcess:
         # Store processed data for access by visualization and analysis methods
         self.plat_df = plat_df
         self.loc_df = loc_df
+
+    def run_dialog_example(self):
+        """
+        Function to demonstrate how to create and use the
+        ManualFootageInputDialog.
+        """
+        # In a real application, the parent would be your main window
+        dialog = ManualFootageInputDialog(testing_enabled=True)
+
+        if dialog.exec_() == QDialog.Accepted:
+            footage_df = dialog.get_values()
+            print("\n✅ Manual input received. Data returned as a pandas DataFrame:\n")
+            return footage_df
+        else:
+            print("\n❌ Operation Cancelled: Manual data entry was cancelled.")
