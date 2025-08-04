@@ -26,6 +26,156 @@ import operator
 from main_project_clearance import ClearanceProcess
 from main_project_well_path_tracer import triangulatorWithKnownData
 
+def mainTriangulator(conn, tsr_data, data, df, conc, survey_data, well_parameter_data, shl):
+    print('triangulator)')
+    print(tsr_data)
+    print(data)
+    print(df)
+    print(conc)
+    print(survey_data)
+    print(well_parameter_data)
+    print(shl)
+    survey_data = alterSurveyForLargeSpacingBetweenPts(survey_data)
+    counter = 0
+    initial_data = df[df['new_code'] == conc].to_numpy().tolist()
+    initial_data = initial_data[:16]
+    plat_north_ref = initial_data[0][-3]
+    plat_north_refs_lst = [plat_north_ref]
+    foo = [survey_data[0] + [0] * 11]
+    survey_data = survey_data[1:]
+    known_conc_data = [conc]
+    new_conc = conc
+    dirLst = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+    lst = [[0, 0, 0, 0, 0, 0, 0, 0],
+           [36, 31, 6, 7, 12, 11, 2, 35],
+           [35, 36, 1, 12, 11, 10, 3, 34],
+           [34, 35, 2, 11, 10, 9, 4, 33],
+           [33, 34, 3, 10, 9, 8, 5, 32],
+           [32, 33, 4, 9, 8, 7, 6, 31],
+           [31, 32, 5, 8, 7, 12, 1, 36],
+           [6, 5, 8, 17, 18, 13, 12, 1],
+           [5, 4, 9, 16, 17, 18, 7, 6],
+           [4, 3, 10, 15, 16, 17, 8, 5],
+           [3, 2, 11, 14, 15, 16, 9, 4],
+           [2, 1, 12, 13, 14, 15, 10, 3],
+           [1, 6, 7, 18, 13, 14, 11, 2],
+           [12, 7, 18, 19, 24, 23, 14, 11],
+           [11, 12, 13, 24, 23, 22, 15, 10],
+           [10, 11, 14, 23, 22, 21, 16, 9],
+           [9, 10, 15, 22, 21, 20, 17, 8],
+           [8, 9, 16, 21, 20, 19, 18, 7],
+           [7, 8, 17, 20, 19, 24, 13, 12],
+           [18, 17, 20, 29, 30, 25, 24, 13],
+           [17, 16, 21, 28, 29, 30, 19, 18],
+           [16, 15, 22, 27, 28, 29, 20, 17],
+           [15, 14, 23, 26, 27, 28, 21, 16],
+           [14, 13, 24, 25, 26, 27, 22, 15],
+           [13, 18, 19, 30, 25, 26, 23, 14],
+           [24, 19, 30, 31, 36, 35, 26, 23],
+           [23, 24, 25, 36, 35, 34, 27, 22],
+           [22, 23, 26, 35, 34, 33, 28, 21],
+           [21, 22, 27, 34, 33, 32, 29, 20],
+           [20, 21, 28, 33, 32, 31, 30, 19],
+           [19, 20, 29, 32, 31, 36, 25, 24],
+           [30, 29, 32, 5, 6, 1, 36, 25],
+           [29, 28, 33, 4, 5, 6, 31, 30],
+           [28, 27, 34, 3, 4, 5, 32, 29],
+           [27, 26, 35, 2, 3, 4, 33, 28],
+           [26, 25, 36, 1, 2, 3, 34, 27],
+           [25, 30, 31, 6, 1, 2, 35, 26]]
+    section = int(float(tsr_data[0][6]))
+    section_degrees_data = [data]
+    md_lst = [i[0] for i in survey_data]
+    inc_lst = [i[1] for i in survey_data]
+    azi_lst = [i[2] for i in survey_data]
+    north_reference, magnetic_declination, convergence_angle, target_azimuth = well_parameter_data[0], well_parameter_data[1], float(well_parameter_data[2]), float(well_parameter_data[3])
+    min_curv_data = wmc.mainCalculation(md_lst, inc_lst, azi_lst, convergence_angle, north_reference, plat_north_ref, magnetic_declination, target_azimuth)
+    offset_pts_lst = [[i[8] + shl[0], i[7] + shl[1]] for i in min_curv_data]
+    # old_well_path_tester = copy.deepcopy(offset_pts_lst)
+    # while True:
+    #     corners, sides_generated = ma.cornerGeneratorProcess(data)
+    #     sides_generated = [[j[:-1] for j in i] for i in sides_generated]
+    #     segment_lst = [[[i[j], i[j + 1]] for j in range(len(i) - 1)] for i in sides_generated]
+    #     old_well_path_tester, direction = findIntersectionBetweenWellAndSection(segment_lst, old_well_path_tester, shl)
+    #     index = dirLst.index(direction)
+    #     new_section = lst[section][index]
+    #     township, townshipDir, rng, rngDir = modifySection(section, new_section, tsr_data[0][6:])
+    #     conc_info = [new_section, township, townshipDir, rng, rngDir, tsr_data[0][-1]]
+    #     new_conc = ma.reTranslateData(conc_info)
+    #     if new_conc in known_conc_data:
+    #
+    #         known_index = known_conc_data.index(new_conc)
+
+    #         data = section_degrees_data[known_index]
+    #         counter += 1
+    #     else:
+    #         # old_well_path_tester = well_path_tester[:well_index_end + 1]
+    #         proxBoo = getBooProx(data, old_well_path_tester, direction)
+    #         known_conc_data.append(new_conc)
+    #         data_new = df[df['new_code'] == new_conc].to_numpy().tolist()
+    #
+    #         if len(data_new) == 0:
+    #             data_new = GUIDataAdd.addDataIfAGRCNotFound(conn, new_conc, conc_info)
+    #         data_new = sorted(data_new, key=lambda x: x[-1], reverse=True)
+    #         plat_north_ref = data_new[0][-3]
+    #         plat_north_refs_lst.append(plat_north_ref)
+    #         data_new_dec = ma.convertToDecimal(copy.deepcopy(data_new))
+    #         data_new_deg = ma.pointsConverter(data_new_dec)
+    #         rewritten_coords = coordsAdjuster(data_new_deg, data, direction, proxBoo)
+    #         data = rewritten_coords
+    #         section_degrees_data.append(data)
+    #         counter += 1
+
+    prev_section_data = tsr_data[0][6:]
+    while True:
+
+        corners, sides_generated = ma.cornerGeneratorProcess(data)
+        sides_generated = [[j[:-1] for j in i] for i in sides_generated]
+        segment_lst = [[[i[j], i[j + 1]] for j in range(len(i) - 1)] for i in sides_generated]
+        # findIntersectionBetweenWellAndSection(segment_lst, offset_pts_lst, shl)
+
+        intersection, direction, well_index_end, foo, well_path_tester = findWellPathBoundaryIntersection(segment_lst, survey_data, well_parameter_data, plat_north_ref, foo, shl)
+        if not well_path_tester or direction == 'Null':
+            return min_curv_data, known_conc_data, section_degrees_data, plat_north_refs_lst
+
+        index = dirLst.index(direction)
+        new_section = lst[section][index]
+        township, townshipDir, rng, rngDir, prev_section_data = modifySection(section, new_section, prev_section_data)
+        conc_info = [new_section, township, townshipDir, rng, rngDir, tsr_data[0][-1]]
+        new_conc = ma.reTranslateData(conc_info)
+        # ma.grapher4(well_path_tester, section_degrees_data[-1], new_conc)
+        if new_conc in known_conc_data:
+
+            known_index = known_conc_data.index(new_conc)
+            data = section_degrees_data[known_index]
+            counter += 1
+        else:
+            old_well_path_tester = well_path_tester[:well_index_end + 1]
+            proxBoo = getBooProx(data, old_well_path_tester, direction)
+            known_conc_data.append(new_conc)
+            data_new = df[df['new_code'] == new_conc].to_numpy().tolist()
+
+            if len(data_new) == 0:
+                data_new = GUIDataAdd.addDataIfAGRCNotFound(conn, new_conc, conc_info)
+            data_new = sorted(data_new, key=lambda x: x[-1], reverse=True)
+            plat_north_ref = data_new[0][-3]
+            plat_north_refs_lst.append(plat_north_ref)
+            data_new_deg, data_new_dec = ma.dataConverterPlatToUtm(data_new)
+            # data_new_dec = ma.convertToDecimal(copy.deepcopy(data_new))
+            # data_new_deg = ma.pointsConverter(data_new_dec)
+            rewritten_coords = coordsAdjuster(data_new_deg, data, direction, proxBoo)
+            data = rewritten_coords
+            section_degrees_data.append(data)
+            counter += 1
+        section = new_section
+
+    return min_curv_data, known_conc_data, section_degrees_data, plat_north_refs_lst
+
+
+
+
+
+
 
 def decimal_converter(side, deg, minutes, sec, dir_val):
     """
