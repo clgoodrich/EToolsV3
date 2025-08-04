@@ -24,7 +24,7 @@ from shapely.geometry import Point, LineString, Polygon, MultiPoint
 from shapely.geometry.base import BaseGeometry
 import operator
 from main_project_clearance import ClearanceProcess
-from main_project_well_path_tracer import trace_well_with_reentry
+from main_project_well_path_tracer import triangulatorWithKnownData
 
 
 def decimal_converter(side, deg, minutes, sec, dir_val):
@@ -1715,8 +1715,14 @@ class SetupRelativeCoordsPage:
         well_paths_lst = [k for k, v in self.well_path_dict.items()]
         all_plats_df = original_all_plats_df
         # for i in well_paths_lst:
-        output_tracer1, foo2 = trace_well_with_reentry(current_plat_coords, current_plat_conc, original_all_plats_df,
+        section_visits, section_data, visited_concs = triangulatorWithKnownData(current_plat_coords, current_plat_conc, original_all_plats_df,
                                                  self.well_path_dict['pln_df_true_dx'].clearance_data,)
+        # section_visits, section_data, visited_concs = triangulatorWithKnownData(
+        #     current_plat_coords,
+        #     current_plat_conc,
+        #     original_all_plats_df,
+        #     well_path
+        # )
         # print(output_tracer)
         # print(foo)
         tracer_output = self.main_tracer_process(current_plat_coords, current_plat_conc, original_all_plats_df,
