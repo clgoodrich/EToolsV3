@@ -55,6 +55,9 @@ from shapely.geometry import Point, LineString, MultiPoint, Polygon
 from main_project_plat_editor_process import convert_to_pts
 import main_project_drawer
 
+from file_helper import get_plss_sections_path
+
+# sys.path.append(os.path.dirname(__file__))
 
 def _get_data_from_qtableview(table_view: QTableView) -> list[list[str]] | None:
     """Extract data from a QTableView using the data() method for improved performance.
@@ -81,6 +84,18 @@ def _get_data_from_qtableview(table_view: QTableView) -> list[list[str]] | None:
     return [[model.data(model.index(row, col)) or ""
              for col in range(columns)]
             for row in range(rows)]
+
+
+def get_resource_path(relative_path):
+    """Get the absolute path to a resource, works for dev and for PyInstaller"""
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        # If not running as executable, use the current directory
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
 
 
 class ManualDataInputDialog(QDialog):
@@ -813,9 +828,13 @@ def setup_db() -> sqlite3.Connection:
     Note:
         The database path is currently hardcoded and should be made configurable.
     """
-    path_used_db = r'C:\Work\Databases'
-    apd_data_dir = os.path.join(path_used_db, 'Board_DB_Plss_Sections.db')
-    return sqlite3.connect(apd_data_dir)
+    # path_used_db = r'C:\Work\Databases'
+    # apd_data_dir = os.path.join(path_used_db, 'Board_DB_Plss_Sections.db')
+    #
+    # return sqlite3.connect(apd_data_dir)
+    # print('location of source file', os.getcwd())
+    # print('location of db', get_plss_sections_path())
+    return sqlite3.connect(get_plss_sections_path())
 
 
 class ETools(QMainWindow):
@@ -919,6 +938,10 @@ class ETools(QMainWindow):
         # self.ui.data_return_box.anchorClicked.connect(QDesktopServices.openUrl)
         self.ui.load_as_drilled_survey_box.clicked.connect(lambda: self.press_new_survey_button('drilled'))
         self.ui.load_planned_survey_box.clicked.connect(lambda: self.press_new_survey_button('planned'))
+        self.ui.well_api_val.setText('4301354659')
+        self.connect_to_db()
+
+        self.run_api_when_entered()
         # self.ui.data_return_box.setOpenLinks(False)
 
     def connect_to_db(self):
@@ -1243,6 +1266,7 @@ class ETools(QMainWindow):
                 return  # Exit the method early
         # Update UI with survey parameters
         self.ui.dx_survey_elevation.setText(str(well_elevation))
+        self.ui.dx_survey_north_ref_line.setText(str(north_ref.lower()))
 
         # Create well object with all survey data
         self.well = EToolsWell(db=self.db, api=self.api_val, apd_num=self.apd_num, well_name=self.well_name,
@@ -1287,6 +1311,7 @@ class ETools(QMainWindow):
         # Initialize wellbore clearance report process
         self.wcr_process = WCR_Main(df=self.well.cl_dx_dict, ui=self.ui, db=self.db, loc_df=self.well.loc_df,
                                     spec_surveys=self.well.spec_surveys_dict, north_ref=north_ref)
+        # print(self.well.loc_df)
         self.wcr_process.process_wcr()
 
         # Connect visualization control buttons
@@ -1847,7 +1872,6 @@ class EToolsWell:
 
         self.surveys_dict, self.spec_surveys_dict, self.survey_parameters = None, None, None
         self.plat_df, self.loc_df, self.cl_dx_dict = None, None, None
-
         # Initialize with empty plat data and load surveys
         self.set_plat_data(None)
         self.load_surveys()
@@ -2156,7 +2180,9 @@ class EToolsWell:
             self.surveys_dict,
             self.plat_df
         )
+        print(self.survey_parameters)
         self.rel_plats.set_well_path_dict(self.cl_dx_dict)
+        self.rel_plats.set_tsr_data(self.loc_df)
 
     def etools_process(self, *, preserve_plat: bool = False, new_plat: bool = False) -> None:
         """Legacy processing method maintained for compatibility.

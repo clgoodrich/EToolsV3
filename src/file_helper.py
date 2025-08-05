@@ -14,9 +14,14 @@ def get_resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 
-def get_db_path(db_name):
-    """Get the path to a database file"""
-    return get_resource_path(os.path.join('data', 'databases', db_name))
+def get_db_path(db_filename):
+    """Get correct path to database file"""
+    # Get src directory (where this .py file is)
+    src_dir = os.path.dirname(__file__)
+    # Get main directory (parent of src)
+    main_dir = os.path.dirname(src_dir)
+    # Return path to database
+    return os.path.join(main_dir, 'data', 'databases', db_filename)
 
 
 def get_excel_path(excel_name):
