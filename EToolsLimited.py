@@ -8815,12 +8815,18 @@ class Ui_Dialog(object):
         self.label.setGeometry(QtCore.QRect(595, 15, 81, 16))
         self.label.setObjectName("label")
         self.all_tabs.addTab(self.wcr_tab, "")
+        self.tab = QtWidgets.QWidget()
+        self.tab.setObjectName("tab")
+        self.debug_return_box = QtWidgets.QTextBrowser(self.tab)
+        self.debug_return_box.setGeometry(QtCore.QRect(5, 5, 591, 781))
+        self.debug_return_box.setObjectName("debug_return_box")
+        self.all_tabs.addTab(self.tab, "")
         self.db_connect_pushbutton = QtWidgets.QPushButton(Dialog)
         self.db_connect_pushbutton.setGeometry(QtCore.QRect(690, 10, 141, 41))
         self.db_connect_pushbutton.setObjectName("db_connect_pushbutton")
 
         self.retranslateUi(Dialog)
-        self.all_tabs.setCurrentIndex(0)
+        self.all_tabs.setCurrentIndex(3)
         self.well_viz_page_tabs.setCurrentIndex(2)
         self.well_viz_tabs_2d3d.setCurrentIndex(0)
         self.coords_all_sections_tabs.setCurrentIndex(8)
@@ -11437,6 +11443,7 @@ class Ui_Dialog(object):
         self.update_personal_wcr.setText(_translate("Dialog", "Update Personal Record"))
         self.label.setText(_translate("Dialog", "Perf Intervals"))
         self.all_tabs.setTabText(self.all_tabs.indexOf(self.wcr_tab), _translate("Dialog", "WCR"))
+        self.all_tabs.setTabText(self.all_tabs.indexOf(self.tab), _translate("Dialog", "Debug"))
         self.db_connect_pushbutton.setText(_translate("Dialog", "DB Connect"))
 
 
