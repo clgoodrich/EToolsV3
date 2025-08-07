@@ -831,6 +831,7 @@ class ClearanceProcess:
             self,
             df_used: pd.DataFrame,
             df_plat: pd.DataFrame,
+            db_local: sqlite3.Connection,
             bypass_db: bool = False
     ) -> None:
         """Initialize the ClearanceProcess with survey and plat data.
@@ -863,7 +864,7 @@ class ClearanceProcess:
             df_used = find_conc_part(df_plat, df_used)
         else:
             # For first process - normal database lookup
-            df_used = self.fnd_conc(df_plat, df_used)
+            df_used = self.fnd_conc(df_plat, df_used, db_local)
 
         # Initialize empty DataFrame for complete dataset
         self.whole_df = pd.DataFrame()
@@ -1198,7 +1199,7 @@ class ClearanceProcess:
 
         return df_new
 
-    def fnd_conc(self, plat_df: pd.DataFrame, point_df: pd.DataFrame) -> pd.DataFrame:
+    def fnd_conc(self, plat_df: pd.DataFrame, point_df: pd.DataFrame, conn_db) -> pd.DataFrame:
         """Finds concentration zones for survey points using database lookup.
 
         Queries a local SQLite database to determine which concentration zone (plat)
@@ -1219,9 +1220,9 @@ class ClearanceProcess:
             - Essential preprocessing step for clearance calculations
         """
         # Connect to local database
-        path_used_db = r'C:\Work\Databases'
-        apd_data_dir = os.path.join(path_used_db, 'Board_DB_Plss_Sections.db')
-        conn_db = sqlite3.connect(apd_data_dir)
+        # path_used_db = r'C:\Work\Databases'
+        # apd_data_dir = os.path.join(path_used_db, 'Board_DB_Plss_Sections.db')
+        # conn_db = sqlite3.connect(apd_data_dir)
 
         def get_points_bbox(points_series: pd.Series) -> Tuple[float, float, float, float]:
             """Calculate bounding box from a series of Shapely points.

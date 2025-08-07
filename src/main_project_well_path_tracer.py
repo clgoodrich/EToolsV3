@@ -8,6 +8,11 @@ from main_project_clearance import _corner_generator_process
 import wellMinimumCurvatureCalculation as wmc
 import utm
 from geopy.distance import geodesic
+from shapely.ops import linemerge
+from itertools import chain
+import matplotlib.pyplot as plt
+import ModuleAgnostic as ma
+
 
 def alterSurveyForLargeSpacingBetweenPts(lst):
     new_pts = []
@@ -24,14 +29,17 @@ def alterSurveyForLargeSpacingBetweenPts(lst):
     lst = [i for i in lst if i]
     return lst
 
+
 def reTranslateData_2(i):
     conc_code_merged = i[:6]
     conc_code_merged[2] = translateNumberToDirection('township', str(conc_code_merged[2])).upper()
     conc_code_merged[4] = translateNumberToDirection('rng', str(conc_code_merged[4])).upper()
     conc_code_merged[5] = translateNumberToDirection('baseline', str(conc_code_merged[5])).upper()
-    conc_code_merged[0], conc_code_merged[1], conc_code_merged[3] = str(int(float(conc_code_merged[0]))).zfill(2), str(int(float(conc_code_merged[1]))).zfill(2), str(int(float(conc_code_merged[3]))).zfill(2)
+    conc_code_merged[0], conc_code_merged[1], conc_code_merged[3] = str(int(float(conc_code_merged[0]))).zfill(2), str(
+        int(float(conc_code_merged[1]))).zfill(2), str(int(float(conc_code_merged[3]))).zfill(2)
     conc_code = "".join([str(q) for q in conc_code_merged])
     return conc_code
+
 
 def translateNumberToDirection(variable, val):
     translations = {
@@ -42,32 +50,78 @@ def translateNumberToDirection(variable, val):
     }
     return translations.get(variable, {}).get(val, val)
 
-def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_df, well_parameter_data):
-    # print('main_tri')
-    df = df.drop(columns=['index'])
 
+def get_offset_added_delta(x, y, dx, dy):
+    # return (x + float(dx)) * 0.3048, (y + float(dy)) * 0.3048
+
+    return x + float(dx), y + float(dy)
+
+def transform_and_correct_for_north_ref(north_ref, azimuth, convergence_angle):
+    if north_ref.lower() != 'g':
+        return azimuth
+    else:
+        true_azimuth = azimuth + convergence_angle
+        # Normalize to 0-360 degrees
+        if true_azimuth >= 360:
+            true_azimuth -= 360
+        elif true_azimuth < 0:
+            true_azimuth += 360
+        return true_azimuth
+
+
+def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_df, well_parameter_data):
+    # df = df.drop(columns=['index'])
+    north_reference, magnetic_declination, convergence_angle, target_azimuth = well_parameter_data[0], \
+        well_parameter_data[1], float(well_parameter_data[2]), float(well_parameter_data[3])
     result_coords = data_plat_coords[['x', 'y', 'side']].values.tolist()
     shl = get_starter_pt(survey_data_df.iloc[0], result_coords)
-    # print(survey_data_df)
+    survey_data_df[['e_offset_delta', 'n_offset_delta']] = (survey_data_df.apply(
+        lambda row: get_offset_added_delta(shl[0], shl[1], row['e_offset'], row['n_offset']), axis=1,
+        result_type='expand'))
+
     tsr_data = tsr_data_df.values.tolist()
-    data = data_plat_coords[['x', 'y']].values.tolist()
+    new_conc = reTranslateData_2(tsr_data[0][:6])
+    data_df_new = df[df['conc'] == new_conc]
+    print(data_df_new)
+    data_df_new['decimal_azimuth_ref_adjusted'] = data_df_new.apply(lambda x: transform_and_correct_for_north_ref(x['north_ref'], x['decimal_azimuth'], convergence_angle), axis=1)
+
+    # data_df_new['azimuth'] = data_df_new.apply(lambda: transform_and_correct_for_north_ref(data_df_new['north_ref'], data_df_new['azimuth']), axis=1)
+    # print(df[df['conc'] == new_conc])
+    data = df[df['conc'] == new_conc].to_numpy().tolist()
+    # data = convert_to_pts(df[df['conc'] == new_conc])
+
+    data, data_new_dec = dataConverterPlatToUtm(data)
+    print(data)
+    print(lkjnsg)
+    for index, sublist in enumerate(data):
+        if index < 4:  # Indices 0-3
+            sublist.append('west')
+        elif index < 8:  # Indices 4-7
+            sublist.append('north')
+        elif index < 12:  # Indices 8-11
+            sublist.append('east')
+        else:  # Indices 12 and onwards
+            sublist.append('south')    # print([i.append('west') for i in data[:5]] + [i.append('north') for i in data[4:9]])
+    result_coords = data
+    shl = get_starter_pt(survey_data_df.iloc[0], result_coords)
+    survey_data_df[['e_offset_delta', 'n_offset_delta']] = (survey_data_df.apply(
+        lambda row: get_offset_added_delta(shl[0], shl[1], row['e_offset'], row['n_offset']), axis=1,
+        result_type='expand'))
+
+
+    # data = data_plat_coords[['x', 'y']].values.tolist()
     survey_data = survey_data_df[['measured_depth', 'inclination', 'azimuth']].values.tolist()
-    # print(tsr_data)
-    # print(data)
-    # print(df)
-    # print(conc)
-    # print(survey_data)
-    # print(well_parameter_data)
-    # print(shl)
+
     survey_data = alterSurveyForLargeSpacingBetweenPts(survey_data)
     counter = 0
-    initial_data = df[df['new_code'] == conc].to_numpy().tolist()
+    initial_data = df[df['conc'] == conc].to_numpy().tolist()
     initial_data = initial_data[:16]
     plat_north_ref = initial_data[0][-3]
     plat_north_refs_lst = [plat_north_ref]
     foo = [survey_data[0] + [0] * 11]
     survey_data = survey_data[1:]
-    known_conc_data = [conc]
+    known_conc_data = [new_conc]
+    print(known_conc_data)
     new_conc = conc
     dirLst = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
     lst = [[0, 0, 0, 0, 0, 0, 0, 0],
@@ -107,38 +161,48 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
            [27, 26, 35, 2, 3, 4, 33, 28],
            [26, 25, 36, 1, 2, 3, 34, 27],
            [25, 30, 31, 6, 1, 2, 35, 26]]
-    print(tsr_data)
     section = int(float(tsr_data[0][0]))
+    data = [i[:2] for i in data]
     section_degrees_data = [data]
     md_lst = [i[0] for i in survey_data]
     inc_lst = [i[1] for i in survey_data]
     azi_lst = [i[2] for i in survey_data]
-    north_reference, magnetic_declination, convergence_angle, target_azimuth = well_parameter_data[0], \
-        well_parameter_data[1], float(well_parameter_data[2]), float(well_parameter_data[3])
+
     # min_curv_data = wmc.mainCalculation(md_lst, inc_lst, azi_lst, convergence_angle, north_reference, plat_north_ref,
     #                                     magnetic_declination, target_azimuth)
     min_curv_data = survey_data_df
 
     prev_section_data = tsr_data[0][:6]
 
-    # print(df)
     while True:
-        corners, sides_generated = _corner_generator_process(data)
-        # corners, sides_generated = ma.cornerGeneratorProcess(data)
+        print('goop')
+        data = [i[:2] for i in data]
+        corners, sides_generated = ma.cornerGeneratorProcess(data)
+        # print(sides_generated)
+        # corners, sides_generated = _corner_generator_process(data)
+        # print(sides_generated)
+
         sides_generated = [[j[:-1] for j in i] for i in sides_generated]
         segment_lst = [[[i[j], i[j + 1]] for j in range(len(i) - 1)] for i in sides_generated]
         # findIntersectionBetweenWellAndSection(segment_lst, offset_pts_lst, shl)
-
+        # intersection, direction, well_index_end, foo, well_path_tester = get_direction_sides(segment_lst, survey_data_df, sides_generated)
         intersection, direction, well_index_end, foo, well_path_tester = findWellPathBoundaryIntersection(segment_lst,
                                                                                                           survey_data,
                                                                                                           well_parameter_data,
                                                                                                           plat_north_ref,
                                                                                                           foo, shl)
+        # print(intersection, intersection1)
+        # print(direction, direction1)
+        # print(well_index_end, well_index_end1)
+        # print(foo, foo1)
+        # print(sgjnkdfgjklndfg)
+        # if well_path_tester.empty or direction == 'Null':
+        #     return min_curv_data, known_conc_data, section_degrees_data, plat_north_refs_lst
         if not well_path_tester or direction == 'Null':
-            return min_curv_data, known_conc_data, section_degrees_data, plat_north_refs_lst
+            return min_curv_data, known_conc_data, section_degrees_data, plat_north_refs_lst, shl
 
         index = dirLst.index(direction)
-        print(section, index)
+        print(section, index, direction)
         new_section = lst[section][index]
         township, townshipDir, rng, rngDir, prev_section_data = modifySection(section, new_section, prev_section_data)
         conc_info = [new_section, township, townshipDir, rng, rngDir, tsr_data[0][5]]
@@ -151,59 +215,66 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
             data = section_degrees_data[known_index]
             counter += 1
         else:
+            # old_well_path_tester = well_path_tester.iloc[well_index_end:]
+
             old_well_path_tester = well_path_tester[:well_index_end + 1]
             proxBoo = getBooProx(data, old_well_path_tester, direction)
             known_conc_data.append(new_conc)
-            data_new = df[df['new_code'] == new_conc].to_numpy().tolist()
+            data_new = df[df['conc'] == new_conc].to_numpy().tolist()
 
+            # print('data_new', data_new2)
             if len(data_new) == 0:
                 data_new = GUIDataAdd.addDataIfAGRCNotFound(conn, new_conc, conc_info)
             data_new = sorted(data_new, key=lambda x: x[-1], reverse=True)
-            plat_north_ref = data_new[0][-3]
+            plat_north_ref = data_new[0][-4]
             plat_north_refs_lst.append(plat_north_ref)
+            print('plats north ref', plat_north_ref)
+            # data_new_deg = convert_to_pts(df[df['conc'] == new_conc])
+
             data_new_deg, data_new_dec = dataConverterPlatToUtm(data_new)
-            # data_new_dec = ma.convertToDecimal(copy.deepcopy(data_new))
-            # data_new_deg = ma.pointsConverter(data_new_dec)
-            print(1, data_new_deg)
+
             rewritten_coords = coordsAdjuster(data_new_deg, data, direction, proxBoo)
-            print(2, rewritten_coords)
             data = rewritten_coords
             section_degrees_data.append(data)
             counter += 1
         section = new_section
 
-    return min_curv_data, known_conc_data, section_degrees_data, plat_north_refs_lst
+    return min_curv_data, known_conc_data, section_degrees_data, plat_north_refs_lst, shl
 
 def dataConverterPlatToUtm(data):
-    # print(data)
-    # print(foo)
     output = convertToDecimal2(data)
     data_converted = calculate_next_utm_points(output)
     return data_converted, output
 
+
 def convertToDecimal2(data):
     data_converted = []
-    print(data)
     for item in data:
         if len(item) > 6:
-            item = item[6:12]
+            item = item[9:15]
             item[1] = float(item[1])
-
         side, deg, min, sec, dir_val = map(float, item[1:6])
         dec_val_base = deg + min / 60 + sec / 3600
 
         if 'west' in item[0].lower():
-            decVal = 360 - dec_val_base if dir_val not in [4, 1] and int(dec_val_base) not in [180, 0, 360, 90] else dec_val_base
+            decVal = 360 - dec_val_base if dir_val not in [4, 1] and int(dec_val_base) not in [180, 0, 360,
+                                                                                               90] else dec_val_base
         elif 'east' in item[0].lower():
-            decVal = 180 + dec_val_base if dir_val in [4, 1] else 180 - dec_val_base if int(dec_val_base) not in [180, 0, 360, 90] else 180
+            decVal = 180 + dec_val_base if dir_val in [4, 1] else 180 - dec_val_base if int(dec_val_base) not in [180,
+                                                                                                                  0,
+                                                                                                                  360,
+                                                                                                                  90] else 180
         elif 'north' in item[0].lower():
-            decVal = (90 - dec_val_base) + 90 if dir_val in [4, 1] else 180 - dec_val_base if int(dec_val_base) not in [180, 0, 360, 90] else 90
+            decVal = (90 - dec_val_base) + 90 if dir_val in [4, 1] else 180 - dec_val_base if int(dec_val_base) not in [
+                180, 0, 360, 90] else 90
         elif 'south' in item[0].lower():
-            decVal = (90 - dec_val_base) + 270 if dir_val in [4, 1] else 360 - dec_val_base if int(dec_val_base) not in [180, 0, 360, 90] else 270
+            decVal = (90 - dec_val_base) + 270 if dir_val in [4, 1] else 360 - dec_val_base if int(
+                dec_val_base) not in [180, 0, 360, 90] else 270
 
         data_converted.append([side, decVal])
 
     return data_converted
+
 
 def calculate_next_utm_points(data):
     data = reorderDecimalData(data)
@@ -227,6 +298,7 @@ def calculate_next_utm_points(data):
         utm_points_2.append([pt1, pt2])
     return utm_points_2
 
+
 def oneToMany(lst, number):
     count = -1
     outLst = []
@@ -236,6 +308,7 @@ def oneToMany(lst, number):
             count += 1
         outLst[count].append(lst[i])
     return outLst
+
 
 def reorderDecimalData(data):
     return [data[3], data[2], data[1], data[0], data[8], data[9], data[10], data[11], data[4], data[5], data[6],
@@ -330,8 +403,8 @@ def find_point_from_footages(polygon_coords, ns_distance, ns_type, ew_distance, 
     return None
 
 
-def get_offset_added_delta(dx, dy, starter_pt):
-    return starter_pt[0] + float(dx) * 0.3048, starter_pt[1] + float(dy) * 0.3048
+# def get_offset_added_delta(dx, dy, starter_pt):
+#     return starter_pt[0] + float(dx) * 0.3048, starter_pt[1] + float(dy) * 0.3048
 
 
 def get_starter_pt(row, current_plat):
@@ -350,6 +423,113 @@ def get_starter_pt(row, current_plat):
     out = find_point_from_footages(current_plat, float(fnsl_val), fnsl, float(fewl_val), fewl)
     return out
 
+def convert_to_pts(plat):
+    def new_point_finder(r, angle, center_x, center_y):
+        x_new = center_x + (r * math.cos(math.radians(angle)))
+        y_new = center_y + (r * math.sin(math.radians(angle)))
+        return x_new, y_new
+
+    def process_plat_corners(df, start_x=0, start_y=0):
+        """Process plat data with corner duplication between sides."""
+
+        # Extract main directions and sort
+        df = df.copy()
+        df['main_dir'] = df['side'].str.split('_').str[0]
+
+        result = []
+        x, y = start_x, start_y
+
+        # Process in order: west, north, east, south
+        for direction in ['west', 'north', 'east', 'south']:
+            group = df[df['main_dir'] == direction]
+            if group.empty:
+                continue
+
+            # Sort by side string to get proper order
+            group = group.sort_values('side')
+
+            # Add starting point for this direction
+            result.append([x, y, direction])
+
+            # Process each measurement
+            for _, row in group.iterrows():
+                x, y = new_point_finder(float(row['length']), row['decimal_azimuth'], x, y)
+                result.append([x, y, direction])
+
+        return result
+
+    xy_lst = []
+    # x, y = 0, 0
+    # custom_order = [3, 2, 1, 0, 8, 9, 10, 11, 4, 5, 6, 7, 15, 14, 13, 12]
+    # dirLst = ['South_Left_2', 'South_Left_1', 'South_Right_1', 'South_Right_2',
+    #           'East_Up_2', 'East_Up_1', 'East_Down_1', 'East_Down_2',
+    #           'North_Left_2', 'North_Left_1', 'North_Right_1', 'North_Right_2',
+    #           'West_Up_2', 'West_Up_1', 'West_Down_1', 'West_Down_2']
+    dir_lst = ['west_down_2', 'west_down_1', 'west_up_1', 'west_up_2', 'north_left_2', 'north_left_1', 'north_right_1',
+               'north_right_2', 'east_up_2', 'east_up_1', 'east_down_1', 'east_down_2', 'south_right_2',
+               'south_right_1',
+               'south_left_1', 'south_left_2']
+
+    dir_order = ['west', 'north', 'east', 'south']
+    plat = sort_dataframe_by_custom_order(plat, 'side', dir_lst)
+    prev_dir = 'west'
+    xy_lst = process_plat_corners(plat)
+    # for val, row in plat.iterrows():
+    #     test = math.floor(val / 4)
+    #     xy_lst.append([x, y, dir_order[test]])
+    #     if prev_dir
+    #     x, y = new_point_finder(float(row['length']), float(row['decimal_azimuth']), x, y)
+    # xy_lst.append([x, y, dir_order[test]])
+    return tuple(xy_lst)
+def sort_dataframe_by_custom_order(df, column_name, custom_order_list):
+    """
+    Sort DataFrame by a custom order for a specific column using pandas Categorical.
+
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        The DataFrame to sort
+    column_name : str
+        The name of the column to sort by
+    custom_order_list : list
+        List defining the custom sort order
+
+    Returns:
+    --------
+    pandas.DataFrame
+        Sorted DataFrame
+
+    Raises:
+    -------
+    ValueError
+        If column values don't match the custom order list
+    """
+    # Create a copy to avoid modifying original DataFrame
+    df_sorted = df.copy()
+
+    # Check if all values in the column exist in the custom order list
+    missing_values = set(df_sorted[column_name].unique()) - set(custom_order_list)
+    if missing_values:
+        print(f"Warning: These values in '{column_name}' are not in custom_order_list: {missing_values}")
+        # Add missing values to the end of the custom order
+        extended_order = custom_order_list + list(missing_values)
+    else:
+        extended_order = custom_order_list
+
+    # Convert column to Categorical with custom order
+    df_sorted[column_name] = pd.Categorical(
+        df_sorted[column_name],
+        categories=extended_order,
+        ordered=True
+    )
+
+    # Sort by the categorical column
+    df_sorted = df_sorted.sort_values(by=column_name, kind='mergesort')
+
+    # Reset index to maintain clean indexing
+    df_sorted = df_sorted.reset_index(drop=True)
+
+    return df_sorted
 
 def triangulatorWithKnownData(current_plat_coords, current_plat_conc, original_all_plats_df, well_path):
     """
@@ -597,33 +777,192 @@ def cornerGeneratorProcess(coords):
 
     return corners, sides
 
+
+def get_first_boundary_intersection_with_index(well_df, polygon_plat, tolerance=0.1):
+    """
+    Find the first intersection point and return the index of the well_df point
+    that comes right after the intersection.
+    """
+    # Convert well path to LineString
+    well_coords = list(zip(well_df['e_offset_delta'], well_df['n_offset_delta']))
+    well_linestring = LineString(well_coords)
+    boundary = polygon_plat.exterior
+
+    # Find intersection
+    intersection = well_linestring.intersection(boundary)
+
+    if not intersection.is_empty:
+        # Handle different intersection geometries
+        intersection_points = []
+
+        if intersection.geom_type == 'Point':
+            intersection_points = [intersection]
+        elif intersection.geom_type == 'MultiPoint':
+            intersection_points = list(intersection.geoms)
+        elif intersection.geom_type == 'LineString':
+            coords = list(intersection.coords)
+            intersection_points = [Point(coords[0]), Point(coords[-1])]
+        elif intersection.geom_type == 'MultiLineString':
+            for line_seg in intersection.geoms:
+                coords = list(line_seg.coords)
+                intersection_points.extend([Point(coords[0]), Point(coords[-1])])
+
+        # Find the intersection point closest to the start of well path
+        if intersection_points:
+            min_distance = float('inf')
+            first_intersection = None
+
+            for point in intersection_points:
+                distance_along_path = well_linestring.project(point)
+                if distance_along_path < min_distance:
+                    min_distance = distance_along_path
+                    first_intersection = point
+
+            # Now find which segment contains this intersection
+            if first_intersection:
+                intersection_distance = well_linestring.project(first_intersection)
+
+                # Calculate cumulative distances along the well path
+                cumulative_distance = 0
+                for i in range(len(well_coords) - 1):
+                    segment_start = Point(well_coords[i])
+                    segment_end = Point(well_coords[i + 1])
+                    segment_length = segment_start.distance(segment_end)
+
+                    if cumulative_distance + segment_length >= intersection_distance:
+                        # The intersection is in this segment
+                        # Return the index of the point after this segment
+                        after_intersection_index = i + 1
+                        return first_intersection, after_intersection_index, intersection_distance
+
+                    cumulative_distance += segment_length
+
+                # If we get here, intersection is at the very end
+                return first_intersection, len(well_df) - 1, intersection_distance
+
+    return None, None, None
+
+
+# Usage
+# first_intersection, after_index, distance_along_path = get_first_boundary_intersection_with_index(intersection_df,
+#                                                                                                   polygon_plat)
+
+
+def get_direction_sides(segment_lst, well_path, sides_generated):
+    def get_first_boundary_intersection(well_df, polygon_plat, tolerance=0.1):
+        """
+        Complete solution to find the first intersection point.
+        """
+        # Convert well path to LineString
+        well_coords = list(zip(well_df['e_offset_delta'], well_df['n_offset_delta']))
+        well_linestring = LineString(well_coords)
+        boundary = polygon_plat.exterior
+
+        # Method 1: Check if well path intersects boundary
+        intersection = well_linestring.intersection(boundary)
+
+        if not intersection.is_empty:
+            # Handle different intersection geometries
+            intersection_points = []
+
+            if intersection.geom_type == 'Point':
+                intersection_points = [intersection]
+            elif intersection.geom_type == 'MultiPoint':
+                intersection_points = list(intersection.geoms)
+            elif intersection.geom_type == 'LineString':
+                # Take start and end points of intersection line
+                coords = list(intersection.coords)
+                intersection_points = [Point(coords[0]), Point(coords[-1])]
+            elif intersection.geom_type == 'MultiLineString':
+                for line_seg in intersection.geoms:
+                    coords = list(line_seg.coords)
+                    intersection_points.extend([Point(coords[0]), Point(coords[-1])])
+
+            # Find the intersection point closest to the start of well path
+            if intersection_points:
+                min_distance = float('inf')
+                first_intersection = None
+
+                for point in intersection_points:
+                    # Distance along well path from start
+                    distance_along_path = well_linestring.project(point)
+                    if distance_along_path < min_distance:
+                        min_distance = distance_along_path
+                        first_intersection = point
+
+                return first_intersection, min_distance
+
+        # Method 2: If no direct intersection, find closest approach
+        # (in case well path comes close but doesn't exactly intersect)
+        closest_point_on_boundary = boundary.interpolate(boundary.project(Point(well_coords[0])))
+        distance_to_boundary = Point(well_coords[0]).distance(closest_point_on_boundary)
+
+        if distance_to_boundary <= tolerance:
+            return closest_point_on_boundary, 0.0
+
+        return None, None
+
+    direction = ['W', 'N', 'E', 'S']
+    merged_points = list(chain(sides_generated[0], sides_generated[1], sides_generated[2], sides_generated[3]))
+    plat_poly = Polygon(merged_points)
+    well_path_df = well_path[['e_offset_delta', 'n_offset_delta']]
+    intersection_pt, df_index, min_distance = get_first_boundary_intersection_with_index(well_path_df,
+                                                                                         plat_poly)
+    print(well_path.columns)
+    graph_plat_and_well(plat_poly, well_path_df)
+    for k, v in enumerate(sides_generated):
+        line_string_side = LineString(v)
+        on_line3 = intersection_pt.within(line_string_side.buffer(1e-8))
+        if on_line3:
+            return [intersection_pt.x, intersection_pt.y], direction[k], df_index, well_path, well_path_df
+    return [0, 0], 'Null', len(well_path), well_path, well_path_df
+
+
 def findWellPathBoundaryIntersection(segment_lst, survey_data, well_parameter_data, plat_ref, min_curv_data, shl):
     direction = ['W', 'N', 'E', 'S']
-    north_reference, magnetic_declination, convergence_angle, target_azimuth = well_parameter_data[0], well_parameter_data[1], float(well_parameter_data[2]), float(well_parameter_data[3])
-    md_lst, inc_lst, azi_lst = [i[0] for i in survey_data], [i[1] for i in survey_data], [i[2] for i in survey_data]
-    bearing_lst = [wmc.bearing(float(azi_lst[i]), float(convergence_angle), north_reference, plat_ref, 0) for i in range(len(md_lst))]
+    north_reference, magnetic_declination, convergence_angle, target_azimuth = well_parameter_data[0], \
+    well_parameter_data[1], float(well_parameter_data[2]), float(well_parameter_data[3])
+    md_lst, inc_lst, azi_lst = [i[0] for i in survey_data], [math.degrees(i[1]) for i in survey_data], [
+        math.degrees(i[2]) for i in survey_data]
+    bearing_lst = [wmc.bearing(float(azi_lst[i]), float(convergence_angle), north_reference, plat_ref, 0) for i in
+                   range(len(md_lst))]
     section_offset_lst = []
     if len(min_curv_data) > 0:
-        offsetNS_lst, offsetEW_lst, tvd_lst = [i[7] for i in min_curv_data], [i[8] for i in min_curv_data], [i[6] for i in min_curv_data]
+        offsetNS_lst, offsetEW_lst, tvd_lst = [i[7] for i in min_curv_data], [i[8] for i in min_curv_data], [i[6] for i
+                                                                                                             in
+                                                                                                             min_curv_data]
         dogLeg_lst, fFactor_lst = [i[4] for i in min_curv_data], [i[5] for i in min_curv_data]
-        bhl_dep_lst, bhl_dir_lst, delta_ns_lst, delta_ew_lst, vert_sec_lst = [i[9] for i in min_curv_data], [i[10] for i in min_curv_data], [i[12] for i in min_curv_data], [i[13] for i in min_curv_data], [i[11] for i in min_curv_data]
+        bhl_dep_lst, bhl_dir_lst, delta_ns_lst, delta_ew_lst, vert_sec_lst = [i[9] for i in min_curv_data], [i[10] for i
+                                                                                                             in
+                                                                                                             min_curv_data], [
+            i[12] for i in min_curv_data], [i[13] for i in min_curv_data], [i[11] for i in min_curv_data]
         offset_pts_lst = [[offsetEW_lst[i] + shl[0], offsetNS_lst[i] + shl[1]] for i in range(len(offsetNS_lst))]
         output = min_curv_data
-
     for i in range(len(min_curv_data), len(bearing_lst)):
         dogLeg_lst.append(wmc.dogLegAngle(inc_lst[i - 1], inc_lst[i], bearing_lst[i - 1], bearing_lst[i]))
         fFactor_lst.append(wmc.fFactor(dogLeg_lst[i]))
         tvd_lst.append(wmc.tvd(md_lst[i - 1], md_lst[i], inc_lst[i - 1], inc_lst[i], fFactor_lst[i], tvd_lst[i - 1]))
-        offsetNS_lst.append(wmc.offsetNS(fFactor_lst[i], md_lst[i - 1], md_lst[i], bearing_lst[i - 1], bearing_lst[i], inc_lst[i - 1], inc_lst[i], offsetNS_lst[i - 1]))
-        offsetEW_lst.append(wmc.offsetEW(fFactor_lst[i], md_lst[i - 1], md_lst[i], bearing_lst[i - 1], bearing_lst[i], inc_lst[i - 1], inc_lst[i], offsetEW_lst[i - 1]))
+        offsetNS_lst.append(
+            wmc.offsetNS(fFactor_lst[i], md_lst[i - 1], md_lst[i], bearing_lst[i - 1], bearing_lst[i], inc_lst[i - 1],
+                         inc_lst[i], offsetNS_lst[i - 1]))
+        offsetEW_lst.append(
+            wmc.offsetEW(fFactor_lst[i], md_lst[i - 1], md_lst[i], bearing_lst[i - 1], bearing_lst[i], inc_lst[i - 1],
+                         inc_lst[i], offsetEW_lst[i - 1]))
         bhl_dep_lst.append(wmc.bhlDeparture(offsetNS_lst[i], offsetEW_lst[i]))
         bhl_dir_lst.append(wmc.bhl_Direction(float(offsetNS_lst[i]), float(offsetEW_lst[i])))
-        delta_ns_lst.append(wmc.deltaNS(md_lst[i - 1], md_lst[i], fFactor_lst[i], bearing_lst[i - 1], bearing_lst[i], inc_lst[i - 1], inc_lst[i]))
-        delta_ew_lst.append(wmc.deltaEW(md_lst[i - 1], md_lst[i], fFactor_lst[i], bearing_lst[i - 1], bearing_lst[i], inc_lst[i - 1], inc_lst[i]))
+        delta_ns_lst.append(
+            wmc.deltaNS(md_lst[i - 1], md_lst[i], fFactor_lst[i], bearing_lst[i - 1], bearing_lst[i], inc_lst[i - 1],
+                        inc_lst[i]))
+        delta_ew_lst.append(
+            wmc.deltaEW(md_lst[i - 1], md_lst[i], fFactor_lst[i], bearing_lst[i - 1], bearing_lst[i], inc_lst[i - 1],
+                        inc_lst[i]))
         vert_sec_lst.append(wmc.verticalSection(target_azimuth, offsetNS_lst[i], offsetEW_lst[i]))
         offset_pts_lst.append([offsetEW_lst[i] + shl[0], offsetNS_lst[i] + shl[1]])
         section_offset_lst.append(offset_pts_lst[-1])
-        output.append([md_lst[i], inc_lst[i], azi_lst[i], bearing_lst[i], dogLeg_lst[i], fFactor_lst[i], tvd_lst[i], offsetNS_lst[i], offsetEW_lst[i], bhl_dep_lst[i], bhl_dir_lst[i], vert_sec_lst[i], delta_ns_lst[i], delta_ew_lst[i]])
+        #'measured_depth', 'inclination', 'azimuth','dls','ratio_factor','tvd','n_offset', 'e_offset',
+        output.append([md_lst[i], inc_lst[i], azi_lst[i], bearing_lst[i], dogLeg_lst[i], fFactor_lst[i], tvd_lst[i],
+                       offsetNS_lst[i], offsetEW_lst[i], bhl_dep_lst[i], bhl_dir_lst[i], vert_sec_lst[i],
+                       delta_ns_lst[i], delta_ew_lst[i]])
         for j in range(len(segment_lst)):
             for k in range(len(segment_lst[j])):
                 pt1 = LineString([Point(offset_pts_lst[i - 1]), Point(offset_pts_lst[i])])
@@ -633,10 +972,13 @@ def findWellPathBoundaryIntersection(segment_lst, survey_data, well_parameter_da
                     intersection = [outcome.x, outcome.y]
 
                     if intersection != [0, 0]:
+                        print(intersection)
                         return intersection, direction[j], i, output, offset_pts_lst
                 except:
                     pass
     return [0, 0], 'Null', len(bearing_lst), min_curv_data, offset_pts_lst
+
+
 # def findWellPathBoundaryIntersection(segment_lst, well_points, start_index):
 #     """Find where well path intersects section boundary."""
 #     # Uncomment for debugging:
@@ -646,7 +988,6 @@ def findWellPathBoundaryIntersection(segment_lst, survey_data, well_parameter_da
 #
 #     # Debug: Check data structures
 #     if not segment_lst or not well_points:
-#         print("Warning: Empty segment_lst or well_points")
 #         return [0, 0], 'Null', len(well_points)
 #
 #     # Create polygon from segments for containment checks
@@ -666,13 +1007,11 @@ def findWellPathBoundaryIntersection(segment_lst, survey_data, well_parameter_da
 #                 all_points.append(last_segment[1])
 #
 #     if len(all_points) < 3:
-#         print(f"Warning: Not enough points to create polygon: {len(all_points)}")
 #         return [0, 0], 'Null', len(well_points)
 #
 #     try:
 #         polygon = Polygon(all_points)
 #     except Exception as e:
-#         print(f"Error creating polygon: {e}")
 #         return [0, 0], 'Null', len(well_points)
 #
 #     # Check each well segment for intersection
@@ -708,23 +1047,18 @@ def findWellPathBoundaryIntersection(segment_lst, survey_data, well_parameter_da
 #                                 if polygon.contains(p1) and not polygon.contains(p2):
 #                                     return [intersection.x, intersection.y], direction[j], i + 1
 #                     except Exception as e:
-#                         print(f"Error processing segment: {e}")
 #                         continue
 #
 #         except Exception as e:
-#             print(f"Error processing well segment {i}: {e}")
 #             continue
 #
 #     return [0, 0], 'Null', len(well_points)
 
 
 # def findWellPathBoundaryIntersection(segment_lst, well_points, start_index):
-#     print(segment_lst)
-#     print(well_points)
-#     print(start_index)
+#
 #     """Find where well path intersects section boundary."""
 #     direction = ['W', 'N', 'E', 'S']
-#     # print(segment_lst)
 #     for i in range(start_index, len(well_points) - 1):
 #         well_segment = LineString([well_points[i], well_points[i + 1]])
 #
@@ -792,6 +1126,8 @@ def findUniqueListsInListOfLists(lst):
         if i not in lst_unique:
             lst_unique.append(i)
     return lst_unique
+
+
 def coordsAdjuster(new_coords, last_coords, direction, direction_boo):
     directions_dict = {"W": '0', "N": '1', "E": "2", "S": "3"}
     direction = directions_dict[direction]
@@ -807,7 +1143,8 @@ def coordsAdjuster(new_coords, last_coords, direction, direction_boo):
     matched_pt = matched_lst_dict[str(direction)][lst_dict_boo[direction_boo]]
 
     new_coords = [list(i) for i in new_coords]
-    diff_x, diff_y = last_coords[starting_pts][0] - new_coords[matched_pt][0], last_coords[starting_pts][1] - new_coords[matched_pt][1]
+    diff_x, diff_y = last_coords[starting_pts][0] - new_coords[matched_pt][0], last_coords[starting_pts][1] - \
+                     new_coords[matched_pt][1]
     new_coords_test = [[i[0] + diff_x, i[1] + diff_y] for i in new_coords]
 
     test_corners, new_coords_test_organized = _corner_generator_process(new_coords_test)
@@ -817,6 +1154,7 @@ def coordsAdjuster(new_coords, last_coords, direction, direction_boo):
     new_coords_test_organized[int(opp_direction_list[str(direction)])] = old_data_organized[int(direction)][::-1]
 
     return new_coords_test
+
 
 def modifySection(prev, new, section_data):
     """Handle section transitions and update TSR data."""
@@ -872,3 +1210,19 @@ def reTranslateData(conc_info):
     rng_str = f"{rng:02d}"
 
     return f"{section_str}{township_str}{townshipDir}{rng_str}{rngDir}{unit}"
+
+
+def graph_plat_and_well(poly, well):
+    well = well.values.tolist()
+    x, y = poly.exterior.xy
+    x_coords_1 = [point[0] for point in well]
+    y_coords_1 = [point[1] for point in well]
+    fig, ax = plt.subplots()
+
+    # 4. Plot the exterior of the polygon
+    # The '*' unpacks the x and y coordinate lists
+    ax.plot(x, y, color='blue', linewidth=3)
+    ax.plot(x_coords_1, y_coords_1, color='red')
+    # 5. Set aspect ratio and display the plot
+    ax.set_aspect('equal', 'box')
+    plt.show()

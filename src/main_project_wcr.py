@@ -12,7 +12,7 @@ a well, containing details about the well's construction, survey data, casing in
 from typing import Dict, List, Tuple, Optional, Any, Union
 import collections.abc
 from datetime import date, datetime
-
+from file_helper import get_template_tracking_excel_path
 # Handle deprecated collections aliases for compatibility
 collections.Iterable = collections.abc.Iterable
 collections.Mapping = collections.abc.Mapping
@@ -133,6 +133,148 @@ class PerforationDataDialog(QDialog):
             return pd.DataFrame(self.final_data)
         return pd.DataFrame() # Return an empty DataFrame if dialog was cancelled
 
+def get_template_tracking_excel_path():
+    """
+    Creates a dummy Excel file for the demonstration and returns its path.
+    In your real application, this would point to your actual tracking file.
+    """
+    wb = openpyxl.Workbook()
+    sheet = wb.active
+    # Add headers to match the columns the script writes to
+    headers = [
+        "Days Average", "Date Filed", "Return Count", "Sundry Number",
+        "API Number", "Well Name", "Date Processed", "Company",
+        "Action Taken", "Comp Sum", "Drilling Sum", "Cement Log",
+        "Logs Included", "BHL Processed", "As Drilled Excel",
+        "Edited WCR", "All Edits"
+    ]
+    for i, header in enumerate(headers, 1):
+        sheet.cell(row=1, column=i, value=header)
+    file_path = "TrackingWCR_demo.xlsx"
+    wb.save(file_path)
+    return file_path
+
+def get_template_tracking_excel_path():
+    """
+    Creates a dummy Excel file for the demonstration and returns its path.
+    """
+    wb = openpyxl.Workbook()
+    sheet = wb.active
+    headers = [
+        "Days Average", "Date Filed", "Return Count", "Sundry Number",
+        "API Number", "Well Name", "Date Processed", "Company",
+        "Action Taken", "Comp Sum", "Drilling Sum", "Cement Log",
+        "Logs Included", "BHL Processed", "As Drilled Excel",
+        "Edited WCR", "All Edits"
+    ]
+    for i, header in enumerate(headers, 1):
+        sheet.cell(row=1, column=i, value=header)
+    file_path = "TrackingWCR_demo.xlsx"
+    wb.save(file_path)
+    return file_path
+
+class WCRInfoDialog(QDialog):
+    """
+    Dialog to manually input WCR information, with an optional autofill for testing.
+    """
+    def __init__(self, parent=None, testing_enabled=False):
+        super().__init__(parent)
+        self.setWindowTitle("Manual WCR Data Entry")
+        self.setModal(True)
+        self.setFixedSize(400, 300)
+        self.testing_enabled = testing_enabled
+
+        # Store sample data for the autofill feature
+        self.sample_data = {
+            'SundryNo': '136749',
+            'OperatorName': 'Uinta Wax',
+            'WellNameNumber': 'Arabian 4-4-18-17-7H',
+            'APINumber': '4301354659',
+            'ConstructKey': '0000',
+            'SubmitDate': '2025-05-26'
+        }
+        self.final_data = None
+        self._setup_ui()
+
+    def _setup_ui(self):
+        """Initializes the user interface components."""
+        main_layout = QVBoxLayout(self)
+        info_label = QLabel(
+            "Database query failed. Please manually enter the WCR information below:"
+        )
+        info_label.setStyleSheet("font-weight: bold; margin-bottom: 10px;")
+        main_layout.addWidget(info_label)
+
+        form_layout = QFormLayout()
+        self.sundry_no_edit = QLineEdit()
+        self.operator_name_edit = QLineEdit()
+        self.well_name_edit = QLineEdit()
+        self.api_number_edit = QLineEdit()
+        self.lateral_name_edit = QLineEdit()
+        self.submit_date_edit = QDateEdit()
+
+        self.submit_date_edit.setCalendarPopup(True)
+        self.submit_date_edit.setDisplayFormat("MM/dd/yyyy")
+        self.submit_date_edit.setDate(QDate.currentDate())
+
+        form_layout.addRow("Sundry No:", self.sundry_no_edit)
+        form_layout.addRow("Operator Name:", self.operator_name_edit)
+        form_layout.addRow("Well Name/Number:", self.well_name_edit)
+        form_layout.addRow("API Number:", self.api_number_edit)
+        form_layout.addRow("Lateral Name (ConstructKey):", self.lateral_name_edit)
+        form_layout.addRow("Submit Date:", self.submit_date_edit)
+
+        main_layout.addLayout(form_layout)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        if self.testing_enabled:
+            autofill_button = button_box.addButton("Test Autofill", QDialogButtonBox.ActionRole)
+            autofill_button.clicked.connect(self._autofill_data)
+
+        button_box.accepted.connect(self._validate_and_accept)
+        button_box.rejected.connect(self.reject)
+        main_layout.addWidget(button_box)
+
+    def _autofill_data(self):
+        """Populates the form with the sample data."""
+        self.sundry_no_edit.setText(self.sample_data['SundryNo'])
+        self.operator_name_edit.setText(self.sample_data['OperatorName'])
+        self.well_name_edit.setText(self.sample_data['WellNameNumber'])
+        self.api_number_edit.setText(self.sample_data['APINumber'])
+        self.lateral_name_edit.setText(self.sample_data['ConstructKey'])
+        # Set the date for the QDateEdit widget
+        date_obj = QDate.fromString(self.sample_data['SubmitDate'], "yyyy-MM-dd")
+        self.submit_date_edit.setDate(date_obj)
+
+    def _validate_and_accept(self):
+        """Validates all inputs before closing the dialog."""
+        required_fields = {
+            "Sundry No": self.sundry_no_edit,
+            "Operator Name": self.operator_name_edit,
+            "Well Name/Number": self.well_name_edit,
+            "API Number": self.api_number_edit,
+            "Lateral Name": self.lateral_name_edit
+        }
+        for name, field in required_fields.items():
+            if not field.text().strip():
+                QMessageBox.warning(self, "Validation Error", f"'{name}' is a required field.")
+                return
+
+        self.final_data = {
+            'SundryNo': [self.sundry_no_edit.text()],
+            'OperatorName': [self.operator_name_edit.text()],
+            'WellNameNumber': [self.well_name_edit.text()],
+            'APINumber': [self.api_number_edit.text()],
+            'ConstructKey': [self.lateral_name_edit.text()],
+            'SubmitDate': [pd.to_datetime(self.submit_date_edit.date().toString("yyyy-MM-dd"))]
+        }
+        self.accept()
+
+    def get_values(self):
+        """Returns the collected data as a pandas DataFrame."""
+        if self.final_data:
+            return pd.DataFrame(self.final_data)
+        return pd.DataFrame()
 class WCR_Main:
     """
     Main class for handling Well Completion Report (WCR) generation and processing.
@@ -434,7 +576,6 @@ class WCR_Main:
 
         # Convert dates to string format
         wcr_info[list_dates] = wcr_info[list_dates].apply(lambda s: s.dt.strftime('%Y-%m-%d'))
-        print(wcr_info)
         # Prepare well information values
         wcr_info['CompletedOrAbandonedDate'] = pd.to_datetime(wcr_info['CompletedOrAbandonedDate'], errors='coerce')
         formatted_date = wcr_info['CompletedOrAbandonedDate'].dt.strftime('%Y-%m-%d').iloc[0]
@@ -535,8 +676,29 @@ class WCR_Main:
             return "/".join(filter(None, [utms_str, footages_str, perfs_str, depths_str, other_str]))
 
         # Open tracking spreadsheet
-        file = r"TrackingWCR.xlsx"
-        data = self.get_wcr_person_db_update()
+        # file = r"TrackingWCR.xlsx"
+        try:
+            data = self.get_wcr_person_db_update()
+            print('data', data)
+            if data.empty:
+                # If the query succeeds but returns no data, also trigger the dialog
+                raise ValueError("Query returned no data.")
+        except (AttributeError, ValueError) as e:
+            print(f"Database operation failed: {e}. Opening manual entry dialog.")
+            dialog = WCRInfoDialog(parent=None, testing_enabled=True)  # In a real app, you'd pass `self` as the parent
+            if dialog.exec_() == QDialog.Accepted:
+                data = dialog.get_values()
+                if data.empty:
+                    QMessageBox.information(None, "Cancelled", "Manual data entry cancelled. Process aborted.")
+                    return
+            else:
+                QMessageBox.information(None, "Cancelled", "Manual data entry cancelled. Process aborted.")
+                return
+        # data = self.get_wcr_person_db_update()
+
+
+
+        file = get_template_tracking_excel_path()
         wb = openpyxl.load_workbook(file)
         sheet = wb.active
 
@@ -544,7 +706,7 @@ class WCR_Main:
         values = [cell.value for cell in sheet['E']]
         try:
             api_number = int(float(data['APINumber'].iloc[0]))
-        except IndexError:
+        except (IndexError, NameError):
             api_number = int(float(self.api))
 
         if api_number in values:
@@ -959,7 +1121,6 @@ class WCR_Main:
                 perf_df = dialog.get_values()
                 return perf_df
                 print("\n✅ Data entry successful. DataFrame created:\n")
-                # print(perf_df)
             else:
                 print("\n❌ Operation Cancelled: Data entry was cancelled.")
         """
@@ -981,7 +1142,6 @@ class WCR_Main:
                 tops = self.db.query_to_dataframe(sql_query)
             except Exception as e:
                 tops = run_perf_data_dialog_example()
-            print(tops)
             tops = tops.apply(lambda x: x.str.strip() if x.dtype == "object" else x)
 
             # Extract perforation data

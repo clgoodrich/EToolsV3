@@ -167,7 +167,6 @@ class DataWriter:
             ui (Any): PyQt5 user interface object for display components
             survey_label (str): Survey type identifier (e.g., "pln_df_true_dx", "drl_df_grid_dx")
         """
-        print(survey_label)  # Debug output for survey type tracking
 
         # Extract clearance data for the specified survey type
         survey = self.surveys[survey_label].clearance_data

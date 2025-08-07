@@ -834,6 +834,7 @@ def setup_db() -> sqlite3.Connection:
     # return sqlite3.connect(apd_data_dir)
     # print('location of source file', os.getcwd())
     # print('location of db', get_plss_sections_path())
+    print('db connect', get_plss_sections_path())
     return sqlite3.connect(get_plss_sections_path())
 
 
@@ -927,7 +928,16 @@ class ETools(QMainWindow):
         # Connect UI signals to handler methods
         self.ui.well_api_val.returnPressed.connect(self.run_api_when_entered)
         self.ui.lateral_name_line_edit.returnPressed.connect(self.run_api_when_entered)
-        self.ui.add_dx_data_pushbutton.pressed.connect(self.recalculate_data_with_new_md_input)
+
+        # self.ui.dx_survey_bhl_line.returnPressed.connect()
+        # self.ui.dx_survey_kop_line.returnPressed.connect()
+        # self.ui.dx_survey_prod_line.returnPressed.connect()
+        # self.ui.dx_survey_pro_azi_line.returnPressed.connect()
+
+
+        # self.ui.add_dx_data_pushbutton.pressed.connect(self.recalculate_data_with_new_md_input)
+        self.ui.add_dx_data_pushbutton.pressed.connect(lambda: self.recalculate_data_with_new_md_input(float(self.ui.new_md_survey_box.text())))
+
         # self.ui.runDXSurveyPushbutton.pressed.connect(self.process_when_dx_button_pushed)
         self.ui.runDXSurveyPushbutton.pressed.connect(lambda: self.process_when_dx_button_pushed())
 
@@ -938,11 +948,13 @@ class ETools(QMainWindow):
         # self.ui.data_return_box.anchorClicked.connect(QDesktopServices.openUrl)
         self.ui.load_as_drilled_survey_box.clicked.connect(lambda: self.press_new_survey_button('drilled'))
         self.ui.load_planned_survey_box.clicked.connect(lambda: self.press_new_survey_button('planned'))
-        self.ui.well_api_val.setText('4301354659')
+        #4301353727
+        #4301354659
+        self.ui.well_api_val.setText('4301353727')
         self.connect_to_db()
 
         self.run_api_when_entered()
-        # self.ui.data_return_box.setOpenLinks(False)
+        self.process_when_dx_button_pushed()
 
     def connect_to_db(self):
         # Initialize database connection with error handling
@@ -1475,7 +1487,7 @@ class ETools(QMainWindow):
         first_button.setChecked(True)
         first_button.clicked.emit()
 
-    def recalculate_data_with_new_md_input(self) -> None:
+    def recalculate_data_with_new_md_input(self, md) -> None:
         """Interpolate and add a new survey point at user-specified measured depth.
 
         This method reads a measured depth from the UI, interpolates inclination
@@ -1561,7 +1573,7 @@ class ETools(QMainWindow):
             return lst_data
 
         # Get MD from UI and process
-        md = float(self.ui.new_md_survey_box.text())
+        # md = float(self.ui.new_md_survey_box.text())
         survey = self.well.get_survey()
         output = filter_by_citing_type()
         survey = pd.concat(output, ignore_index=True)
@@ -2180,7 +2192,6 @@ class EToolsWell:
             self.surveys_dict,
             self.plat_df
         )
-        print(self.survey_parameters)
         self.rel_plats.set_well_path_dict(self.cl_dx_dict)
         self.rel_plats.set_tsr_data(self.loc_df)
 
@@ -2286,7 +2297,7 @@ class EToolsWell:
         Returns:
             ClearanceProcess object with calculated clearances
         """
-        return ClearanceProcess(df, plat_df)
+        return ClearanceProcess(df, plat_df, self.conn)
 
 
 class PointChecker:

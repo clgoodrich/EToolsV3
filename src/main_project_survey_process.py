@@ -40,7 +40,6 @@ class SurveyProcessBase:
         # Step 2: Setup survey processing parameters dictionary
         self.survey_parameters = {"conv_angle": self.conv_angle, "north_ref": None}
         self.survey_parameters["north_ref"] = north_ref[0].lower()  # Extract first character and normalize
-        print(well_elevation)
         # Step 3: Trigger main survey processing workflow
         self.survey_process(self.survey_dx, well_elevation, north_ref)
 

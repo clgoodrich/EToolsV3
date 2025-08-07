@@ -790,7 +790,6 @@ class DataDrawer:
 
         # Process each survey dataset with systematic color assignment
         for idx, (survey_key, survey_data) in enumerate(survey_dict.items()):
-            print(survey_key, survey_data)
             # Assign color using modulo to cycle through palette
             color = color_palette[idx % len(color_palette)]
 

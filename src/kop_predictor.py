@@ -557,37 +557,3 @@ def _detect_lp_gradient_change(df: pd.DataFrame, window: int) -> Optional[Dict[s
 #         ])
 #     })
 #
-#     # Perform the full analysis
-#     analysis_result = analyze_survey(sample_data)
-#
-#     print("--- Well Trajectory Analysis Results ---")
-#     print(f"Well Type: {analysis_result['well_type']}")
-#     print(f"Total Measured Depth: {analysis_result['total_depth']:.1f} ft")
-#     print(f"Maximum Inclination: {analysis_result['max_inclination_deg']:.1f}°")
-#
-#     if kop := analysis_result.get('kop'):
-#         print("\n--- Kickoff Point (KOP) ---")
-#         print(f"  Detection Method: {kop['method_used']}")
-#         print(f"  Measured Depth: {kop['measured_depth']:.1f} ft")
-#         print(f"  Inclination: {np.degrees(kop['inclination']):.1f}°")
-#         print(f"  Confidence: {kop['confidence']:.2%}")
-#     else:
-#         print("\nKOP not detected.")
-#
-#     if lp := analysis_result.get('landing_point'):
-#         print("\n--- Landing Point (LP) ---")
-#         print(f"  Detection Method: {lp['method_used']}")
-#         print(f"  Measured Depth: {lp['measured_depth']:.1f} ft")
-#         print(f"  Inclination: {np.degrees(lp['inclination']):.1f}°")
-#         print(f"  Confidence: {lp['confidence']:.2%}")
-#     else:
-#         print("\nLanding Point not detected.")
-#
-#     if geo := analysis_result.get('well_geometry'):
-#         print("\n--- Well Section Geometry ---")
-#         print(f"  Build Section Length: {analysis_result['build_section_length']:.1f} ft")
-#         print(f"  Producing Section Length: {analysis_result['producing_section_length']:.1f} ft")
-#         if (avg_dls := geo['build_section'].get('avg_dls')) is not None:
-#             print(f"  Average DLS in Build: {avg_dls:.2f}°/100ft")
-#         if (avg_inc := geo['producing_section'].get('avg_inclination')) is not None:
-#             print(f"  Average Inclination in Producing Section: {avg_inc:.1f}°")

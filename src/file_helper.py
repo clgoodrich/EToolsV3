@@ -2,54 +2,49 @@ import sys
 import os
 
 
-def get_resource_path(relative_path):
-    """Get the absolute path to a resource, works for dev and for PyInstaller"""
-    try:
-        # PyInstaller creates a temp folder and stores path in _MEIPASS
-        base_path = sys._MEIPASS
-    except Exception:
-        # If not running as executable, use the current directory
-        base_path = os.path.abspath(".")
-
-    return os.path.join(base_path, relative_path)
-
-
-def get_db_path(db_filename):
-    """Get correct path to database file"""
-    # Get src directory (where this .py file is)
-    src_dir = os.path.dirname(__file__)
-    # Get main directory (parent of src)
-    main_dir = os.path.dirname(src_dir)
-    # Return path to database
-    return os.path.join(main_dir, 'data', 'databases', db_filename)
+def get_project_root():
+    """
+    Gets the absolute path to the project's root folder.
+    This is the most reliable way to find data files.
+    """
+    # __file__ is the path to this file (file_helper.py), which is in 'src'
+    # The first dirname gets the 'src' folder.
+    # The second dirname gets the parent of 'src', which is the project root.
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def get_excel_path(excel_name):
-    """Get the path to an Excel file"""
-    return get_resource_path(os.path.join('data', 'excel_files', excel_name))
+def get_data_file_path(*path_segments):
+    """
+    Builds a full path to any data file from the project root.
+    Example: get_data_file_path('data', 'databases', 'Board_DB.db')
+    """
+    project_root = get_project_root()
+    return os.path.join(project_root, *path_segments)
 
 
-def get_data_path(folder_name, file_name):
-    """Get path to any data file"""
-    return get_resource_path(os.path.join('data', folder_name, file_name))
+# --- Your Specific Helper Functions ---
 
-
-# For your specific database paths used in the code
 def get_board_db_path():
     """Get path to Board_DB.db"""
-    return get_db_path('Board_DB.db')
+    return get_data_file_path('data', 'databases', 'Board_DB.db')
 
 
 def get_dx_sample_path():
     """Get path to DX_sample.db"""
-    return get_db_path('DX_sample.db')
+    return get_data_file_path('data', 'databases', 'DX_sample.db')
 
 
 def get_plss_sections_path():
     """Get path to Board_DB_Plss_Sections.db"""
-    return get_db_path('Board_DB_Plss_Sections.db')
+    return get_data_file_path('data', 'databases', 'Board_DB_Plss_Sections.db')
+
+
+def get_template_tracking_excel_path():
+    """Get path to template tracking Excel file"""
+    return get_data_file_path('data', 'excel_files', 'TrackingWCR.xlsx')
 
 
 def get_template_excel_path():
-    """Get path to template Excel file"""
-    return get_excel_path('template_excel_load.csv')
+    """Get path to template CSV file"""
+    # Your screenshot shows this is a .csv file, not .xlsx
+    return get_data_file_path('data', 'excel_files', 'template_excel_load.csv')

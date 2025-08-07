@@ -83,23 +83,23 @@ def label_to_conc_code(label: Union[str, List[str]]) -> str:
     return code
 
 
-def setup_sqlite_db() -> sqlite3.Connection:
-    """
-    Establish connection to the PLSS sections SQLite database.
-
-    This database contains the base coordinate data for all Public Land Survey System
-    sections, which serve as the foundation for plat boundary definitions.
-
-    Returns:
-        sqlite3.Connection: Active database connection
-
-    Note:
-        The database path is hardcoded to 'C:\\Work\\Databases\\Board_DB_Plss_Sections.db'
-        which should be made configurable in production environments.
-    """
-    path_used_db = r'C:\Work\Databases'
-    apd_data_dir = os.path.join(path_used_db, 'Board_DB_Plss_Sections.db')
-    return sqlite3.connect(apd_data_dir)
+# def setup_sqlite_db() -> sqlite3.Connection:
+#     """
+#     Establish connection to the PLSS sections SQLite database.
+#
+#     This database contains the base coordinate data for all Public Land Survey System
+#     sections, which serve as the foundation for plat boundary definitions.
+#
+#     Returns:
+#         sqlite3.Connection: Active database connection
+#
+#     Note:
+#         The database path is hardcoded to 'C:\\Work\\Databases\\Board_DB_Plss_Sections.db'
+#         which should be made configurable in production environments.
+#     """
+#     path_used_db = r'C:\Work\Databases'
+#     apd_data_dir = os.path.join(path_used_db, 'Board_DB_Plss_Sections.db')
+#     return sqlite3.connect(apd_data_dir)
 
 
 def validate_coords_table(used_table: QTableWidget) -> List[str]:
