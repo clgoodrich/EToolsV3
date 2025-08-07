@@ -300,10 +300,10 @@ class ManualFootageInputDialog(QDialog):
 
         # Sample data for the autofill feature
         self.sample_data = [
-            {'section': 4, 'township': 3.0, 'township_dir': 'S', 'rng': 1.0, 'rng_dir': 'W', 'baseline': 'U', 'fnsl': 1054, 'fnsl_dir': 'FNL', 'fewl': 2304, 'fewl_dir': 'FEL', 'zone_name': 'Surface Location', 'qtr_qtr': 'LOT2', 'shl_x': 585048, 'shl_y': 4456625, 'bhl_x': 584548, 'bhl_y': 4460124},
-            {'section': 33, 'township': 2.0, 'township_dir': 'S', 'rng': 1.0, 'rng_dir': 'W', 'baseline': 'U', 'fnsl': 100, 'fnsl_dir': 'FSL', 'fewl': 1490, 'fewl_dir': 'FWL', 'zone_name': 'Uppermost Producing', 'qtr_qtr': 'SESW', 'shl_x': 585048, 'shl_y': 4456625, 'bhl_x': 584548, 'bhl_y': 4460124},
-            {'section': 28, 'township': 2.0, 'township_dir': 'S', 'rng': 1.0, 'rng_dir': 'W', 'baseline': 'U', 'fnsl': 100, 'fnsl_dir': 'FNL', 'fewl': 1490, 'fewl_dir': 'FWL', 'zone_name': 'Proposed Depth', 'qtr_qtr': 'NENW', 'shl_x': 585048, 'shl_y': 4456625, 'bhl_x': 584548, 'bhl_y': 4460124},
-            {'section': 4, 'township': 3.0, 'township_dir': 'S', 'rng': 1.0, 'rng_dir': 'W', 'baseline': 'U', 'fnsl': 453, 'fnsl_dir': 'FNL', 'fewl': 1627, 'fewl_dir': 'FWL', 'zone_name': 'Kickoff Point', 'qtr_qtr': 'LOT3', 'shl_x': 585048, 'shl_y': 4456625, 'bhl_x': 584548, 'bhl_y': 4460124}
+            {'section': 4, 'township': 3.0, 'township_dir': 'S', 'rng': 1.0, 'rng_dir': 'W', 'meridian': 'U', 'fnsl': 1054, 'fnsl_dir': 'FNL', 'fewl': 2304, 'fewl_dir': 'FEL', 'zone_name': 'Surface Location', 'shl_x': 585048, 'shl_y': 4456625, 'bhl_x': 584548, 'bhl_y': 4460124},
+            {'section': 33, 'township': 2.0, 'township_dir': 'S', 'rng': 1.0, 'rng_dir': 'W', 'meridian': 'U', 'fnsl': 100, 'fnsl_dir': 'FSL', 'fewl': 1490, 'fewl_dir': 'FWL', 'zone_name': 'Uppermost Producing', 'shl_x': 585048, 'shl_y': 4456625, 'bhl_x': 584548, 'bhl_y': 4460124},
+            {'section': 28, 'township': 2.0, 'township_dir': 'S', 'rng': 1.0, 'rng_dir': 'W', 'meridian': 'U', 'fnsl': 100, 'fnsl_dir': 'FNL', 'fewl': 1490, 'fewl_dir': 'FWL', 'zone_name': 'Proposed Depth', 'shl_x': 585048, 'shl_y': 4456625, 'bhl_x': 584548, 'bhl_y': 4460124},
+            {'section': 4, 'township': 3.0, 'township_dir': 'S', 'rng': 1.0, 'rng_dir': 'W', 'meridian': 'U', 'fnsl': 453, 'fnsl_dir': 'FNL', 'fewl': 1627, 'fewl_dir': 'FWL', 'zone_name': 'Kickoff Point', 'shl_x': 585048, 'shl_y': 4456625, 'bhl_x': 584548, 'bhl_y': 4460124}
         ]
 
         self._setup_ui()
@@ -363,13 +363,12 @@ class ManualFootageInputDialog(QDialog):
             "township_dir": {"widget": QComboBox, "items": ['N', 'S']},
             "rng": {"widget": QLineEdit, "validator": QDoubleValidator(0.0, 100.0, 2)},
             "rng_dir": {"widget": QComboBox, "items": ['E', 'W']},
-            "baseline": {"widget": QLineEdit},
+                "meridian":  {"widget": QComboBox, "items": ['U', 'S']},
             "fnsl": {"widget": QLineEdit, "validator": QIntValidator(0, 9999)},
             "fnsl_dir": {"widget": QComboBox, "items": ['FNL', 'FSL']},
             "fewl": {"widget": QLineEdit, "validator": QIntValidator(0, 9999)},
             "fewl_dir": {"widget": QComboBox, "items": ['FEL', 'FWL']},
-            "zone_name": {"widget": QLineEdit},
-            "qtr_qtr": {"widget": QLineEdit},
+            "zone_name": {"widget": QComboBox, "items": ['Surface Location', 'Kickoff Point', 'Uppermost Producing', 'Proposed Depth']}
         }
         for name, props in fields.items():
             widget_instance = props["widget"]()
@@ -450,14 +449,12 @@ class ManualFootageInputDialog(QDialog):
             "township_dir": widgets["township_dir"].currentText(),
             "rng": float(widgets["rng"].text()),
             "rng_dir": widgets["rng_dir"].currentText(),
-            "baseline": widgets["baseline"].text(),
+            "meridian": widgets["meridian"].currentText(),
             "fnsl": int(widgets["fnsl"].text()),
             "fnsl_dir": widgets["fnsl_dir"].currentText(),
             "fewl": int(widgets["fewl"].text()),
             "fewl_dir": widgets["fewl_dir"].currentText(),
-            "zone_name": widgets["zone_name"].text(),
-            "qtr_qtr": widgets["qtr_qtr"].text(),
-        }
+            "zone_name": widgets["zone_name"].currentText()}
         row_data["shl_x"] = int(self.shl_x_edit.text())
         row_data["shl_y"] = int(self.shl_y_edit.text())
         row_data["bhl_x"] = int(self.bhl_x_edit.text())
@@ -480,6 +477,8 @@ class TownShipAndRangeProcess:
     - Regulatory location data (APD permits and surface/bottom hole locations)
     - PLSS plat boundaries (legal land descriptions)
 
++
++
     The integration supports:
     - Regulatory compliance verification
     - Spatial analysis for drilling operations
@@ -533,6 +532,10 @@ class TownShipAndRangeProcess:
         # Store processed data for access by visualization and analysis methods
         self.plat_df = plat_df
         self.loc_df = loc_df
+        print(self.plat_df)
+
+        print(self.loc_df)
+
 
     def run_dialog_example(self):
         """

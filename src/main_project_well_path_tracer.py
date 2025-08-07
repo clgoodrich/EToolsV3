@@ -13,6 +13,10 @@ from itertools import chain
 import matplotlib.pyplot as plt
 import ModuleAgnostic as ma
 
+import pandas as pd
+import numpy as np
+from typing import Tuple, List, Dict
+import math
 
 def alterSurveyForLargeSpacingBetweenPts(lst):
     new_pts = []
@@ -82,17 +86,17 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
     tsr_data = tsr_data_df.values.tolist()
     new_conc = reTranslateData_2(tsr_data[0][:6])
     data_df_new = df[df['conc'] == new_conc]
-    print(data_df_new)
     data_df_new['decimal_azimuth_ref_adjusted'] = data_df_new.apply(lambda x: transform_and_correct_for_north_ref(x['north_ref'], x['decimal_azimuth'], convergence_angle), axis=1)
 
     # data_df_new['azimuth'] = data_df_new.apply(lambda: transform_and_correct_for_north_ref(data_df_new['north_ref'], data_df_new['azimuth']), axis=1)
-    # print(df[df['conc'] == new_conc])
     data = df[df['conc'] == new_conc].to_numpy().tolist()
     # data = convert_to_pts(df[df['conc'] == new_conc])
-
-    data, data_new_dec = dataConverterPlatToUtm(data)
+    processed_data = process_survey_data(data_df_new)
+    data = create_relative_section_polygon(data_df_new)
+    data_o, data_new_dec = dataConverterPlatToUtm(data)
     print(data)
-    print(lkjnsg)
+    print(data_o)
+    print(processed_data)
     for index, sublist in enumerate(data):
         if index < 4:  # Indices 0-3
             sublist.append('west')
@@ -101,7 +105,7 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
         elif index < 12:  # Indices 8-11
             sublist.append('east')
         else:  # Indices 12 and onwards
-            sublist.append('south')    # print([i.append('west') for i in data[:5]] + [i.append('north') for i in data[4:9]])
+            sublist.append('south')
     result_coords = data
     shl = get_starter_pt(survey_data_df.iloc[0], result_coords)
     survey_data_df[['e_offset_delta', 'n_offset_delta']] = (survey_data_df.apply(
@@ -121,7 +125,6 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
     foo = [survey_data[0] + [0] * 11]
     survey_data = survey_data[1:]
     known_conc_data = [new_conc]
-    print(known_conc_data)
     new_conc = conc
     dirLst = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
     lst = [[0, 0, 0, 0, 0, 0, 0, 0],
@@ -175,12 +178,11 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
     prev_section_data = tsr_data[0][:6]
 
     while True:
-        print('goop')
+        # print('goop')
         data = [i[:2] for i in data]
+        # print('data input', data)
         corners, sides_generated = ma.cornerGeneratorProcess(data)
-        # print(sides_generated)
         # corners, sides_generated = _corner_generator_process(data)
-        # print(sides_generated)
 
         sides_generated = [[j[:-1] for j in i] for i in sides_generated]
         segment_lst = [[[i[j], i[j + 1]] for j in range(len(i) - 1)] for i in sides_generated]
@@ -191,22 +193,17 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
                                                                                                           well_parameter_data,
                                                                                                           plat_north_ref,
                                                                                                           foo, shl)
-        # print(intersection, intersection1)
-        # print(direction, direction1)
-        # print(well_index_end, well_index_end1)
-        # print(foo, foo1)
-        # print(sgjnkdfgjklndfg)
+
         # if well_path_tester.empty or direction == 'Null':
         #     return min_curv_data, known_conc_data, section_degrees_data, plat_north_refs_lst
         if not well_path_tester or direction == 'Null':
             return min_curv_data, known_conc_data, section_degrees_data, plat_north_refs_lst, shl
 
         index = dirLst.index(direction)
-        print(section, index, direction)
         new_section = lst[section][index]
         township, townshipDir, rng, rngDir, prev_section_data = modifySection(section, new_section, prev_section_data)
         conc_info = [new_section, township, townshipDir, rng, rngDir, tsr_data[0][5]]
-        print(conc_info)
+        print(conc_info, section, index, direction)
         new_conc = reTranslateData_2(conc_info)
         # ma.grapher4(well_path_tester, section_degrees_data[-1], new_conc)
         if new_conc in known_conc_data:
@@ -222,17 +219,19 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
             known_conc_data.append(new_conc)
             data_new = df[df['conc'] == new_conc].to_numpy().tolist()
 
-            # print('data_new', data_new2)
             if len(data_new) == 0:
                 data_new = GUIDataAdd.addDataIfAGRCNotFound(conn, new_conc, conc_info)
             data_new = sorted(data_new, key=lambda x: x[-1], reverse=True)
             plat_north_ref = data_new[0][-4]
             plat_north_refs_lst.append(plat_north_ref)
-            print('plats north ref', plat_north_ref)
             # data_new_deg = convert_to_pts(df[df['conc'] == new_conc])
+            # data_new_deg = create_relative_section_polygon(data_new)
+            data_new_deg = create_relative_section_polygon(df[df['conc'] == new_conc])
 
-            data_new_deg, data_new_dec = dataConverterPlatToUtm(data_new)
-
+            # data_new_deg, data_new_dec = dataConverterPlatToUtm(data_new)
+            print()
+            print('new data', data_new_deg)
+            # print(data_test)
             rewritten_coords = coordsAdjuster(data_new_deg, data, direction, proxBoo)
             data = rewritten_coords
             section_degrees_data.append(data)
@@ -240,6 +239,85 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
         section = new_section
 
     return min_curv_data, known_conc_data, section_degrees_data, plat_north_refs_lst, shl
+
+
+def create_relative_section_polygon(df):
+    """
+    Creates a Shapely Polygon from PLSS survey calls, with the
+    starting point at the origin (0, 0) and correcting for
+    traverse direction on each side.
+
+    Args:
+        df (pd.DataFrame): DataFrame with PLSS calls for a single section.
+
+    Returns:
+        shapely.geometry.Polygon: The closed polygon of the section.
+    """
+    # 1. Define the correct clockwise traversal order
+    clockwise_order = [
+        'west_down_2', 'west_down_1', 'west_up_1', 'west_up_2',
+        'north_left_2', 'north_left_1', 'north_right_1', 'north_right_2',
+        'east_up_2', 'east_up_1', 'east_down_1', 'east_down_2',
+        'south_right_2', 'south_right_1', 'south_left_1', 'south_left_2'
+    ]
+
+    # 2. Sort the DataFrame
+    df['sort_key'] = pd.Categorical(df['side'], categories=clockwise_order, ordered=True)
+    df_sorted = df.sort_values('sort_key').reset_index()
+
+    # 3. Initialize the traverse at the origin (0, 0)
+    points = [(0.0, 0.0)]
+    current_x, current_y = 0.0, 0.0
+
+    # 4. Iterate through the sorted rows to calculate vertices
+    for index, row in df_sorted.iterrows():
+        decimal_angle = row['degrees'] + row['minutes'] / 60.0 + row['seconds'] / 3600.0
+        bearing_str = row['bearing_str']
+        side = row['side']
+        azimuth = 0.0
+
+        # --- THIS IS THE CORRECTED LOGIC ---
+        # Adjust the bearing based on the overall direction of travel for that side.
+        effective_bearing_str = bearing_str
+        if side.startswith('east'):
+            # On the east side, we travel SOUTH. Bearings must be southerly.
+            # 'NE' becomes 'SE', 'NW' becomes 'SW'.
+            effective_bearing_str = bearing_str.replace('N', 'S')
+        elif side.startswith('south'):
+            # On the south side, we travel WEST. Bearings must be westerly.
+            # 'NE' becomes 'NW', 'SE' becomes 'SW'.
+            effective_bearing_str = bearing_str.replace('E', 'W')
+        # --- END OF CORRECTION ---
+
+        # Use the standard azimuth calculation with the corrected bearing
+        if effective_bearing_str == 'NE':         # Quadrant 1
+            azimuth = decimal_angle
+        elif effective_bearing_str == 'SE':       # Quadrant 2
+            azimuth = 180.0 - decimal_angle
+        elif effective_bearing_str == 'SW':       # Quadrant 3
+            azimuth = 180.0 + decimal_angle
+        elif effective_bearing_str == 'NW':       # Quadrant 4
+            azimuth = 360.0 - decimal_angle
+
+        # --- Plane Coordinate Calculation (in feet) ---
+        distance_ft = row['length']
+        azimuth_rad = math.radians(azimuth)
+
+        delta_x = distance_ft * math.sin(azimuth_rad)
+        delta_y = distance_ft * math.cos(azimuth_rad)
+
+        current_x += delta_x
+        current_y += delta_y
+        points.append((current_x, current_y))
+
+    # --- Finalize the Polygon ---
+    closure_error = math.dist(points[0], points[-1])
+    print(f"Closure Error: {closure_error:.2f} feet")
+    # print(points)
+    # section_polygon = Polygon(points[:-1])
+    returned_points = [list(i) for i in points]
+    return returned_points
+
 
 def dataConverterPlatToUtm(data):
     output = convertToDecimal2(data)
@@ -298,6 +376,9 @@ def calculate_next_utm_points(data):
         utm_points_2.append([pt1, pt2])
     return utm_points_2
 
+def reorderDecimalData(data):
+    return [data[3], data[2], data[1], data[0], data[8], data[9], data[10], data[11], data[4], data[5], data[6],
+            data[7], data[15], data[14], data[13], data[12]]
 
 def oneToMany(lst, number):
     count = -1
@@ -310,9 +391,7 @@ def oneToMany(lst, number):
     return outLst
 
 
-def reorderDecimalData(data):
-    return [data[3], data[2], data[1], data[0], data[8], data[9], data[10], data[11], data[4], data[5], data[6],
-            data[7], data[15], data[14], data[13], data[12]]
+
 
 
 def find_point_from_footages(polygon_coords, ns_distance, ns_type, ew_distance, ew_type):
@@ -908,7 +987,6 @@ def get_direction_sides(segment_lst, well_path, sides_generated):
     well_path_df = well_path[['e_offset_delta', 'n_offset_delta']]
     intersection_pt, df_index, min_distance = get_first_boundary_intersection_with_index(well_path_df,
                                                                                          plat_poly)
-    print(well_path.columns)
     graph_plat_and_well(plat_poly, well_path_df)
     for k, v in enumerate(sides_generated):
         line_string_side = LineString(v)
@@ -972,7 +1050,6 @@ def findWellPathBoundaryIntersection(segment_lst, survey_data, well_parameter_da
                     intersection = [outcome.x, outcome.y]
 
                     if intersection != [0, 0]:
-                        print(intersection)
                         return intersection, direction[j], i, output, offset_pts_lst
                 except:
                     pass
@@ -1226,3 +1303,241 @@ def graph_plat_and_well(poly, well):
     # 5. Set aspect ratio and display the plot
     ax.set_aspect('equal', 'box')
     plt.show()
+
+
+def convert_section_survey_to_xy(df: pd.DataFrame,
+                                 starting_point: Tuple[float, float] = (0.0, 0.0),
+                                 check_closure: bool = True,
+                                 tolerance_feet: float = 1.0) -> Dict:
+    """
+    Convert township/range section survey data to XY coordinates.
+
+    Args:
+        df: DataFrame with survey data
+        starting_point: Starting coordinates (x, y) in feet
+        check_closure: Whether to check if traverse closes
+        tolerance_feet: Closure tolerance in feet
+
+    Returns:
+        Dictionary containing coordinates, closure info, and metadata
+    """
+
+    # Define the correct clockwise order for section sides
+    clockwise_order = [
+        'west_down_2', 'west_down_1', 'west_up_1', 'west_up_2',
+        'north_left_2', 'north_left_1', 'north_right_1', 'north_right_2',
+        'east_up_2', 'east_up_1', 'east_down_1', 'east_down_2',
+        'south_right_2', 'south_right_1', 'south_left_1', 'south_left_2'
+    ]
+
+    # Reorder data to follow clockwise path
+    ordered_data = []
+    for side in clockwise_order:
+        matching_rows = df[df['side'] == side]
+        if not matching_rows.empty:
+            ordered_data.append(matching_rows.iloc[0])
+        else:
+            print(f"Warning: Missing data for side '{side}'")
+
+    if not ordered_data:
+        raise ValueError("No matching survey data found")
+
+    # Convert to DataFrame for easier processing
+    ordered_df = pd.DataFrame(ordered_data)
+
+    # Calculate coordinates using traverse method
+    coordinates = calculate_traverse_coordinates(ordered_df, starting_point)
+
+    # Check closure if requested
+    closure_info = None
+    if check_closure:
+        closure_info = check_traverse_closure(coordinates, tolerance_feet)
+
+    # Calculate relative coordinates (subtract starting point)
+    relative_coords = [(x - starting_point[0], y - starting_point[1]) for x, y in coordinates]
+
+    return {
+        'coordinates': coordinates,
+        'relative_coordinates': relative_coords,
+        'closure_info': closure_info,
+        'ordered_sides': [row['side'] for row in ordered_data],
+        'survey_data': ordered_df
+    }
+
+
+def calculate_traverse_coordinates(df: pd.DataFrame,
+                                   starting_point: Tuple[float, float]) -> List[Tuple[float, float]]:
+    """
+    Calculate coordinates using traverse surveying method.
+
+    Args:
+        df: Ordered DataFrame with survey measurements
+        starting_point: Starting coordinates (x, y)
+
+    Returns:
+        List of (x, y) coordinate tuples
+    """
+    coordinates = [starting_point]
+    current_x, current_y = starting_point
+
+    for _, row in df.iterrows():
+        # Get distance in feet and azimuth in decimal degrees
+        distance_feet = row['length']  # Assuming length is already in feet
+        azimuth_degrees = row['decimal_azimuth']
+
+        # Convert azimuth to radians
+        azimuth_radians = math.radians(azimuth_degrees)
+
+        # Calculate coordinate differences using standard surveying formulas
+        # In surveying: x = distance * sin(azimuth), y = distance * cos(azimuth)
+        delta_x = distance_feet * math.sin(azimuth_radians)
+        delta_y = distance_feet * math.cos(azimuth_radians)
+
+        # Calculate next point
+        next_x = current_x + delta_x
+        next_y = current_y + delta_y
+
+        coordinates.append((next_x, next_y))
+        current_x, current_y = next_x, next_y
+
+    return coordinates
+
+
+def check_traverse_closure(coordinates: List[Tuple[float, float]],
+                           tolerance: float) -> Dict:
+    """
+    Check if the traverse closes within acceptable tolerance.
+
+    Args:
+        coordinates: List of coordinate tuples
+        tolerance: Acceptable closure error in feet
+
+    Returns:
+        Dictionary with closure analysis
+    """
+    start_point = coordinates[0]
+    end_point = coordinates[-1]
+
+    # Calculate closure error
+    error_x = end_point[0] - start_point[0]
+    error_y = end_point[1] - start_point[1]
+    total_error = math.sqrt(error_x ** 2 + error_y ** 2)
+
+    # Calculate traverse perimeter for relative accuracy
+    total_distance = 0
+    for i in range(len(coordinates) - 1):
+        x1, y1 = coordinates[i]
+        x2, y2 = coordinates[i + 1]
+        distance = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+        total_distance += distance
+
+    relative_accuracy = total_error / total_distance if total_distance > 0 else 0
+
+    return {
+        'error_x': error_x,
+        'error_y': error_y,
+        'total_error': total_error,
+        'total_distance': total_distance,
+        'relative_accuracy': relative_accuracy,
+        'within_tolerance': total_error <= tolerance,
+        'accuracy_ratio': f"1:{int(1 / relative_accuracy) if relative_accuracy > 0 else 'Perfect'}"
+    }
+
+
+def analyze_bearings(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Analyze and validate bearing calculations in the dataset.
+
+    Args:
+        df: Survey DataFrame
+
+    Returns:
+        DataFrame with bearing analysis
+    """
+    analysis_df = df.copy()
+
+    # Recalculate decimal degrees from DMS for comparison
+    analysis_df['calculated_decimal'] = (
+            analysis_df['degrees'] +
+            analysis_df['minutes'] / 60 +
+            analysis_df['seconds'] / 3600
+    )
+
+    # Convert bearing to azimuth based on bearing quadrant
+    def bearing_to_azimuth(row):
+        bearing_val = row['calculated_decimal']
+        bearing_str = row['bearing_str']
+
+        if bearing_str == 'NE':
+            return bearing_val
+        elif bearing_str == 'SE':
+            return 180 - bearing_val
+        elif bearing_str == 'SW':
+            return 180 + bearing_val
+        elif bearing_str == 'NW':
+            return 360 - bearing_val
+        else:
+            return bearing_val
+
+    analysis_df['recalculated_azimuth'] = analysis_df.apply(bearing_to_azimuth, axis=1)
+    analysis_df['azimuth_difference'] = abs(analysis_df['decimal_azimuth'] - analysis_df['recalculated_azimuth'])
+
+    return analysis_df
+
+
+def create_section_polygon(coordinates: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+    """
+    Create a closed polygon from the traverse coordinates.
+
+    Args:
+        coordinates: List of coordinate tuples
+
+    Returns:
+        List of coordinates forming closed polygon
+    """
+    # If not already closed, close the polygon
+    if coordinates[0] != coordinates[-1]:
+        return coordinates + [coordinates[0]]
+    return coordinates
+
+
+# Main function to process your data
+def process_survey_data(df: pd.DataFrame) -> Dict:
+    """
+    Main function to process survey data with comprehensive analysis.
+
+    Args:
+        df: Input DataFrame with survey data
+
+    Returns:
+        Complete analysis results
+    """
+
+    print("Processing survey data...")
+    print(f"Input data shape: {df.shape}")
+
+    # Analyze bearings first
+    bearing_analysis = analyze_bearings(df)
+    print(f"Average azimuth difference: {bearing_analysis['azimuth_difference'].mean():.4f} degrees")
+
+    # Convert to coordinates
+    results = convert_section_survey_to_xy(df, check_closure=True, tolerance_feet=2.0)
+
+    # Print closure analysis
+    if results['closure_info']:
+        closure = results['closure_info']
+        print(f"\nClosure Analysis:")
+        print(f"  Total Error: {closure['total_error']:.2f} feet")
+        print(f"  Error X: {closure['error_x']:.2f} feet")
+        print(f"  Error Y: {closure['error_y']:.2f} feet")
+        print(f"  Relative Accuracy: {closure['accuracy_ratio']}")
+        print(f"  Within Tolerance: {closure['within_tolerance']}")
+
+    # Create polygon
+    polygon_coords = create_section_polygon(results['coordinates'])
+
+    return {
+        'results': results,
+        'bearing_analysis': bearing_analysis,
+        'polygon': polygon_coords
+    }

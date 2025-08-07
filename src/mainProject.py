@@ -97,7 +97,65 @@ def get_resource_path(relative_path):
 
     return os.path.join(base_path, relative_path)
 
+class LateralNameDialog(QDialog):
+    """
+    A dialog to prompt the user for a valid 4-digit lateral name.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Lateral Name Required")
+        self.setModal(True)
+        self.setFixedSize(350, 150)
 
+        # To store the validated name
+        self.lateral_name = None
+
+        self._setup_ui()
+
+    def _setup_ui(self):
+        """Initializes the user interface components."""
+        main_layout = QVBoxLayout(self)
+
+        info_label = QLabel(
+            "A 4-digit numeric lateral name is required.\nPlease enter it below."
+        )
+        info_label.setStyleSheet("font-weight: bold; margin-bottom: 10px;")
+        main_layout.addWidget(info_label)
+
+        form_layout = QFormLayout()
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("e.g., 0000")
+        # Set max length for user convenience and input mask for digits
+        self.name_edit.setMaxLength(4)
+        self.name_edit.setInputMask("9999") # Restricts input to digits
+        self.name_edit.setText('0000')
+        form_layout.addRow("Lateral Name:", self.name_edit)
+        main_layout.addLayout(form_layout)
+
+        # Dialog buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self._validate_and_accept)
+        button_box.rejected.connect(self.reject)
+        main_layout.addWidget(button_box)
+
+    def _validate_and_accept(self):
+        """Validates that the input is a 4-digit string."""
+        text = self.name_edit.text().strip()
+
+        if len(text) != 4 or not text.isdigit():
+            QMessageBox.warning(
+                self, "Validation Error", "Lateral name must be exactly 4 digits."
+            )
+            self.name_edit.setFocus()
+            return
+
+        # If validation passes, store the value and accept the dialog
+        self.lateral_name = text
+        self.accept()
+
+    def get_value(self):
+        """Returns the validated 4-digit lateral name."""
+        return self.lateral_name
 class ManualDataInputDialog(QDialog):
     """
     Dialog for manual input of well elevation and north reference when database query fails
@@ -950,11 +1008,11 @@ class ETools(QMainWindow):
         self.ui.load_planned_survey_box.clicked.connect(lambda: self.press_new_survey_button('planned'))
         #4301353727
         #4301354659
-        self.ui.well_api_val.setText('4301353727')
-        self.connect_to_db()
-
-        self.run_api_when_entered()
-        self.process_when_dx_button_pushed()
+        self.ui.well_api_val.setText('4304756419')
+        # self.connect_to_db()
+        #
+        # self.run_api_when_entered()
+        # self.process_when_dx_button_pushed()
 
     def connect_to_db(self):
         # Initialize database connection with error handling
@@ -1211,10 +1269,21 @@ class ETools(QMainWindow):
         api_val = self.ui.well_api_val.text()
         lateral_name = self.ui.lateral_name_line_edit.text()
 
-        # Default lateral to '0000' if not specified
         if lateral_name == '':
-            lateral_name = '0000'
-            self.ui.lateral_name_line_edit.setText('0000')
+            dialog = LateralNameDialog(parent=self) # 'self' would be your main window
+
+            if dialog.exec_() == QDialog.Accepted:
+                lateral_name = dialog.get_value()
+                self.ui.lateral_name_line_edit.setText(lateral_name)
+                print(f"Lateral name provided by user: {lateral_name}")
+            else:
+                # Handle the case where the user cancels the dialog
+                QMessageBox.critical(self, "Operation Aborted",
+                                     "A valid lateral name is required to proceed. The process cannot continue.")
+                return # Or raise an exception to stop execution
+        # if lateral_name == '':
+        #     lateral_name = '0000'
+        #     self.ui.lateral_name_line_edit.setText('0000')
 
         # Truncate API to 10 digits if longer
         if len(api_val) > 10:

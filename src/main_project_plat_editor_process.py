@@ -122,8 +122,6 @@ def sort_dataframe_by_custom_order(df, column_name, custom_order_list):
 #  [5607.163370289499, 5427.20104902549, 'east'], [5563.818601999683, 4040.6683897772837, 'east'], [5520.473833709867, 2654.1357305290776, 'east'], [5489.793269621355, 1312.4864831521, 'east'], [5459.1127055328425, -29.16276422487772, 'east']
 #  [5459.1127055328425, -29.16276422487772, 'south'], [4144.3290198691375, -76.06526216010172, 'south'], [2819.771432677988, -121.88906290120315, 'south'], [1493.8631614177295, -168.86015830713677, 'south'], [168.60312760687225, -214.91410910015162, 'south']]
 def convert_to_pts(plat):
-    print('converter')
-    print(plat)
     def new_point_finder(r, angle, center_x, center_y):
         x_new = center_x + (r * math.cos(math.radians(angle)))
         y_new = center_y + (r * math.sin(math.radians(angle)))
@@ -1255,17 +1253,7 @@ class SetupRelativeCoordsPage:
     #         current_plat_conc = next_plat_conc
 
     def main_tracer_process(self, current_plat_coords, current_plat_conc, original_all_plats_df, well_path, title):
-        # print("_______________________________________________________________")
-        #
-        # print('current_plat_coords')
-        # print(current_plat_coords)
-        # print('current_plat_conc')
-        # print(current_plat_conc)
-        # print('original_all_plats_df')
-        # print(original_all_plats_df)
-        # print('well_path')
-        # print(well_path)
-        # print("_______________________________________________________________")
+
         def get_direction_sides():
             used_df = all_plats_df[all_plats_df['conc'] == current_plat_conc]
             grouped_df = used_df.groupby('side')
@@ -1273,8 +1261,7 @@ class SetupRelativeCoordsPage:
             for r, group_df in grouped_df:
                 line_string_side = Polygon(group_df[['x', 'y']].values.tolist())
                 on_line3 = intersection_pt.within(line_string_side.buffer(1e-8))
-                # if on_line3:
-                #     print(r)
+
             for r, group_df in grouped_df:
                 line_string_side = Polygon(group_df[['x', 'y']].values.tolist())
                 on_line3 = intersection_pt.within(line_string_side.buffer(1e-8))
@@ -1398,7 +1385,6 @@ class SetupRelativeCoordsPage:
             return first_crossed_point
 
         def check_full_inter_pts(intersection_result, current_well_path_section, current_plat_coords):
-            print('intersect')
             cardinal_direction = None
             if isinstance(intersection_result, MultiPoint):
                 pts_1 = sorted(intersection_result.geoms,
@@ -1442,7 +1428,6 @@ class SetupRelativeCoordsPage:
                     cardinal_direction = side[0]
                     break
             dict_index = {'e': 2, 'w': 6, 'n': 0, 's': 4}
-            # print(everything_but_first)
             return everything_but_first, pts_1[0], cardinal_direction, dict_index[cardinal_direction]
 
         def plot_shapely_and_dataframe(polygon, point, dataframe,
@@ -1494,12 +1479,10 @@ class SetupRelativeCoordsPage:
             plt.tight_layout()
             plt.show()
 
-        # print(self.currently_used_plat_data)
         well_paths_lst = [k for k, v in self.well_path_dict.items()]
         all_plats_df = original_all_plats_df
         # well_path = self.well_path_dict[i].clearance_data
         result_coords = current_plat_coords[['x', 'y', 'side']].values.tolist()
-        # print(current_plat_coords)
         starter_pt = get_starter_pt(well_path.iloc[0], result_coords)
         starter_utm = well_path.iloc[0][['easting', 'northing']].values.tolist()
         dx_start, dy_start = (float(well_path['easting'].iloc[0])) - starter_pt[0] * 0.3048, (
@@ -1514,7 +1497,6 @@ class SetupRelativeCoordsPage:
         used_conc_sections = [current_plat_conc]
         counter = 2
         intersection_pt_current = Point(0, 0)
-        print("____________________________________________")
         while True:
             polygon_plat = current_polygon
             # pts = [Point(x, y) for x, y in zip(current_well_path_section.e_offset_delta, current_well_path_section.n_offset_delta)]
@@ -1523,7 +1505,6 @@ class SetupRelativeCoordsPage:
             boundary = polygon_plat.exterior
             intersection_pt = intersection_segment.intersection(boundary)
 
-            # print(current_well_path_section, intersection_pt_current)
 
             # plot_shapely_and_dataframe(polygon_plat, intersection_pt_current, current_well_path_section)
 
@@ -1535,23 +1516,18 @@ class SetupRelativeCoordsPage:
                                                                                                   current_plat_coords)
                 intersection_pt_current = intersection_pt
             except KeyError:
-                print('key error')
                 all_plats_df[['x_delta', 'y_delta']] = (
                     all_plats_df.apply(
                         lambda row: get_offset_added_delta(row['x'] * 0.3048, row['y'] * 0.3048, dx_start, dy_start),
                         axis=1,
                         result_type='expand'))
-                # print(all_plats_df)
                 self.graph_plats_and_well(all_plats_df, list(zip(well_path.easting, well_path.northing)), title)
                 return all_plats_df
-            # print(intersection_pt_current)
             # try:
 
             # dir_val, index = get_direction_sides()
-            # print([intersection_pt_current, dir_val])
 
             # except (AttributeError, TypeError) as e:
-            #     print('errored!', e)
             #     all_plats_df[['x_delta', 'y_delta']] = (
             #         all_plats_df.apply(
             #             lambda row: get_offset_added_delta(row['x'] * 0.3048, row['y'] * 0.3048, dx_start, dy_start),
@@ -1577,7 +1553,6 @@ class SetupRelativeCoordsPage:
                     rewritten_coords = self.coords_stitcher(next_plat_coords_dict,
                                                             all_plats_df[all_plats_df['conc'] == current_plat_conc],
                                                             dir_val, well_prox_boo)
-                    print(rewritten_coords)
 
 
             except IndexError as f:
@@ -1748,7 +1723,6 @@ class SetupRelativeCoordsPage:
         all_plats_df = original_all_plats_df
         all_pts_data = get_plat_coords()
 
-        # print(get_plat_coords())
         min_curv_data, known_conc_data, section_degrees_data, plat_north_refs_lst, shl_calc = mainTriangulator(conn=self.conn,
                          tsr_data_df=self.tsr_data,
                          data_plat_coords=current_plat_coords,
@@ -1756,9 +1730,7 @@ class SetupRelativeCoordsPage:
                          conc=current_plat_conc,
                          survey_data_df=self.well_path_dict['pln_df_grid_dx'].clearance_data,
                          well_parameter_data=retrieve_well_data())
-        # print(known_conc_data)
-        # for i in section_degrees_data:
-        #     print('i',i)
+
 
         # result_coords = current_plat_coords[['x', 'y', 'side']].values.tolist()
         well_path = self.well_path_dict['pln_df_grid_dx'].clearance_data
@@ -1779,8 +1751,7 @@ class SetupRelativeCoordsPage:
         #     original_all_plats_df,
         #     well_path
         # )
-        # print(output_tracer)
-        # print(foo)
+
         tracer_output = self.main_tracer_process(current_plat_coords, current_plat_conc, original_all_plats_df,
                                                  self.well_path_dict['pln_df_true_dx'].clearance_data, 'pln_df_true_dx')
         if not tracer_output.empty:
