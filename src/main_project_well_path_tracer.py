@@ -89,8 +89,7 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
     # data = convert_to_pts(df[df['conc'] == new_conc])
     data_test = create_relative_section_polygon(data_df_new)
     data, data_new_dec = dataConverterPlatToUtm(data)
-    print(data)
-    print(data_test)
+
     for index, sublist in enumerate(data):
         if index < 4:  # Indices 0-3
             sublist.append('west')
@@ -196,7 +195,7 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
         new_section = lst[section][index]
         township, townshipDir, rng, rngDir, prev_section_data = modifySection(section, new_section, prev_section_data)
         conc_info = [new_section, township, townshipDir, rng, rngDir, tsr_data[0][5]]
-        print(conc_info, section, index, direction)
+        # print(conc_info, section, index, direction)
         new_conc = reTranslateData_2(conc_info)
         # ma.grapher4(well_path_tester, section_degrees_data[-1], new_conc)
         if new_conc in known_conc_data:
@@ -222,9 +221,7 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
             data_test = create_relative_section_polygon(df[df['conc'] == new_conc])
 
             data_new_deg, data_new_dec = dataConverterPlatToUtm(data_new)
-            print()
-            print(data_new_deg)
-            print(data_test)
+
             rewritten_coords = coordsAdjuster(data_new_deg, data, direction, proxBoo)
             data = rewritten_coords
             section_degrees_data.append(data)

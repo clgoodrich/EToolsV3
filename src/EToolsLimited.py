@@ -3455,12 +3455,11 @@ class Ui_Dialog(object):
         self.range_dir_combo_rel_1 = QtWidgets.QComboBox(self.tabl_rel_1)
         self.range_dir_combo_rel_1.setGeometry(QtCore.QRect(75, 510, 69, 22))
         self.range_dir_combo_rel_1.setObjectName("range_dir_combo_rel_1")
-        self.comboBox_6 = QtWidgets.QComboBox(self.tabl_rel_1)
-        self.comboBox_6.setGeometry(QtCore.QRect(890, 800, 69, 22))
-        self.comboBox_6.setObjectName("comboBox_6")
+
         self.meridian_combo_rel_1 = QtWidgets.QComboBox(self.tabl_rel_1)
         self.meridian_combo_rel_1.setGeometry(QtCore.QRect(75, 535, 69, 22))
         self.meridian_combo_rel_1.setObjectName("meridian_combo_rel_1")
+
         self.layoutWidget_40 = QtWidgets.QWidget(self.tabl_rel_1)
         self.layoutWidget_40.setGeometry(QtCore.QRect(5, 405, 71, 152))
         self.layoutWidget_40.setObjectName("layoutWidget_40")
