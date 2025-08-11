@@ -1212,13 +1212,13 @@ class ETools(QMainWindow):
         )
         # self.original_streams = setup_console_redirection(self.ui.debug_return_box)
 
-        #4301353727
-        #4301354659
-        # self.ui.well_api_val.setText('4301354659')
-        # self.connect_to_db()
-        #
-        # self.run_api_when_entered()
-        # self.process_when_dx_button_pushed()
+        # 4301353727
+        # 4301354659
+        self.ui.well_api_val.setText('4301353727')
+        self.connect_to_db()
+
+        self.run_api_when_entered()
+        self.process_when_dx_button_pushed()
 
     def connect_to_db(self):
         # Initialize database connection with error handling
