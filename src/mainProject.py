@@ -23,6 +23,7 @@ import pandas as pd
 import numpy as np
 import copy
 from PyQt5.QtCore import QTimer
+import time
 import sys
 import weakref
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QLineEdit, QSpinBox,
@@ -30,7 +31,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout
                              QRadioButton, QGraphicsView, QComboBox, QMessageBox, QFileDialog, QButtonGroup,
                              QTextEdit, QPlainTextEdit, QDoubleSpinBox, QListWidget, QDateEdit, QTimeEdit,
                              QDateTimeEdit, QTreeWidget, QFormLayout, QHBoxLayout, QDialogButtonBox)
-from PyQt5.QtCore import QRegExp
+from PyQt5.QtCore import QRegExp, QObject, pyqtSignal
 from PyQt5.QtGui import QDesktopServices, QDoubleValidator, QRegExpValidator, QStandardItemModel, QStandardItem
 from src.EToolsLimited import Ui_Dialog
 import matplotlib.pyplot as plt
@@ -54,9 +55,11 @@ from main_project_plat_editor_process import SetupRelativeCoordsPage
 from shapely.geometry import Point, LineString, MultiPoint, Polygon
 from main_project_plat_editor_process import convert_to_pts
 import main_project_drawer
-
+import sys
+import io
+from PyQt5 import QtCore, QtWidgets, QtGui
 from file_helper import get_plss_sections_path
-
+import datetime
 # sys.path.append(os.path.dirname(__file__))
 
 def _get_data_from_qtableview(table_view: QTableView) -> list[list[str]] | None:
@@ -97,6 +100,204 @@ def get_resource_path(relative_path):
 
     return os.path.join(base_path, relative_path)
 
+
+class ConsoleRedirector(QtCore.QObject):
+    """
+    Console output redirector that safely handles encoding issues
+    while grouping messages with timestamps at specified intervals.
+    """
+    # Signal for thread-safe UI updates
+    text_signal = QtCore.pyqtSignal(str, str, bool)  # text, stream_type, is_new_group
+
+    def __init__(self, text_browser, original_stream, stream_name, timestamp_interval=2.0):
+        super().__init__()
+
+        # Store configuration
+        self.text_browser = text_browser
+        self.original_stream = original_stream
+        self.stream_name = stream_name
+        self.timestamp_interval = timestamp_interval
+
+        # Timestamp tracking
+        self.last_timestamp = 0
+        self.line_buffer = ""
+
+        # Connect signal
+        self.text_signal.connect(self.update_text_browser)
+
+    def write(self, text):
+        # Write to original stream with encoding error handling
+        try:
+            self.original_stream.write(text)
+        except UnicodeEncodeError:
+            # If there's an encoding error, use a replacement character
+            # or skip problematic characters
+            try:
+                # Try writing with 'replace' error handling
+                self.original_stream.write(text.encode(self.original_stream.encoding,
+                                                       errors='replace').decode(self.original_stream.encoding))
+            except (UnicodeError, AttributeError, IOError):
+                # If that still doesn't work, try a fallback approach
+                try:
+                    # Try ASCII with replacement characters
+                    self.original_stream.write(text.encode('ascii', errors='replace').decode('ascii'))
+                except:
+                    # Last resort: just skip writing to the original stream
+                    pass
+
+        # Add to buffer and process if we have complete lines
+        self.line_buffer += text
+        if '\n' in self.line_buffer:
+            self._process_buffer()
+
+    def _process_buffer(self):
+        """Process all complete lines in the buffer."""
+        # Split by newlines, keeping incomplete lines in buffer
+        lines = self.line_buffer.split('\n')
+        self.line_buffer = lines.pop() if lines[-1] != '' else ""
+
+        # Process each complete line
+        for line in lines:
+            # Determine if we need a new timestamp group
+            current_time = time.time()
+            is_new_group = (current_time - self.last_timestamp) >= self.timestamp_interval
+
+            # Update timestamp if starting a new group
+            if is_new_group:
+                self.last_timestamp = current_time
+
+            # Send to text browser via signal
+            self.text_signal.emit(line, self.stream_name, is_new_group)
+
+    def flush(self):
+        """Process any remaining text in the buffer and flush the stream."""
+        if self.line_buffer:
+            # Check if we need a new timestamp
+            current_time = time.time()
+            is_new_group = (current_time - self.last_timestamp) >= self.timestamp_interval
+
+            if is_new_group:
+                self.last_timestamp = current_time
+
+            # Process the remaining text
+            self.text_signal.emit(self.line_buffer, self.stream_name, is_new_group)
+            self.line_buffer = ""
+
+        # Safe flush
+        try:
+            self.original_stream.flush()
+        except:
+            pass
+
+    def update_text_browser(self, text, stream_type, is_new_group):
+        """Update the text browser with formatted text."""
+        # Set text colors based on stream type
+        if stream_type == "stderr":
+            color = QtGui.QColor(207, 0, 0)  # Red for errors
+            font = self.text_browser.font()
+            font.setBold(True)
+        else:
+            color = QtGui.QColor(0, 0, 0)  # Black for standard output
+            font = self.text_browser.font()
+            font.setBold(False)
+
+        # Get cursor for editing
+        cursor = self.text_browser.textCursor()
+        cursor.movePosition(QtGui.QTextCursor.End)
+
+        # Insert timestamp if this is a new group
+        if is_new_group:
+            # Add a little spacing between groups
+            cursor.insertBlock()
+
+            # Insert timestamp with gray color
+            timestamp_format = QtGui.QTextCharFormat()
+            timestamp_format.setForeground(QtGui.QColor(100, 100, 100))
+            timestamp_format.setFontWeight(QtGui.QFont.Bold)
+
+            timestamp = datetime.datetime.now().strftime('[%H:%M:%S]')
+            cursor.insertText(timestamp, timestamp_format)
+            cursor.insertBlock()
+
+        # Insert the actual text with appropriate color
+        text_format = QtGui.QTextCharFormat()
+        text_format.setForeground(color)
+        text_format.setFont(font)
+
+        # Preserve indentation
+        if text.startswith(' '):
+            leading_spaces = len(text) - len(text.lstrip(' '))
+            indent = ' ' * leading_spaces
+            text = text[leading_spaces:]
+            cursor.insertText(indent, text_format)
+
+        cursor.insertText(text, text_format)
+        cursor.insertBlock()  # Add a newline
+
+        # Update the cursor in the text browser
+        self.text_browser.setTextCursor(cursor)
+
+        # Ensure visible
+        self.text_browser.ensureCursorVisible()
+
+
+def setup_console_redirection(text_browser, timestamp_interval=2.0):
+    """
+    Sets up redirection of stdout and stderr to the specified text browser with time-grouped timestamps.
+
+    Args:
+        text_browser: The QTextBrowser widget to display console output
+        timestamp_interval: Minimum seconds between timestamps (default: 2.0)
+
+    Returns:
+        Tuple of (original_stdout, original_stderr) for restoring later
+    """
+    # Configure text browser for best display
+    text_browser.setReadOnly(True)
+    text_browser.setLineWrapMode(QtWidgets.QTextEdit.NoWrap)  # Allow horizontal scrolling
+
+    # Set a monospace font for code-like appearance
+    font = QtGui.QFont("Consolas, Monaco, 'Courier New', monospace", 9)
+    text_browser.setFont(font)
+
+    # Save original streams
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+
+    # Create redirectors
+    stdout_redirector = ConsoleRedirector(
+        text_browser,
+        original_stdout,
+        "stdout",
+        timestamp_interval
+    )
+
+    stderr_redirector = ConsoleRedirector(
+        text_browser,
+        original_stderr,
+        "stderr",
+        timestamp_interval
+    )
+
+    # Replace standard streams
+    sys.stdout = stdout_redirector
+    sys.stderr = stderr_redirector
+
+    return original_stdout, original_stderr
+
+
+def restore_console(original_stdout, original_stderr):
+    """Restores the original console streams."""
+    # Flush any remaining content
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except:
+        pass
+
+    # Restore original streams
+    sys.stdout = original_stdout
+    sys.stderr = original_stderr
 class LateralNameDialog(QDialog):
     """
     A dialog to prompt the user for a valid 4-digit lateral name.
@@ -890,10 +1091,9 @@ def setup_db() -> sqlite3.Connection:
     # apd_data_dir = os.path.join(path_used_db, 'Board_DB_Plss_Sections.db')
     #
     # return sqlite3.connect(apd_data_dir)
-    # print('location of source file', os.getcwd())
-    # print('location of db', get_plss_sections_path())
-    print('db connect', get_plss_sections_path())
+
     return sqlite3.connect(get_plss_sections_path())
+
 
 
 class ETools(QMainWindow):
@@ -1006,9 +1206,15 @@ class ETools(QMainWindow):
         # self.ui.data_return_box.anchorClicked.connect(QDesktopServices.openUrl)
         self.ui.load_as_drilled_survey_box.clicked.connect(lambda: self.press_new_survey_button('drilled'))
         self.ui.load_planned_survey_box.clicked.connect(lambda: self.press_new_survey_button('planned'))
+        self.original_streams = setup_console_redirection(
+            self.ui.debug_return_box,
+            timestamp_interval=2.0  # Only show timestamps every 2 seconds
+        )
+        # self.original_streams = setup_console_redirection(self.ui.debug_return_box)
+
         #4301353727
         #4301354659
-        self.ui.well_api_val.setText('4304756419')
+        # self.ui.well_api_val.setText('4301354659')
         # self.connect_to_db()
         #
         # self.run_api_when_entered()
@@ -1183,8 +1389,12 @@ class ETools(QMainWindow):
             Sets self.apd_num and self.well_name instance attributes.
         """
         query = f"""SELECT APDNo, Well_Nm FROM [dbo].[tblAPD] WHERE API_WellNo = '{self.api_val}{self.lateral}'"""
-        self.apd_num = self.db.query_to_dataframe(query)['APDNo'].unique()[0]
-        self.well_name = self.db.query_to_dataframe(query)['Well_Nm'].unique()[0]
+        try:
+            self.apd_num = self.db.query_to_dataframe(query)['APDNo'].unique()[0]
+            self.well_name = self.db.query_to_dataframe(query)['Well_Nm'].unique()[0]
+        except AttributeError:
+            self.apd_num = None
+            self.well_name = None
 
     def sql_query_survey(self, db_process: DatabaseManager, api: str, lateral: str) -> tuple:
         """Query directional survey data from the database.
@@ -1312,12 +1522,14 @@ class ETools(QMainWindow):
         - Setting up UI interactions for survey manipulation
         """
         print('pressed!')
-
         # Attempt to load survey from database
-        try:
+        if survey_dx_imported is None:
             survey_dx, well_elevation, north_ref = self.sql_query_survey(self.db, self.api_val, self.lateral)
-
-        except:
+        else:
+        # try:
+        #     survey_dx, well_elevation, north_ref = self.sql_query_survey(self.db, self.api_val, self.lateral)
+        #
+        # except:
             # Fall back to manual entry if database query fails
             well_elevation = self.ui.dx_survey_elevation.text()
             north_ref = self.ui.dx_survey_north_ref_line.text()
@@ -1326,9 +1538,9 @@ class ETools(QMainWindow):
                 survey_dx = survey_dx_imported
 
 
-            error_traceback = traceback.format_exc()
-            print(f"Error details:\n{error_traceback}")
-            pass
+            # error_traceback = traceback.format_exc()
+            # print(f"Error details:\n{error_traceback}")
+            # pass
         if not well_elevation or not north_ref:
             dialog = ManualDataInputDialog(
                 current_elevation=well_elevation,
@@ -1390,9 +1602,19 @@ class ETools(QMainWindow):
         self.drawer.draw_3d_process(df=self.well.cl_dx_dict)
 
         # Initialize wellbore clearance report process
+        # well_data_parameters = {'APINumber': [self.api_val], 'LateralNumber':[self.lateral], 'WellNameNumber': [self.well.well_name], "OperatorName": [None]}
+        # self.final_data = {
+        #     'SundryNo': [self.sundry_no_edit.text()],
+        #     'OperatorName': [self.operator_name_edit.text()],
+        #     'WellNameNumber': [self.well_name_edit.text()],
+        #     'APINumber': [self.api_number_edit.text()],
+        #     'ConstructKey': [self.lateral_name_edit.text()],
+        #     'SubmitDate': [pd.to_datetime(self.submit_date_edit.date().toString("yyyy-MM-dd"))]
+        # }
+        known_parameters = pd.DataFrame(data = {'SubmitDate': None, 'SundryNo': None, 'APINumber': [self.api_val], 'LateralNumber':[self.lateral], 'WellNameNumber': [self.well.well_name], "OperatorName": [None]})
+        print('name', known_parameters)
         self.wcr_process = WCR_Main(df=self.well.cl_dx_dict, ui=self.ui, db=self.db, loc_df=self.well.loc_df,
-                                    spec_surveys=self.well.spec_surveys_dict, north_ref=north_ref)
-        # print(self.well.loc_df)
+                                    spec_surveys=self.well.spec_surveys_dict, north_ref=north_ref, known_parameters = known_parameters)
         self.wcr_process.process_wcr()
 
         # Connect visualization control buttons

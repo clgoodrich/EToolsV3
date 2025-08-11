@@ -13,12 +13,16 @@ from typing import Dict, List, Tuple, Optional, Any, Union
 import collections.abc
 from datetime import date, datetime
 from file_helper import get_template_tracking_excel_path
+
 # Handle deprecated collections aliases for compatibility
 collections.Iterable = collections.abc.Iterable
 collections.Mapping = collections.abc.Mapping
 collections.MutableSet = collections.abc.MutableSet
 collections.MutableMapping = collections.abc.MutableMapping
-
+from PyQt5.QtWidgets import (
+    QApplication, QDialog, QVBoxLayout, QFormLayout, QLineEdit,
+    QDialogButtonBox, QLabel, QMessageBox
+)
 # Third-party imports
 import numpy as np
 import pandas as pd
@@ -39,14 +43,16 @@ from PyQt5.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QFormLayout, QLineEdit,
     QDialogButtonBox, QLabel, QMessageBox, QDateEdit
 )
-from PyQt5.QtGui import QDoubleValidator
-from PyQt5.QtCore import QDate
+from PyQt5.QtGui import QDoubleValidator, QRegExpValidator
+from PyQt5.QtCore import QDate, QRegExp
+
 
 class PerforationDataDialog(QDialog):
     """
     A simple dialog to input Top, Bottom, and Perforation Date.
     The output is returned as a single-row pandas DataFrame.
     """
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Perforation Data Entry")
@@ -80,7 +86,7 @@ class PerforationDataDialog(QDialog):
         self.bottom_edit.setValidator(QDoubleValidator())
         self.date_edit.setCalendarPopup(True)
         self.date_edit.setDisplayFormat("MM/dd/yyyy")
-        self.date_edit.setDate(QDate.currentDate()) # Default to today's date
+        self.date_edit.setDate(QDate.currentDate())  # Default to today's date
 
         # Add rows to the form
         form_layout.addRow("Top:", self.top_edit)
@@ -113,9 +119,8 @@ class PerforationDataDialog(QDialog):
                 QMessageBox.warning(self, "Validation Error", "'Top' must be less than 'Bottom'.")
                 return
         except ValueError:
-             QMessageBox.warning(self, "Validation Error", "Top and Bottom must be valid numbers.")
-             return
-
+            QMessageBox.warning(self, "Validation Error", "Top and Bottom must be valid numbers.")
+            return
 
         # All validations passed, store the data
         self.final_data = {
@@ -131,7 +136,8 @@ class PerforationDataDialog(QDialog):
         """
         if self.final_data:
             return pd.DataFrame(self.final_data)
-        return pd.DataFrame() # Return an empty DataFrame if dialog was cancelled
+        return pd.DataFrame()  # Return an empty DataFrame if dialog was cancelled
+
 
 def get_template_tracking_excel_path():
     """
@@ -154,6 +160,7 @@ def get_template_tracking_excel_path():
     wb.save(file_path)
     return file_path
 
+
 def get_template_tracking_excel_path():
     """
     Creates a dummy Excel file for the demonstration and returns its path.
@@ -173,11 +180,105 @@ def get_template_tracking_excel_path():
     wb.save(file_path)
     return file_path
 
+class ManualWCRInfoDialog(QDialog):
+    """
+    A dialog to manually collect WCR info when a database query fails.
+    This version correctly handles being pre-populated from a pandas DataFrame.
+    """
+    def __init__(self, existing_values=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Manual WCR Data Entry Required")
+        self.setModal(True)
+        self.setFixedSize(400, 250)
+        self.collected_data = None
+        self._setup_ui()
+        self._setup_validators()
+
+        # --- FIX IS HERE ---
+        # Check if the DataFrame is not None AND not empty
+        if existing_values is not None and not existing_values.empty:
+            self.existing_values = existing_values
+            self._populate_fields(existing_values)
+
+    def _setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        info_label = QLabel(
+            "Could not retrieve all data. Please provide the required information:"
+        )
+        info_label.setStyleSheet("font-weight: bold; margin-bottom: 10px;")
+        main_layout.addWidget(info_label)
+        form_layout = QFormLayout()
+        self.well_name_edit = QLineEdit()
+        self.api_number_edit = QLineEdit()
+        self.lateral_number_edit = QLineEdit()
+        self.operator_name_edit = QLineEdit()
+        form_layout.addRow("Well Name/Number:", self.well_name_edit)
+        form_layout.addRow("API Number (10 digits):", self.api_number_edit)
+        form_layout.addRow("Lateral Number (4 digits):", self.lateral_number_edit)
+        form_layout.addRow("Operator Name:", self.operator_name_edit)
+        main_layout.addLayout(form_layout)
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self._validate_and_accept)
+        button_box.rejected.connect(self.reject)
+        main_layout.addWidget(button_box)
+
+    def _setup_validators(self):
+        self.api_number_edit.setMaxLength(10)
+        self.api_number_edit.setValidator(QRegExpValidator(QRegExp(r"\d{10}")))
+        self.lateral_number_edit.setMaxLength(4)
+        self.lateral_number_edit.setValidator(QRegExpValidator(QRegExp(r"\d{4}")))
+
+    def _populate_fields(self, df):
+        """
+        --- FIX IS HERE ---
+        Autofills line edits with data from the first row of the DataFrame.
+        """
+        # Get the first row as a Series
+        first_row = df.iloc[0]
+
+        # Check for each value, handle missing columns or NaN/None values
+        if "WellNameNumber" in first_row and pd.notna(first_row["WellNameNumber"]):
+            self.well_name_edit.setText(str(first_row["WellNameNumber"]))
+        if "APINumber" in first_row and pd.notna(first_row["APINumber"]):
+            self.api_number_edit.setText(str(first_row["APINumber"]))
+        if "LateralNumber" in first_row and pd.notna(first_row["LateralNumber"]):
+            self.lateral_number_edit.setText(str(first_row["LateralNumber"]))
+        if "OperatorName" in first_row and pd.notna(first_row["OperatorName"]):
+            self.operator_name_edit.setText(str(first_row["OperatorName"]))
+
+    def _validate_and_accept(self):
+        api = self.api_number_edit.text()
+        lateral = self.lateral_number_edit.text()
+        if not self.well_name_edit.text() or not api or not lateral or not self.operator_name_edit.text():
+            QMessageBox.warning(self, "Validation Error", "All fields are required.")
+            return
+        if len(api) != 10 or not api.isdigit():
+            QMessageBox.warning(self, "Validation Error", "API Number must be exactly 10 digits.")
+            return
+        if len(lateral) != 4 or not lateral.isdigit():
+            QMessageBox.warning(self, "Validation Error", "Lateral Number must be exactly 4 digits.")
+            return
+
+        self.collected_data = {
+            "WellNameNumber": [self.well_name_edit.text()],
+            "APINumber": [api],
+            "LateralNumber": [lateral],
+            "OperatorName": [self.operator_name_edit.text()],
+            "SundryNo":[self.existing_values['SundryNo']],
+            "SubmitDate": [self.existing_values['SubmitDate']]
+        }
+        self.accept()
+
+    def get_values(self):
+        return pd.DataFrame(self.collected_data)
+
+
 class WCRInfoDialog(QDialog):
     """
     Dialog to manually input WCR information, with an optional autofill for testing.
     """
-    def __init__(self, parent=None, testing_enabled=False):
+
+    def __init__(self, parent=None,existing_values=None,  testing_enabled=False):
         super().__init__(parent)
         self.setWindowTitle("Manual WCR Data Entry")
         self.setModal(True)
@@ -193,8 +294,13 @@ class WCRInfoDialog(QDialog):
             'ConstructKey': '0000',
             'SubmitDate': '2025-05-26'
         }
+
         self.final_data = None
         self._setup_ui()
+
+        if existing_values is not None and not existing_values.empty:
+            self.existing_values = existing_values
+            self._populate_fields(existing_values)
 
     def _setup_ui(self):
         """Initializes the user interface components."""
@@ -234,6 +340,29 @@ class WCRInfoDialog(QDialog):
         button_box.accepted.connect(self._validate_and_accept)
         button_box.rejected.connect(self.reject)
         main_layout.addWidget(button_box)
+
+    def _populate_fields(self, df):
+        """
+        --- FIX IS HERE ---
+        Autofills line edits with data from the first row of the DataFrame.
+        """
+        # Get the first row as a Series
+        first_row = df.iloc[0]
+
+        # Check for each value, handle missing columns or NaN/None values
+        if "WellNameNumber" in first_row and pd.notna(first_row["WellNameNumber"]):
+            self.well_name_edit.setText(str(first_row["WellNameNumber"]))
+        if "APINumber" in first_row and pd.notna(first_row["APINumber"]):
+            self.api_number_edit.setText(str(first_row["APINumber"]))
+        if "LateralNumber" in first_row and pd.notna(first_row["LateralNumber"]):
+            self.lateral_name_edit.setText(str(first_row["LateralNumber"]))
+        if "OperatorName" in first_row and pd.notna(first_row["OperatorName"]):
+            self.operator_name_edit.setText(str(first_row["OperatorName"]))
+        if "LateralNumber" in first_row and pd.notna(first_row["SundryNo"]):
+            self.sundry_no_edit.setText(str(first_row["SundryNo"]))
+        if "OperatorName" in first_row and pd.notna(first_row["SubmitDate"]):
+            self.submit_date_edit.setText(str(first_row["SubmitDate"]))
+
 
     def _autofill_data(self):
         """Populates the form with the sample data."""
@@ -275,6 +404,8 @@ class WCRInfoDialog(QDialog):
         if self.final_data:
             return pd.DataFrame(self.final_data)
         return pd.DataFrame()
+
+
 class WCR_Main:
     """
     Main class for handling Well Completion Report (WCR) generation and processing.
@@ -297,7 +428,8 @@ class WCR_Main:
             db: Any,
             loc_df: pd.DataFrame,
             spec_surveys: Dict[str, Any],
-            north_ref: str
+            north_ref: str,
+            known_parameters: pd.DataFrame
     ) -> None:
         """
         Initialize the WCR_Main class with well data and UI components.
@@ -324,8 +456,11 @@ class WCR_Main:
         # Filter dataframes to only include drilled ('drl') survey data
         filtered_dict = {k: v for k, v in df.items() if "drl" in k}
         self._sundries_df: Optional[pd.DataFrame] = None
-
+        self.known_parameters = known_parameters
         # Store initialization parameters
+        # print(filtered_dict['drl_df_true_dx'].clearance_data)
+        # print(df)
+        # wcr_df = self.df['drl_df_true_dx'].clearance_data
         self.df = filtered_dict
         self.spec_surveys = {k: v for k, v in spec_surveys.items() if "drl" in k}
         self.ui = ui
@@ -433,7 +568,13 @@ class WCR_Main:
         This query joins multiple tables to gather all required regulatory
         information for the WCR header section.
         """
-        query = f"""select wi.*, dsh.OperatorName, dsh.WellNameNumber, dsh.APINumber, LateralName as ConstructKey
+        # query = f"""select wi.*, dsh.OperatorName, dsh.WellNameNumber, dsh.APINumber, LateralName as ConstructKey
+        # from tblAPDWCRWellInfo wi
+        # join [dbo].tblAPD ta on wi.APDNo = ta.APDNo
+        # JOIN DirectionalSurveyHeader dsh ON LEFT(ta.API_WellNo, 10) = dsh.APINumber
+        # where ta.API_WellNo = '{self.api}{self.lateral}' and dsh.LateralName = '{self.lateral}'"""
+
+        query = f"""select wi.WellType,wi.SpudRigDate,wi.RotaryRigDate,wi.CompletedOrAbandonedDate,wi.TDReachedDate, dsh.OperatorName, dsh.WellNameNumber, dsh.APINumber, LateralName as ConstructKey
         from tblAPDWCRWellInfo wi
         join [dbo].tblAPD ta on wi.APDNo = ta.APDNo
         JOIN DirectionalSurveyHeader dsh ON LEFT(ta.API_WellNo, 10) = dsh.APINumber 
@@ -441,8 +582,26 @@ class WCR_Main:
 
         wcr_info = self.db.query_to_dataframe(query)
         wcr_info = wcr_info.drop_duplicates(keep="first")
+
+        list_dates = ['SpudRigDate', 'RotaryRigDate', 'TDReachedDate', 'CompletedOrAbandonedDate']
+        wcr_info[list_dates] = (
+            wcr_info[list_dates]
+            .apply(pd.to_datetime, errors='coerce')
+            .fillna(pd.Timestamp('1900-01-01'))
+        )
+        wcr_info[list_dates] = wcr_info[list_dates].apply(lambda s: s.dt.strftime('%Y-%m-%d'))
+        # wcr_info['CompletedOrAbandonedDate'] = wcr_info['CompletedOrAbandonedDate'].dt.strftime('%Y-%m-%d')
         return wcr_info
 
+    #
+    #
+    #
+    #
+    # wcr_info['WellType'].iloc[0],
+    # wcr_info['SpudRigDate'].iloc[0],
+    # wcr_info['RotaryRigDate'].iloc[0],
+    # wcr_info['TDReachedDate'].iloc[0],
+    # wcr_info['CompletedOrAbandonedDate'].dt.strftime('%Y-%m-%d').iloc[0]
     def get_wcr_casing(self) -> pd.DataFrame:
         """
         Retrieve casing and cementing information for the well.
@@ -496,9 +655,35 @@ class WCR_Main:
         for well completion reports.
         """
         # Retrieve required data from database
-        wcr_info = self.get_wcr_info()
-        wcr_casing = self.get_wcr_casing()
+        try:
+            wcr_info = self.get_wcr_info()
+        except AttributeError:
+            print("Database call failed. Launching manual entry dialog.")
+            # Launch the dialog, passing in the partially complete data
+            dialog = ManualWCRInfoDialog(existing_values=self.known_parameters)
 
+            if dialog.exec_() == QDialog.Accepted:
+                wcr_info = dialog.get_values()
+                print("_______________________")
+                print([self.known_parameters])
+                print(wcr_info)
+                print("_______________________")
+
+                print("\n✅ Manual entry successful. Data collected:")
+                for key, value in wcr_info.items():
+                    print(f"  - {key}: {value}")
+                # --- PROCEED WITH YOUR LOGIC USING wcr_info ---
+            else:
+                print("\n❌ Operation cancelled by user.")
+                return
+                # --- HANDLE CANCELLATION ---
+        try:
+            wcr_casing = self.get_wcr_casing()
+        except AttributeError:
+            wcr_casing = pd.DataFrame(columns = ['Feature', 'Top', 'Bottom', 'Diam', 'Weight', 'Grade', 'Connection Type', 'Cement Top', 'Cement Bottom', 'Cement Type', 'Sacks', 'Yield', 'Cement Weight'])
+            # pass
+        print('wcr_info')
+        print(wcr_info)
         # Check if coordinate table has data
         model = self.ui.display_table_utm_locs.model()
         test = [[model.data(model.index(row, column)) for column in range(model.columnCount())]
@@ -512,6 +697,9 @@ class WCR_Main:
             self.run_excel_process(wcr_info, wcr_casing)
 
     def run_excel_process(self, wcr_info: pd.DataFrame, wcr_casing: pd.DataFrame) -> None:
+        wcr_info = wcr_info.drop(columns=['SundryNo', 'SubmitDate'])
+
+        print('run excel')
         """
         Create and format the WCR Excel file with all required sections.
 
@@ -529,9 +717,9 @@ class WCR_Main:
         """
         # Initialize Excel formatting
         bold_font = Font(bold=True)
-        wcr_info['ModifyDate'] = pd.to_datetime(wcr_info['ModifyDate'],
-                                                format='%m/%d/%Y',
-                                                errors='coerce')
+        # wcr_info['ModifyDate'] = pd.to_datetime(wcr_info['ModifyDate'],
+        #                                         format='%m/%d/%Y',
+        #                                         errors='coerce')
 
         # Define header labels for well information section
         labels = ['WellName', 'API', 'Operator', 'ConstructKey' 'WellType',
@@ -550,7 +738,7 @@ class WCR_Main:
         used_wcr = self.wcr_result_df[survey_scale]
 
         # Excel cell references
-        label_cells = ['1', '2', '3', '4', '5', '6', '7', '8']
+
         dx_data_header_cells = 'ABCDEFGHIJKLMNOPQRSTUV'
         max_row = 0
 
@@ -563,39 +751,52 @@ class WCR_Main:
         sheet.column_dimensions['B'].width = 15
 
         # Process date fields
-        list_dates = ['SpudRigDate', 'RotaryRigDate', 'TDReachedDate', 'CompletedOrAbandonedDate']
-        wcr_info[list_dates] = (
-            wcr_info[list_dates]
-            .apply(pd.to_datetime, errors='coerce')
-            .fillna(pd.Timestamp('1900-01-01'))
-        )
+
 
         # Extract spud date for special handling
-        first_spud: pd.Timestamp = wcr_info['SpudRigDate'].iloc[0]
-        spud_str = first_spud.strftime('%Y-%m-%d')
 
         # Convert dates to string format
-        wcr_info[list_dates] = wcr_info[list_dates].apply(lambda s: s.dt.strftime('%Y-%m-%d'))
+
+
         # Prepare well information values
-        wcr_info['CompletedOrAbandonedDate'] = pd.to_datetime(wcr_info['CompletedOrAbandonedDate'], errors='coerce')
-        formatted_date = wcr_info['CompletedOrAbandonedDate'].dt.strftime('%Y-%m-%d').iloc[0]
+        # wcr_info['CompletedOrAbandonedDate'] = pd.to_datetime(wcr_info['CompletedOrAbandonedDate'], errors='coerce')
+        # wcr_info['CompletedOrAbandonedDate'].dt.strftime('%Y-%m-%d').iloc[0]
+        # info_vals = [
+        #     wcr_info['WellNameNumber'].iloc[0],
+        #     wcr_info['APINumber'].iloc[0],
+        #     wcr_info['OperatorName'].iloc[0],
+        #     wcr_info['ConstructKey'].iloc[0],
+        #     wcr_info['WellType'].iloc[0],
+        #     wcr_info['SpudRigDate'].iloc[0],
+        #     wcr_info['RotaryRigDate'].iloc[0],
+        #     wcr_info['TDReachedDate'].iloc[0],
+        #     wcr_info['CompletedOrAbandonedDate'].dt.strftime('%Y-%m-%d').iloc[0]
+        # ]
 
-        info_vals = [
-            wcr_info['WellNameNumber'].iloc[0],
-            wcr_info['APINumber'].iloc[0],
-            wcr_info['OperatorName'].iloc[0],
-            wcr_info['ConstructKey'].iloc[0],
-            wcr_info['WellType'].iloc[0],
-            wcr_info['SpudRigDate'].iloc[0],
-            wcr_info['RotaryRigDate'].iloc[0],
-            wcr_info['TDReachedDate'].iloc[0],
-            wcr_info['CompletedOrAbandonedDate'].dt.strftime('%Y-%m-%d').iloc[0]
-        ]
+        print(wcr_info)
+        dict_info = wcr_info.iloc[0].to_dict()
+        # print(my_dict)
+        # dict_info = {'WellName': wcr_info['WellNameNumber'].iloc[0],
+        #              'API': wcr_info['APINumber'].iloc[0],
+        #              'Operator': wcr_info['OperatorName'].iloc[0],
+        #              'ConstructKey': wcr_info['ConstructKey'].iloc[0],
+        #              'WellType': wcr_info['WellType'].iloc[0],
+        #              'SpudDate': wcr_info['SpudRigDate'].iloc[0],
+        #              'RotaryRigDate': wcr_info['RotaryRigDate'].iloc[0],
+        #              'TDReachedDate': wcr_info['TDReachedDate'].iloc[0],
+        #              'CompletedOrAbandonedDate': wcr_info['CompletedOrAbandonedDate'].iloc[0]}
 
+        # 'CompletedOrAbandonedDate': wcr_info['CompletedOrAbandonedDate'].dt.strftime('%Y-%m-%d').iloc[0]}
+        # print(dict_info)
+        # labels = ['WellName', 'API', 'Operator', 'ConstructKey' 'WellType',
+        #           'SpudDate', 'RotaryRigDate', 'TDReachedDate', 'CompletedOrAbandonedDate']
+        # label_cells = ['1', '2', '3', '4', '5', '6', '7', '8']
         # Write well information to Excel
-        for i in range(len(labels)):
-            sheet["A" + label_cells[i]] = labels[i]
-            sheet["B" + label_cells[i]] = info_vals[i]
+        for i, (k,v) in enumerate(dict_info.items()):
+            cell_id = i + 1
+            sheet["A" + str(cell_id)] = k
+            sheet["B" + str(cell_id)] = v
+
 
         # Write survey column headers
         for i in range(len(survey_scale)):
@@ -685,7 +886,7 @@ class WCR_Main:
                 raise ValueError("Query returned no data.")
         except (AttributeError, ValueError) as e:
             print(f"Database operation failed: {e}. Opening manual entry dialog.")
-            dialog = WCRInfoDialog(parent=None, testing_enabled=True)  # In a real app, you'd pass `self` as the parent
+            dialog = WCRInfoDialog(parent=None, testing_enabled=True, existing_values=self.known_parameters)  # In a real app, you'd pass `self` as the parent
             if dialog.exec_() == QDialog.Accepted:
                 data = dialog.get_values()
                 if data.empty:
@@ -695,8 +896,6 @@ class WCR_Main:
                 QMessageBox.information(None, "Cancelled", "Manual data entry cancelled. Process aborted.")
                 return
         # data = self.get_wcr_person_db_update()
-
-
 
         file = get_template_tracking_excel_path()
         wb = openpyxl.load_workbook(file)
@@ -1123,6 +1322,7 @@ class WCR_Main:
                 print("\n✅ Data entry successful. DataFrame created:\n")
             else:
                 print("\n❌ Operation Cancelled: Data entry was cancelled.")
+
         """
         Retrieve perforation interval data from the database.
 
