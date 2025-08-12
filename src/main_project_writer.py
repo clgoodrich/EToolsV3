@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import QHeaderView, QAbstractItemView
 
 
 def _isolate_footage_depths(survey: pd.DataFrame, spec_data: pd.DataFrame) -> pd.DataFrame:
+
     """Extract specific depth points and their associated clearance footage data.
 
     Identifies key trajectory points (KOP, Landing Point, BHL) from survey data and

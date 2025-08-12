@@ -16,6 +16,8 @@ Key Features:
 import traceback
 from functools import partial
 import sqlite3
+from typing import Tuple, Any
+
 import utm
 from pyproj import Geod, Proj, CRS
 import os
@@ -60,6 +62,8 @@ import io
 from PyQt5 import QtCore, QtWidgets, QtGui
 from file_helper import get_plss_sections_path
 import datetime
+
+
 # sys.path.append(os.path.dirname(__file__))
 
 def _get_data_from_qtableview(table_view: QTableView) -> list[list[str]] | None:
@@ -298,10 +302,13 @@ def restore_console(original_stdout, original_stderr):
     # Restore original streams
     sys.stdout = original_stdout
     sys.stderr = original_stderr
+
+
 class LateralNameDialog(QDialog):
     """
     A dialog to prompt the user for a valid 4-digit lateral name.
     """
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Lateral Name Required")
@@ -328,7 +335,7 @@ class LateralNameDialog(QDialog):
         self.name_edit.setPlaceholderText("e.g., 0000")
         # Set max length for user convenience and input mask for digits
         self.name_edit.setMaxLength(4)
-        self.name_edit.setInputMask("9999") # Restricts input to digits
+        self.name_edit.setInputMask("9999")  # Restricts input to digits
         self.name_edit.setText('0000')
         form_layout.addRow("Lateral Name:", self.name_edit)
         main_layout.addLayout(form_layout)
@@ -357,6 +364,8 @@ class LateralNameDialog(QDialog):
     def get_value(self):
         """Returns the validated 4-digit lateral name."""
         return self.lateral_name
+
+
 class ManualDataInputDialog(QDialog):
     """
     Dialog for manual input of well elevation and north reference when database query fails
@@ -1095,7 +1104,6 @@ def setup_db() -> sqlite3.Connection:
     return sqlite3.connect(get_plss_sections_path())
 
 
-
 class ETools(QMainWindow):
     """Main application window for oil and gas engineering tools.
 
@@ -1192,9 +1200,9 @@ class ETools(QMainWindow):
         # self.ui.dx_survey_prod_line.returnPressed.connect()
         # self.ui.dx_survey_pro_azi_line.returnPressed.connect()
 
-
         # self.ui.add_dx_data_pushbutton.pressed.connect(self.recalculate_data_with_new_md_input)
-        self.ui.add_dx_data_pushbutton.pressed.connect(lambda: self.recalculate_data_with_new_md_input(float(self.ui.new_md_survey_box.text())))
+        self.ui.add_dx_data_pushbutton.pressed.connect(
+            lambda: self.recalculate_data_with_new_md_input(float(self.ui.new_md_survey_box.text())))
 
         # self.ui.runDXSurveyPushbutton.pressed.connect(self.process_when_dx_button_pushed)
         self.ui.runDXSurveyPushbutton.pressed.connect(lambda: self.process_when_dx_button_pushed())
@@ -1480,7 +1488,7 @@ class ETools(QMainWindow):
         lateral_name = self.ui.lateral_name_line_edit.text()
 
         if lateral_name == '':
-            dialog = LateralNameDialog(parent=self) # 'self' would be your main window
+            dialog = LateralNameDialog(parent=self)  # 'self' would be your main window
 
             if dialog.exec_() == QDialog.Accepted:
                 lateral_name = dialog.get_value()
@@ -1490,7 +1498,7 @@ class ETools(QMainWindow):
                 # Handle the case where the user cancels the dialog
                 QMessageBox.critical(self, "Operation Aborted",
                                      "A valid lateral name is required to proceed. The process cannot continue.")
-                return # Or raise an exception to stop execution
+                return  # Or raise an exception to stop execution
         # if lateral_name == '':
         #     lateral_name = '0000'
         #     self.ui.lateral_name_line_edit.setText('0000')
@@ -1526,17 +1534,16 @@ class ETools(QMainWindow):
         if survey_dx_imported is None:
             survey_dx, well_elevation, north_ref = self.sql_query_survey(self.db, self.api_val, self.lateral)
         else:
-        # try:
-        #     survey_dx, well_elevation, north_ref = self.sql_query_survey(self.db, self.api_val, self.lateral)
-        #
-        # except:
+            # try:
+            #     survey_dx, well_elevation, north_ref = self.sql_query_survey(self.db, self.api_val, self.lateral)
+            #
+            # except:
             # Fall back to manual entry if database query fails
             well_elevation = self.ui.dx_survey_elevation.text()
             north_ref = self.ui.dx_survey_north_ref_line.text()
             survey_dx = _get_data_from_qtableview(self.ui.dx_survey_table_mod)
             if survey_dx is None:
                 survey_dx = survey_dx_imported
-
 
             # error_traceback = traceback.format_exc()
             # print(f"Error details:\n{error_traceback}")
@@ -1611,10 +1618,13 @@ class ETools(QMainWindow):
         #     'ConstructKey': [self.lateral_name_edit.text()],
         #     'SubmitDate': [pd.to_datetime(self.submit_date_edit.date().toString("yyyy-MM-dd"))]
         # }
-        known_parameters = pd.DataFrame(data = {'SubmitDate': None, 'SundryNo': None, 'APINumber': [self.api_val], 'LateralNumber':[self.lateral], 'WellNameNumber': [self.well.well_name], "OperatorName": [None]})
+        known_parameters = pd.DataFrame(
+            data={'SubmitDate': None, 'SundryNo': None, 'APINumber': [self.api_val], 'LateralNumber': [self.lateral],
+                  'WellNameNumber': [self.well.well_name], "OperatorName": [None]})
         print('name', known_parameters)
         self.wcr_process = WCR_Main(df=self.well.cl_dx_dict, ui=self.ui, db=self.db, loc_df=self.well.loc_df,
-                                    spec_surveys=self.well.spec_surveys_dict, north_ref=north_ref, known_parameters = known_parameters)
+                                    spec_surveys=self.well.spec_surveys_dict, north_ref=north_ref,
+                                    known_parameters=known_parameters)
         self.wcr_process.process_wcr()
 
         # Connect visualization control buttons
@@ -1973,6 +1983,7 @@ class ETools(QMainWindow):
                 return new_df
             except AttributeError:
                 return df
+
         restrict_lock = False
         try:
             result_boo = loader()
@@ -1991,7 +2002,8 @@ class ETools(QMainWindow):
                 output_new_df = filter_out_same_citing()
                 if self.well is None:
                     restrict_lock = True
-                    self.process_when_dx_button_pushed(survey_dx_imported=df, well_elevation=well_elevation, north_ref=north_ref)
+                    self.process_when_dx_button_pushed(survey_dx_imported=df, well_elevation=well_elevation,
+                                                       north_ref=north_ref)
                 test_combo = copy.copy(self.well.plat_df)
                 # Update well with new survey data
                 self.well.set_survey(output_new_df)
@@ -2395,7 +2407,8 @@ class EToolsWell:
         4. Calculate clearances for all survey/reference combinations
         """
         # Run survey calculations
-        self._run_survey_logic()
+        self.surveys_dict, self.spec_surveys_dict, self.survey_parameters = self._run_survey_logic(self.well_elevation,
+                                                                                                   self.north_ref)
 
         # Get initial plats & locations
         plats, locs = self.retrieve_location_data(self.surveys_dict)
@@ -2418,7 +2431,8 @@ class EToolsWell:
         4. Rebuilds UI and recalculates clearances
         """
         # Recompute surveys
-        self._run_survey_logic()
+        self.surveys_dict, self.spec_surveys_dict, self.survey_parameters = self._run_survey_logic(self.well_elevation,
+                               self.north_ref)
 
         # Find new plats and merge with existing
         new_plats, new_locs = self.retrieve_location_data(self.surveys_dict)
@@ -2450,7 +2464,7 @@ class EToolsWell:
         # Recalculate clearances
         self._run_clearance()
 
-    def _run_survey_logic(self) -> None:
+    def _run_survey_logic(self, well_elevation, north_ref) -> tuple[Any, Any, Any]:
         """Execute survey processing with type enforcement.
 
         This internal method ensures all survey data has correct types
@@ -2465,13 +2479,8 @@ class EToolsWell:
         df['SurfaceLongitude'] = df['SurfaceLongitude'].astype(float)
 
         # Process surveys
-        (self.surveys_dict,
-         self.spec_surveys_dict,
-         self.survey_parameters) = self.retrieve_survey_data(
-            df,
-            self.well_elevation,
-            self.north_ref
-        )
+        surveys_dict, spec_surveys_dict, survey_parameters = self.retrieve_survey_data(df, well_elevation, north_ref)
+        return surveys_dict, spec_surveys_dict, survey_parameters
 
     def _run_clearance(self) -> None:
         """Calculate clearances for all survey/plat combinations.

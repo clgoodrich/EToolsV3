@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout
 import pandas as pd
 import numpy as np
 from shapely.geometry import Point, LineString, Polygon
+from main_project_plat_to_pts import process_survey_data
 from shapely.ops import nearest_points
 import copy
 import math
@@ -74,10 +75,12 @@ def transform_and_correct_for_north_ref(north_ref, azimuth, convergence_angle):
         return true_azimuth
 
 def gather_plat_data(ui, id_val):
-    side_names = ["south_left_2", "south_left_1", "south_right_1", "south_right_2",
-                  "north_left_2", "north_left_1", "north_right_1", "north_right_2",
-                  "west_up_2", "west_up_1", "west_down_1", "west_down_2",
-                  "east_up_2", "east_up_1", "east_down_1", "east_down_2"]
+    side_names = [
+            'west_down_2', 'west_down_1', 'west_up_1', 'west_up_2',
+            'east_up_2', 'east_up_1', 'east_down_1', 'east_down_2',
+            'north_left_2', 'north_left_1', 'north_right_1', 'north_right_2',
+            'south_left_2', 'south_left_1', 'south_right_1', 'south_right_2'
+        ]
     row_cols = ["length", "degrees", "minutes", "seconds", "bearing_str", 'decimal_azimuth']
     records = []
     for side in side_names:
@@ -133,7 +136,86 @@ def convert_conc(sec, ts, ts_dir, rng, rng_dir, baseline):
     baseline = translations.get('baseline', {}).get(baseline, baseline).upper()
 
     return "".join([section, township, ts_dir, rng, rng_dir, baseline])
+
+# def sort_dataframe_by_custom_order(df):
+#     """
+#     Sort DataFrame by a custom order for a specific column using pandas Categorical.
+#
+#     Parameters:
+#     -----------
+#     df : pandas.DataFrame
+#         The DataFrame to sort
+#     column_name : str
+#         The name of the column to sort by
+#     custom_order_list : list
+#         List defining the custom sort order
+#
+#     Returns:
+#     --------
+#     pandas.DataFrame
+#         Sorted DataFrame
+#
+#     Raises:
+#     -------
+#     ValueError
+#         If column values don't match the custom order list
+#     """
+#     # Create a copy to avoid modifying original DataFrame
+#     column_name = 'side'
+#     custom_order_list = [
+#         'west_down_2', 'west_down_1', 'west_up_1', 'west_up_2',
+#         'north_left_2', 'north_left_1', 'north_right_1', 'north_right_2',
+#         'east_up_2', 'east_up_1', 'east_down_1', 'east_down_2',
+#         'south_right_2', 'south_right_1', 'south_left_1', 'south_left_2'
+#     ]
+#     df_sorted = df.copy()
+#
+#     # Check if all values in the column exist in the custom order list
+#     missing_values = set(df_sorted[column_name].unique()) - set(custom_order_list)
+#     if missing_values:
+#         print(f"Warning: These values in '{column_name}' are not in custom_order_list: {missing_values}")
+#         # Add missing values to the end of the custom order
+#         extended_order = custom_order_list + list(missing_values)
+#     else:
+#         extended_order = custom_order_list
+#
+#     # Convert column to Categorical with custom order
+#     df_sorted[column_name] = pd.Categorical(
+#         df_sorted[column_name],
+#         categories=extended_order,
+#         ordered=True
+#     )
+#
+#     # Sort by the categorical column
+#     df_sorted = df_sorted.sort_values(by=column_name, kind='mergesort')
+#
+#     # Reset index to maintain clean indexing
+#     df_sorted = df_sorted.reset_index(drop=True)
+#
+#     return df_sorted
+
+
 def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_df, well_parameter_data,ui, existing_data):
+
+    def sort_by_custom_order_categorical(df_to_be_sorted):
+
+        """
+        Sort DataFrame by custom order using categorical data type.
+        This is the most efficient method for repeated operations.
+        """
+        custom_order = [
+            'west_down_2', 'west_down_1', 'west_up_1', 'west_up_2',
+            'east_up_2', 'east_up_1', 'east_down_1', 'east_down_2',
+            'north_left_2', 'north_left_1', 'north_right_1', 'north_right_2',
+            'south_left_2', 'south_left_1', 'south_right_1', 'south_right_2'
+        ]
+
+        df_to_be_sorted['sort_key'] = pd.Categorical(df_to_be_sorted['side'], categories=custom_order, ordered=True)
+        df_sorted = df_to_be_sorted.sort_values('sort_key').reset_index()
+        df_sorted = df_sorted.drop(columns=['index', 'sort_key'])
+
+        return df_sorted
+
     def gather_existing_concs():
         all_concs = []
         for version in range(1, 9):
@@ -154,20 +236,11 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
             except ValueError:
                 pass
         return all_concs
-        # df['conc'] = df.apply(
-        #     lambda row: convert_conc(row['section'], row['township'], row['township_bearing_str'],
-        #                              row['rng'],
-        #                              row['rng_bearing_str'], row['baseline_str']), axis=1)
-    # df = df.drop(columns=['index'])
+
     print('triangulator')
     north_reference, magnetic_declination, convergence_angle, target_azimuth = well_parameter_data[0], \
         well_parameter_data[1], float(well_parameter_data[2]), float(well_parameter_data[3])
 
-    # result_coords = data_plat_coords[['x', 'y', 'side']].values.tolist()
-    # shl = get_starter_pt(survey_data_df.iloc[0], result_coords)
-    # survey_data_df[['e_offset_delta', 'n_offset_delta']] = (survey_data_df.apply(
-    #     lambda row: get_offset_added_delta(shl[0], shl[1], row['e_offset'], row['n_offset']), axis=1,
-    #     result_type='expand'))
     tsr_data = tsr_data_df.values.tolist()
     new_conc = reTranslateData_2(tsr_data[0][:6])
     data_df_new = df[df['conc'] == new_conc]
@@ -179,14 +252,28 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
 
     if existing_data:
         existing_df = gather_plat_data(ui, 1)
-        data = existing_df.to_numpy().tolist()
-        all_known_concs = gather_existing_concs()
+        data_df = existing_df
+        # all_known_concs = gather_existing_concs()
     else:
-        data = df[df['conc'] == new_conc].to_numpy().tolist()
-    print('data')
-    print(data[0])
-    # data_test = create_relative_section_polygon(data_df_new)
-    data, data_new_dec = dataConverterPlatToUtm(data)
+        data_df = df[df['conc'] == new_conc]
+        # print(data)
+    data = data_df.to_numpy().tolist()
+    data, _ = dataConverterPlatToUtm(data)
+
+    print(1, data)
+
+    _, data = process_survey_data(data_df)
+    print(2, data)
+    # print('points geo', points_geodesic)
+    # print('points geo', points_planar)
+
+    # data1 = create_relative_section_polygon(data_df)
+
+    # print('data', data1)
+    # data, data_new_dec = dataConverterPlatToUtm(data)
+    # print('data', data)
+    # graphed_data = [points_geodesic]
+    # graph_plats(graphed_data)
 
     for index, sublist in enumerate(data):
         if index < 4:  # Indices 0-3
@@ -203,7 +290,7 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
         lambda row: get_offset_added_delta(shl[0], shl[1], row['e_offset'], row['n_offset']), axis=1,
         result_type='expand'))
 
-
+    print('shl', shl)
     # data = data_plat_coords[['x', 'y']].values.tolist()
     survey_data = survey_data_df[['measured_depth', 'inclination', 'azimuth']].values.tolist()
 
@@ -216,6 +303,7 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
     foo = [survey_data[0] + [0] * 11]
     survey_data = survey_data[1:]
     known_conc_data = [new_conc]
+
     new_conc = conc
     dirLst = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
     lst = [[0, 0, 0, 0, 0, 0, 0, 0],
@@ -262,59 +350,64 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
     section_degrees_data = [data]
     min_curv_data = survey_data_df
     prev_section_data = tsr_data[0][:6]
-    
+    print("\n\n")
+    dir_lst = ['west_down_2', 'west_down_1', 'west_up_1', 'west_up_2', 'north_left_2', 'north_left_1', 'north_right_1',
+               'north_right_2', 'east_up_2', 'east_up_1', 'east_down_1', 'east_down_2', 'south_right_2',
+               'south_right_1',
+               'south_left_1', 'south_left_2']
     while True:
-        print('goop')
+        # print("____________________________")
+        # print('concs', known_conc_data)
         data = [i[:2] for i in data]
         corners, sides_generated = ma.cornerGeneratorProcess(data)
-        # corners, sides_generated = _corner_generator_process(data)
-
         sides_generated = [[j[:-1] for j in i] for i in sides_generated]
         segment_lst = [[[i[j], i[j + 1]] for j in range(len(i) - 1)] for i in sides_generated]
-        # findIntersectionBetweenWellAndSection(segment_lst, offset_pts_lst, shl)
-        # intersection, direction, well_index_end, foo, well_path_tester = get_direction_sides(segment_lst, survey_data_df, sides_generated)
         intersection, direction, well_index_end, foo, well_path_tester = findWellPathBoundaryIntersection(segment_lst,
                                                                                                           survey_data,
                                                                                                           well_parameter_data,
                                                                                                           plat_north_ref,
                                                                                                           foo, shl)
+        all_sides = []
+        for i in sides_generated:
+            all_sides.extend(i)
+        # graph_plat_and_well_v2(Polygon(all_sides), well_path_tester)
+        # print(well_path_tester)
 
-        # if well_path_tester.empty or direction == 'Null':
-        #     return min_curv_data, known_conc_data, section_degrees_data, plat_north_refs_lst
         if not well_path_tester or direction == 'Null':
+            # graph_plat_and_well(section_degrees_data, well_path_tester)
+            # graph_plats_and_well(section_degrees_data, well_path_tester)
+            # print(section_degrees_data)
+            # print(direction)/
+            # print('break')
             return min_curv_data, known_conc_data, section_degrees_data, plat_north_refs_lst, shl
-
         index = dirLst.index(direction)
         new_section = lst[section][index]
+        # print('direction', direction, new_section)
+
         township, townshipDir, rng, rngDir, prev_section_data = modifySection(section, new_section, prev_section_data)
         conc_info = [new_section, township, townshipDir, rng, rngDir, tsr_data[0][5]]
         new_conc = reTranslateData_2(conc_info)
-        # ma.grapher4(well_path_tester, section_degrees_data[-1], new_conc)
         if new_conc in known_conc_data:
+            # print('already used conc', new_conc)
             known_index = known_conc_data.index(new_conc)
-            print('index', known_index)
+            data = section_degrees_data[known_index]
 
-            if not existing_data:
-                data = section_degrees_data[known_index]
-            else:
-                existing_df = gather_plat_data(ui, known_index+1)
-                data = existing_df.to_numpy().tolist()
             counter += 1
         else:
-            # old_well_path_tester = well_path_tester.iloc[well_index_end:]
 
             old_well_path_tester = well_path_tester[:well_index_end + 1]
             proxBoo = getBooProx(data, old_well_path_tester, direction)
             known_conc_data.append(new_conc)
             known_index = known_conc_data.index(new_conc)
-            print('index2', known_index)
             if not existing_data:
-                data_new = df[df['conc'] == new_conc].to_numpy().tolist()
+                new_df = df[df['conc'] == new_conc]
             else:
-                existing_df = gather_plat_data(ui, known_index + 1)
-                data_new = existing_df.to_numpy().tolist()
+                new_df = gather_plat_data(ui, known_index + 1)
+
+            new_df = sort_by_custom_order_categorical(new_df)
 
 
+            data_new = new_df.to_numpy().tolist()
             if len(data_new) == 0:
                 data_new = GUIDataAdd.addDataIfAGRCNotFound(conn, new_conc, conc_info)
             data_new = sorted(data_new, key=lambda x: x[-1], reverse=True)
@@ -322,16 +415,16 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
             plat_north_refs_lst.append(plat_north_ref)
             # data_new_deg = convert_to_pts(df[df['conc'] == new_conc])
             # data_new_deg = create_relative_section_polygon(data_new)
-            data_test = create_relative_section_polygon(df[df['conc'] == new_conc])
-
-            data_new_deg, data_new_dec = dataConverterPlatToUtm(data_new)
+            # data_test = create_relative_section_polygon(df[df['conc'] == new_conc])
+            _, data_new_deg = process_survey_data(new_df)
+            # data_new_deg, data_new_dec = dataConverterPlatToUtm(data_new)
 
             rewritten_coords = coordsAdjuster(data_new_deg, data, direction, proxBoo)
             data = rewritten_coords
             section_degrees_data.append(data)
             counter += 1
         section = new_section
-
+    print('break 2')
     return min_curv_data, known_conc_data, section_degrees_data, plat_north_refs_lst, shl
 
 
@@ -414,7 +507,9 @@ def convertToDecimal2(data):
             'rng': {'W': '2', 'E': '1'},
             'township': {'S': '2', 'N': '1'},
             'baseline': {'U': '2', 'S': '1'},
-            'alignment': {'SE': '1', 'NE': '2', 'SW': '3', 'NW': '4'}
+            # 'alignment': {'SE': '1', 'NE': '2', 'SW': '3', 'NW': '4'}
+            'alignment': {'SE': '2', 'NE': '1', 'SW': '4', 'NW': '3'}
+
         }
         if variable in conversions and val in conversions[variable]:
             return conversions[variable][val]
@@ -422,9 +517,7 @@ def convertToDecimal2(data):
             return val
     data_converted = []
     for item in data:
-        print('item', item, len(item))
-
-        if len(item) == 21:
+        if len(item) >= 21:
             item = item[9:15]
         elif len(item) == 14:
             item = item[6:12]
@@ -434,7 +527,6 @@ def convertToDecimal2(data):
         item[4] = float(item[4])
         item[5] = translateDirectionToNumber( 'alignment',item[5])
 
-        print(item)
         side, deg, min, sec, dir_val = map(float, item[1:6])
         dec_val_base = deg + min / 60 + sec / 3600
 
@@ -1404,6 +1496,50 @@ def graph_plat_and_well(poly, well):
     # The '*' unpacks the x and y coordinate lists
     ax.plot(x, y, color='blue', linewidth=3)
     ax.plot(x_coords_1, y_coords_1, color='red')
+    # 5. Set aspect ratio and display the plot
+    ax.set_aspect('equal', 'box')
+    plt.show()
+
+
+def graph_plat_and_well_v2(poly, well):
+    x, y = poly.exterior.xy
+    x_coords_1 = [point[0] for point in well]
+    y_coords_1 = [point[1] for point in well]
+    fig, ax = plt.subplots()
+
+    # 4. Plot the exterior of the polygon
+    # The '*' unpacks the x and y coordinate lists
+    ax.plot(x, y, color='blue', linewidth=3)
+    ax.plot(x_coords_1, y_coords_1, color='red')
+    # 5. Set aspect ratio and display the plot
+    ax.set_aspect('equal', 'box')
+    plt.show()
+def graph_plats_and_well(poly, well):
+
+    x_coords_1 = [point[0] for point in well]
+    y_coords_1 = [point[1] for point in well]
+    fig, ax = plt.subplots()
+    ax.plot(x_coords_1, y_coords_1, color='red')
+
+    # 4. Plot the exterior of the polygon
+    # The '*' unpacks the x and y coordinate lists
+    for i in poly:
+        x = [point[0] for point in i]
+        y = [point[1] for point in i]
+        ax.plot(x, y, color='blue', linewidth=3)
+    # 5. Set aspect ratio and display the plot
+    ax.set_aspect('equal', 'box')
+    plt.show()
+
+def graph_plats(poly):
+    fig, ax = plt.subplots()
+
+    # 4. Plot the exterior of the polygon
+    # The '*' unpacks the x and y coordinate lists
+    for i in poly:
+        x = [point[0] for point in i]
+        y = [point[1] for point in i]
+        ax.plot(x, y, color='blue', linewidth=3)
     # 5. Set aspect ratio and display the plot
     ax.set_aspect('equal', 'box')
     plt.show()

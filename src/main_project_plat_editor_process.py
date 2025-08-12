@@ -28,7 +28,10 @@ from main_project_clearance import ClearanceProcess
 from main_project_well_path_tracer import triangulatorWithKnownData, mainTriangulator
 from main_project_plat_editor_tracer_known import triangulator_with_known
 
-
+from PyQt5.QtWidgets import QHeaderView, QAbstractItemView
+from typing import Dict, Any, Optional
+from kop_predictor import predict_kickoff_point, analyze_survey, determine_well_type
+from main_project_writer import _isolate_footage_depths
 def decimal_converter(side, deg, minutes, sec, dir_val):
     """
     Simplified version with clearer logic (mathematically equivalent to above).
@@ -432,6 +435,9 @@ class SetupRelativeCoordsPage:
         tables = cursor.fetchall()
 
         self.ui = ui
+        self.plat_footages_table = QStandardItemModel()
+        self.ui.dx_survey_location_tableview_2.setModel(self.plat_footages_table)
+        self.ui.dx_survey_location_tableview_2.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.currently_used_plat_data = pd.DataFrame()
         self.side_names = [
             "south_left_2", "south_left_1", "south_right_1", "south_right_2",
@@ -452,7 +458,7 @@ class SetupRelativeCoordsPage:
         self.combo_box_df = pd.DataFrame(data, columns=headers)
         self.ui.tracer_rel_push_button.pressed.connect(self.rel_plat_data_filler)
         self.setup_combo_boxes(all_rel_surveys)
-        self.setup_plat_data_boxes()
+        # self.setup_plat_data_boxes()
         self.setup_section_combo_box()
 
     def set_well_path_dict(self, well_path_dict):
@@ -475,7 +481,6 @@ class SetupRelativeCoordsPage:
         #             # Get the QTableView widget by its name
         #             table_widget_name = f"{side}_table_rel_{version}"
         #             tbl: QTableView = getattr(self.ui, table_widget_name)
-        #             print(table_widget_name)
         #             # Check if the table and its model exist
         #             if tbl and tbl.model():
         #                 # Connect the model's dataChanged signal to the handler.
@@ -499,6 +504,35 @@ class SetupRelativeCoordsPage:
         #     # cb.activated[int].connect(lambda idx, ver=i + 1, combo=cb: self.plat_combo_box_fill(ver, idx, combo))
         #     # cb.blockSignals(False)
 
+    def process_kop_lp(self, results):
+        if results['kop']:
+            kop = results['kop']
+            kop_df = pd.DataFrame([kop])
+            kop_df['Point'] = 'KOP'
+            # kop_df['type'] = f"{sot}{label}"
+
+            # Landing point analysis for all directional/horizontal wells
+            if results['landing_point']:
+                lp = results['landing_point']
+                lp_df = pd.DataFrame([lp])
+                lp_df['Point'] = 'LP'
+                # lp_df['type'] = f"{sot}{label}"
+                return kop_df, lp_df
+            else:
+                if results['well_type'] == 'directional':
+                    print("  (Well may still be building or have irregular profile)")
+                return kop_df, pd.DataFrame()
+
+    def process_for_spec_points(self, min_curv_data):
+        results = analyze_survey(min_curv_data)
+        kop_true,lp_true = self.process_kop_lp(results)
+        kop_sr = min_curv_data[min_curv_data['measured_depth'] == kop_true['measured_depth'].iloc[0]]
+        lp_sr = min_curv_data[min_curv_data['measured_depth'] == lp_true['measured_depth'].iloc[0]]
+        bhl_sr = min_curv_data.tail(1)
+        spec_vals = pd.concat([kop_sr, lp_sr, bhl_sr])
+        spec_vals = spec_vals[['FNL', 'FSL', 'FEL', 'FWL']]
+        spec_vals['lbl'] = ['kop', 'lp', 'bhl']
+        return spec_vals
     def connect_and_process_user_data(self, top_left_index, side, version):
         def get_plat_coords():
             query = "select * from SectionPlatDataAGRC"
@@ -523,11 +557,13 @@ class SetupRelativeCoordsPage:
             all_conc_codes.append(conc)
         plat_df = self.data_frame_plat_builder(grouped)
         plat_df_conc = plat_df['conc'].unique()
-        print("fnjsfdjkbhsfdkjbn")
         min_curv_data, gdf_data, known_conc_data, all_pts_data = self.run_plat_well_tracer(
             current_plat_coords=plat_df[plat_df['conc'] == plat_df_conc[0]],
             current_plat_conc=plat_df_conc[0], existing_data = True)
-        self.writer_plat_process(gdf_data, all_pts_data)
+        collected_data = self.collect_relative_data()
+        spec_vals = self.process_for_spec_points(min_curv_data)
+
+        self.writer_plat_process(gdf_data, collected_data, spec_vals)
 
         # all_plats_df = {}
         # self.currently_used_plat_data = self.collect_relative_data()
@@ -916,16 +952,72 @@ class SetupRelativeCoordsPage:
         min_curv_data, gdf_data, known_conc_data, all_pts_data = self.run_plat_well_tracer(
             current_plat_coords=plat_df[plat_df['conc'] == plat_df_conc[0]],
             current_plat_conc=plat_df_conc[0])
-        self.writer_plat_process(gdf_data, all_pts_data)
+        spec_vals = self.process_for_spec_points(min_curv_data)
+
+        self.writer_plat_process(gdf_data, all_pts_data, spec_vals)
         print("OUTPUT")
 
-    def writer_plat_process(self, df, all_pts_df):
+    def write_clearance_footages(self, footage_lst: pd.DataFrame) -> None:
+        """Display clearance footage measurements in dedicated table view.
+
+        Presents clearance distances (FNL, FSL, FEL, FWL) for critical depth points
+        in a formatted table for regulatory compliance and engineering analysis.
+        Provides clear visualization of well positioning relative to plat boundaries
+        with standardized footage precision for professional reporting.
+
+        Args:
+            footage_lst (pd.DataFrame): Footage data with clearance measurements for key depths
+            ui (Any): PyQt5 user interface object containing footages table view
+        """
+        # Remove non-footage columns for focused display
+        # footage_lst = footage_lst.drop(columns=['measured_depth', 'azimuth'])
+
+        # Setup table for batch data loading
+        self.ui.dx_survey_location_tableview_2.setUpdatesEnabled(False)
+        self.plat_footages_table.setRowCount(0)
+        self.ui.dx_survey_location_tableview_2.setModel(self.plat_footages_table)
+
+        # Convert DataFrame to list format for table population
+        data = footage_lst.values.tolist()
+        self.plat_footages_table.setRowCount(len(data))
+
+        # Populate table with formatted footage data
+        for row_idx, row in enumerate(data):
+            for col_idx, value in enumerate(row):
+                if col_idx != 4:  # Skip label column for numerical formatting
+                    # Round numerical values to 2 decimal places for footage display
+                    item = QStandardItem(str(round(float(value), 2)))
+                else:
+                    # Display label column as-is
+                    item = QStandardItem(str(value))
+                self.plat_footages_table.setItem(row_idx, col_idx, item)
+
+        # Configure table headers and appearance
+        columns = footage_lst.columns.values
+        self.plat_footages_table.setHorizontalHeaderLabels(columns)
+        self._configure_table_appearance(self.ui.dx_survey_location_tableview_2)
+    def _configure_table_appearance(self, table_view: Any) -> None:
+        """Configure table view properties for professional appearance.
+
+        Internal method for standardizing table display settings across
+        all survey data presentations.
+
+        Args:
+            table_view (Any): PyQt5 table view component to configure
+        """
+        table_view.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        table_view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        table_view.verticalHeader().setVisible(False)  # Hide row numbers
+        table_view.setShowGrid(True)
+        table_view.setUpdatesEnabled(True)
+        table_view.show()
+        table_view.viewport().update()
+    def writer_plat_process(self, df, all_pts_df, spec_vals):
         def combo_box(value, ui_element):
             ui_element.blockSignals(True)
             index = ui_element.findText(str(value))
             ui_element.setCurrentIndex(index)
             ui_element.blockSignals(False)
-
         for idx, row in df.iterrows():
             ref_val = idx + 1
             sec_ui = getattr(self.ui, f"section_combo_rel_{ref_val}")
@@ -958,7 +1050,7 @@ class SetupRelativeCoordsPage:
             # sec_ui.setText(row['sec'])
 
             # 'sec', 'ts', 'ts_dir', 'rng', 'rng_dir', 'baseline'
-
+        self.write_clearance_footages(spec_vals)
         pass
 
     def grapher(self, data):
@@ -1358,10 +1450,6 @@ class SetupRelativeCoordsPage:
             boundary = polygon_plat.exterior
             intersection_pt = intersection_segment.intersection(boundary)
 
-            # plot_shapely_and_dataframe(polygon_plat, intersection_pt_current, current_well_path_section)
-
-            # intersection_pt = check_intersection_pts(intersection_pt)
-            # intersection_pt_current = intersection_pt
             try:
                 current_well_path_section, intersection_pt, dir_val, index = check_full_inter_pts(intersection_pt,
                                                                                                   current_well_path_section,
@@ -1375,18 +1463,7 @@ class SetupRelativeCoordsPage:
                         result_type='expand'))
                 self.graph_plats_and_well(all_plats_df, list(zip(well_path.easting, well_path.northing)), title)
                 return all_plats_df
-            # try:
 
-            # dir_val, index = get_direction_sides()
-
-            # except (AttributeError, TypeError) as e:
-            #     all_plats_df[['x_delta', 'y_delta']] = (
-            #         all_plats_df.apply(
-            #             lambda row: get_offset_added_delta(row['x'] * 0.3048, row['y'] * 0.3048, dx_start, dy_start),
-            #             axis=1,
-            #             result_type='expand'))
-            #     self.graph_plats_and_well(all_plats_df, list(zip(well_path.easting, well_path.northing)), title)
-            #     return all_plats_df
             next_plat_df = self.currently_used_plat_data[self.currently_used_plat_data['range'] == counter]
             try:
                 next_plat_conc = next_plat_df['conc'].iloc[0]
