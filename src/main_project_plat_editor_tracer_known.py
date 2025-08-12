@@ -1,8 +1,3 @@
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QLineEdit, QSpinBox,
-                             QCheckBox,
-                             QDialog, QTabWidget, QTextBrowser, QTableWidget, QLabel, QTableView, QRadioButton,
-                             QGraphicsView,
-                             QComboBox, QMessageBox, QFileDialog, QButtonGroup)
 import pandas as pd
 import numpy as np
 from shapely.geometry import Point, LineString, Polygon
@@ -73,121 +68,12 @@ def transform_and_correct_for_north_ref(north_ref, azimuth, convergence_angle):
             true_azimuth += 360
         return true_azimuth
 
-def gather_plat_data(ui, id_val):
-    side_names = ["south_left_2", "south_left_1", "south_right_1", "south_right_2",
-                  "north_left_2", "north_left_1", "north_right_1", "north_right_2",
-                  "west_up_2", "west_up_1", "west_down_1", "west_down_2",
-                  "east_up_2", "east_up_1", "east_down_1", "east_down_2"]
-    row_cols = ["length", "degrees", "minutes", "seconds", "bearing_str", 'decimal_azimuth']
-    records = []
-    for side in side_names:
-        tbl: QTableView = getattr(ui, f"{side}_table_rel_{id_val}")
-        model = tbl.model()
-        if model is None:
-            continue
-        rec_base = {
-            "section": getattr(ui, f"section_input_rel_{id_val}").text(),
-            "township": getattr(ui, f"township_input_rel_{id_val}").text(),
-            "township_bearing_str": getattr(ui, f"township_dir_input_rel_{id_val}").text(),
-            "rng": getattr(ui, f"range_input_rel_{id_val}").text(),
-            "rng_bearing_str": getattr(ui, f"range_dir_input_rel_{id_val}").text(),
-            "baseline_str": getattr(ui, f"meridian_input_rel_{id_val}").text(),
-        }
-        # start a fresh record for this side
-        rec = dict(rec_base)
-        rec["side"] = side
 
-        # iterate each row in the single column
-        for row_idx, field in enumerate(row_cols):
-            # safe‐guard if someone changed row-count
-            if row_idx < model.rowCount():
-                item = model.item(row_idx, 0)
-                rec[field] = item.text() if item is not None else ""
-            else:
-                rec[field] = ""
-        rec['order'] = 1
-        records.append(rec)
-    df = pd.DataFrame.from_records(records)
-    return df
-
-
-def convert_conc(sec, ts, ts_dir, rng, rng_dir, baseline):
-    translations = {
-        'rng': {'2': 'W', '1': 'E'},
-        'township': {'2': 'S', '1': 'N'},
-        'baseline': {'2': 'U', '1': 'S'},
-        'alignment': {'1': 'SE', '2': 'NE', '3': 'SW', '4': 'NW'}
-    }
-    section = str(int(float(sec))).zfill(2)
-    township = str(int(float(ts))).zfill(2)
-    rng = str(int(float(rng))).zfill(2)
-
-    # Handle direction codes (which might also be floats)
-    ts_dir = str(ts_dir)
-    rng_dir = str(rng_dir)
-    baseline = str(baseline)
-
-    # Translate direction codes
-    ts_dir = translations.get('township', {}).get(ts_dir, ts_dir).upper()
-    rng_dir = translations.get('rng', {}).get(rng_dir, rng_dir).upper()
-    baseline = translations.get('baseline', {}).get(baseline, baseline).upper()
-
-    return "".join([section, township, ts_dir, rng, rng_dir, baseline])
-def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_df, well_parameter_data,ui, existing_data):
-    def gather_existing_concs():
-        all_concs = []
-        for version in range(1, 9):
-            # 1) read the “header” fields
-            rec_base = {
-                "section": getattr(ui, f"section_input_rel_{version}").text(),
-                "township": getattr(ui, f"township_input_rel_{version}").text(),
-                "township_bearing_str": getattr(ui, f"township_dir_input_rel_{version}").text(),
-                "rng": getattr(ui, f"range_input_rel_{version}").text(),
-                "rng_bearing_str": getattr(ui, f"range_dir_input_rel_{version}").text(),
-                "baseline_str": getattr(ui, f"meridian_input_rel_{version}").text(),
-            }
-            try:
-                conc = convert_conc(rec_base['section'], rec_base['township'], rec_base['township_bearing_str'],
-                                         rec_base['rng'],
-                                         rec_base['rng_bearing_str'], rec_base['baseline_str'])
-                all_concs.append(conc)
-            except ValueError:
-                pass
-        return all_concs
-        # df['conc'] = df.apply(
-        #     lambda row: convert_conc(row['section'], row['township'], row['township_bearing_str'],
-        #                              row['rng'],
-        #                              row['rng_bearing_str'], row['baseline_str']), axis=1)
-    # df = df.drop(columns=['index'])
-    print('triangulator')
+def triangulator_with_known(conn, data_plat_coords, survey_data_df, well_parameter_data):
     north_reference, magnetic_declination, convergence_angle, target_azimuth = well_parameter_data[0], \
         well_parameter_data[1], float(well_parameter_data[2]), float(well_parameter_data[3])
-
-    # result_coords = data_plat_coords[['x', 'y', 'side']].values.tolist()
-    # shl = get_starter_pt(survey_data_df.iloc[0], result_coords)
-    # survey_data_df[['e_offset_delta', 'n_offset_delta']] = (survey_data_df.apply(
-    #     lambda row: get_offset_added_delta(shl[0], shl[1], row['e_offset'], row['n_offset']), axis=1,
-    #     result_type='expand'))
-    tsr_data = tsr_data_df.values.tolist()
-    new_conc = reTranslateData_2(tsr_data[0][:6])
-    data_df_new = df[df['conc'] == new_conc]
-    data_df_new['decimal_azimuth_ref_adjusted'] = data_df_new.apply(lambda x: transform_and_correct_for_north_ref(x['north_ref'], x['decimal_azimuth'], convergence_angle), axis=1)
-
-    # data_df_new['azimuth'] = data_df_new.apply(lambda: transform_and_correct_for_north_ref(data_df_new['north_ref'], data_df_new['azimuth']), axis=1)
-    rel_original_data = df[df['conc'] == new_conc]
-    all_known_concs = []
-
-    if existing_data:
-        existing_df = gather_plat_data(ui, 1)
-        data = existing_df.to_numpy().tolist()
-        all_known_concs = gather_existing_concs()
-    else:
-        data = df[df['conc'] == new_conc].to_numpy().tolist()
-    print('data')
-    print(data[0])
-    # data_test = create_relative_section_polygon(data_df_new)
+    data = df[df['conc'] == new_conc].to_numpy().tolist()
     data, data_new_dec = dataConverterPlatToUtm(data)
-
     for index, sublist in enumerate(data):
         if index < 4:  # Indices 0-3
             sublist.append('west')
@@ -204,7 +90,6 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
         result_type='expand'))
 
 
-    # data = data_plat_coords[['x', 'y']].values.tolist()
     survey_data = survey_data_df[['measured_depth', 'inclination', 'azimuth']].values.tolist()
 
     survey_data = alterSurveyForLargeSpacingBetweenPts(survey_data)
@@ -216,7 +101,6 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
     foo = [survey_data[0] + [0] * 11]
     survey_data = survey_data[1:]
     known_conc_data = [new_conc]
-    new_conc = conc
     dirLst = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
     lst = [[0, 0, 0, 0, 0, 0, 0, 0],
            [36, 31, 6, 7, 12, 11, 2, 35],
@@ -257,30 +141,23 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
            [25, 30, 31, 6, 1, 2, 35, 26]]
     section = int(float(tsr_data[0][0]))
     data = [i[:2] for i in data]
-
-
     section_degrees_data = [data]
     min_curv_data = survey_data_df
+
     prev_section_data = tsr_data[0][:6]
-    
+
     while True:
-        print('goop')
         data = [i[:2] for i in data]
         corners, sides_generated = ma.cornerGeneratorProcess(data)
-        # corners, sides_generated = _corner_generator_process(data)
-
         sides_generated = [[j[:-1] for j in i] for i in sides_generated]
         segment_lst = [[[i[j], i[j + 1]] for j in range(len(i) - 1)] for i in sides_generated]
-        # findIntersectionBetweenWellAndSection(segment_lst, offset_pts_lst, shl)
-        # intersection, direction, well_index_end, foo, well_path_tester = get_direction_sides(segment_lst, survey_data_df, sides_generated)
         intersection, direction, well_index_end, foo, well_path_tester = findWellPathBoundaryIntersection(segment_lst,
                                                                                                           survey_data,
                                                                                                           well_parameter_data,
                                                                                                           plat_north_ref,
                                                                                                           foo, shl)
 
-        # if well_path_tester.empty or direction == 'Null':
-        #     return min_curv_data, known_conc_data, section_degrees_data, plat_north_refs_lst
+
         if not well_path_tester or direction == 'Null':
             return min_curv_data, known_conc_data, section_degrees_data, plat_north_refs_lst, shl
 
@@ -289,43 +166,22 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
         township, townshipDir, rng, rngDir, prev_section_data = modifySection(section, new_section, prev_section_data)
         conc_info = [new_section, township, townshipDir, rng, rngDir, tsr_data[0][5]]
         new_conc = reTranslateData_2(conc_info)
-        # ma.grapher4(well_path_tester, section_degrees_data[-1], new_conc)
         if new_conc in known_conc_data:
-            known_index = known_conc_data.index(new_conc)
-            print('index', known_index)
 
-            if not existing_data:
-                data = section_degrees_data[known_index]
-            else:
-                existing_df = gather_plat_data(ui, known_index+1)
-                data = existing_df.to_numpy().tolist()
+            known_index = known_conc_data.index(new_conc)
+            data = section_degrees_data[known_index]
             counter += 1
         else:
-            # old_well_path_tester = well_path_tester.iloc[well_index_end:]
-
             old_well_path_tester = well_path_tester[:well_index_end + 1]
             proxBoo = getBooProx(data, old_well_path_tester, direction)
             known_conc_data.append(new_conc)
-            known_index = known_conc_data.index(new_conc)
-            print('index2', known_index)
-            if not existing_data:
-                data_new = df[df['conc'] == new_conc].to_numpy().tolist()
-            else:
-                existing_df = gather_plat_data(ui, known_index + 1)
-                data_new = existing_df.to_numpy().tolist()
-
-
+            data_new = df[df['conc'] == new_conc].to_numpy().tolist()
             if len(data_new) == 0:
                 data_new = GUIDataAdd.addDataIfAGRCNotFound(conn, new_conc, conc_info)
             data_new = sorted(data_new, key=lambda x: x[-1], reverse=True)
             plat_north_ref = data_new[0][-4]
             plat_north_refs_lst.append(plat_north_ref)
-            # data_new_deg = convert_to_pts(df[df['conc'] == new_conc])
-            # data_new_deg = create_relative_section_polygon(data_new)
-            data_test = create_relative_section_polygon(df[df['conc'] == new_conc])
-
             data_new_deg, data_new_dec = dataConverterPlatToUtm(data_new)
-
             rewritten_coords = coordsAdjuster(data_new_deg, data, direction, proxBoo)
             data = rewritten_coords
             section_degrees_data.append(data)
@@ -409,32 +265,11 @@ def dataConverterPlatToUtm(data):
 
 
 def convertToDecimal2(data):
-    def translateDirectionToNumber(variable, val):
-        conversions = {
-            'rng': {'W': '2', 'E': '1'},
-            'township': {'S': '2', 'N': '1'},
-            'baseline': {'U': '2', 'S': '1'},
-            'alignment': {'SE': '1', 'NE': '2', 'SW': '3', 'NW': '4'}
-        }
-        if variable in conversions and val in conversions[variable]:
-            return conversions[variable][val]
-        else:
-            return val
     data_converted = []
     for item in data:
-        print('item', item, len(item))
-
-        if len(item) == 21:
+        if len(item) > 6:
             item = item[9:15]
-        elif len(item) == 14:
-            item = item[6:12]
-        item[1] = float(item[1])
-        item[2] = int(float(item[2]))
-        item[3] = int(float(item[3]))
-        item[4] = float(item[4])
-        item[5] = translateDirectionToNumber( 'alignment',item[5])
-
-        print(item)
+            item[1] = float(item[1])
         side, deg, min, sec, dir_val = map(float, item[1:6])
         dec_val_base = deg + min / 60 + sec / 3600
 
@@ -720,7 +555,7 @@ def triangulatorWithKnownData(current_plat_coords, current_plat_conc, original_a
 
     Args:
         current_plat_coords: DataFrame with current plat coordinates
-        current_plat_conc: String identifier for starting plat  
+        current_plat_conc: String identifier for starting plat
         original_all_plats_df: DataFrame with all plat boundaries
         well_path: DataFrame with well trajectory data
 

@@ -665,8 +665,8 @@ class WCR_Main:
             if dialog.exec_() == QDialog.Accepted:
                 wcr_info = dialog.get_values()
                 print("_______________________")
-                print([self.known_parameters])
-                print(wcr_info)
+                # print([self.known_parameters])
+                # print(wcr_info)
                 print("_______________________")
 
                 print("\n✅ Manual entry successful. Data collected:")
