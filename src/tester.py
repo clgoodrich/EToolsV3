@@ -113,7 +113,6 @@ def correct_north_ref(north_ref, vers):
 conn = setup_db()
 query = "select * from SectionPlatDataAGRC"
 output = pd.read_sql(query, conn).drop_duplicates(keep="first")
-print(output)
 # output.sort_values(['Baseline', 'Township Direction', 'Range Direction', 'Township', 'Range', 'Section',
 #                     'Version']).reset_index(drop=True)
 # output['conc'] = output.apply(
@@ -169,6 +168,4 @@ output = output.astype({"section": int, "township": int, "township_bearing": int
 # # cleaned_string =
 output['side'] = output['side'].str.replace(r'_+', '_', regex=True)
 
-print(output['side'].unique())
 # output.to_sql('SectionPlatDataAGRC', conn, index=False, if_exists='replace')
-# print(output)

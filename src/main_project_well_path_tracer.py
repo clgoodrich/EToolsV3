@@ -117,7 +117,6 @@ def gather_plat_data(ui, id_val):
         rec['order'] = 1
         records.append(rec)
     df = pd.DataFrame.from_records(records)
-    print(df)
     return df
 
 
@@ -256,7 +255,6 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
 
     # data_df_new['azimuth'] = data_df_new.apply(lambda: transform_and_correct_for_north_ref(data_df_new['north_ref'], data_df_new['azimuth']), axis=1)
     rel_original_data = df[df['conc'] == new_conc]
-    # print(rel_original_data)
     all_known_concs = []
 
     if existing_data:
@@ -286,7 +284,6 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
         lambda row: get_offset_added_delta(shl[0], shl[1], row['e_offset'], row['n_offset']), axis=1,
         result_type='expand'))
 
-    print('shl', shl)
     # data = data_plat_coords[['x', 'y']].values.tolist()
     survey_data = survey_data_df[['measured_depth', 'inclination', 'azimuth']].values.tolist()
 
@@ -346,15 +343,11 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
     min_curv_data = survey_data_df
     well_path_tester = copy.copy(survey_data_df)
     prev_section_data = tsr_data[0][:6]
-    print("\n\n\n\n\n\n\n\n")
     dir_lst = ['west_down_2', 'west_down_1', 'west_up_1', 'west_up_2', 'north_left_2', 'north_left_1', 'north_right_1',
                'north_right_2', 'east_up_2', 'east_up_1', 'east_down_1', 'east_down_2', 'south_right_2',
                'south_right_1',
                'south_left_1', 'south_left_2']
-    print(min_curv_data)
     while True:
-        print("____________________________")
-        # print('concs', known_conc_data)
         data = [i[:2] for i in data]
         corners, sides_generated = ma.cornerGeneratorProcess(data)
         sides_generated = [[j[:-1] for j in i] for i in sides_generated]
@@ -368,12 +361,10 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
                                                                                                           well_parameter_data,
                                                                                                           plat_north_ref,
                                                                                                           foo, shl)
-        print('well path', well_path_tester)
         all_sides = []
         for i in sides_generated:
             all_sides.extend(i)
         # graph_plat_and_well_v2(Polygon(all_sides), well_path_tester)
-        # print(well_path_tester)
 
         if not well_path_tester or direction == 'Null':
             # graph_plat_and_well(section_degrees_data, well_path_tester)
@@ -414,7 +405,6 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
             # data_test = create_relative_section_polygon(df[df['conc'] == new_conc])
             _, data_new_deg = process_survey_data(new_df)
             # data_new_deg, data_new_dec = dataConverterPlatToUtm(data_new)
-            print('data_new_deg', data_new_deg)
             rewritten_coords = coordsAdjuster(data_new_deg, data, direction, proxBoo)
             rewritten_coords = stitch_polygons(data_new_deg, data, direction)
             # rewritten_coords = coords_stitcher(new_df,
@@ -425,7 +415,6 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
             section_degrees_data.append(data)
             counter += 1
         section = new_section
-    print('break 2')
     return min_curv_data, known_conc_data, section_degrees_data, plat_north_refs_lst, shl
 
 
@@ -459,7 +448,6 @@ def coords_stitcher(next_coords_df, current_coords_df, direction, direction_boo)
         matched_lst_dict = {"0": [12, 8], "1": [16, 12], "2": [4, 0], "3": [8, 4]}
         # Use a simple integer (0 or 1) to select from the lists.
         selector = 0 if direction_boo else 1
-        print(direction)
         # Directly look up the lists of options for the given direction.
         start_options, match_options = POINT_MAPPING[direction]
 
@@ -490,7 +478,6 @@ def coords_stitcher(next_coords_df, current_coords_df, direction, direction_boo)
         start_col = column_map[starting_pts // 5]
 
         start_row = (starting_pts % 5)
-        print(current_coords_df)
         current_coords_df['point_i'] = current_coords_df.groupby('side').cumcount()
         current_point = \
             current_coords_df[(current_coords_df['side'] == start_col) & (current_coords_df['point_i'] == start_row)][
@@ -1547,7 +1534,6 @@ def getBooProx(coordinates, inside_pts, direction):
     """Determine proximity to boundaries."""
     polygon = Polygon(coordinates)
     bounds = polygon.bounds  # (minx, miny, maxx, maxy)
-    print([inside_pts])
     last_pt = inside_pts[-1]
 
     if direction in ['N', 'S']:

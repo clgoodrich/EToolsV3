@@ -468,7 +468,6 @@ class SetupRelativeCoordsPage:
         self.tsr_data = tsr_data
 
     def setup_plat_data_boxes(self):
-        print('setting up')
         row_cols = ["length", "degrees", "minutes", "seconds", "bearing_str", 'decimal_azimuth']
         # records = []
         side_names = ["south_left_2", "south_left_1", "south_right_1", "south_right_2",
@@ -490,10 +489,8 @@ class SetupRelativeCoordsPage:
         #                         self.connect_and_process_user_data(top_left, current_side, current_version)
         #                 )
         #             else:
-        #                 print('nada')
         #         except AttributeError:
         #             # This is good practice in case a widget name is misspelled or doesn't exist
-        #             print(f"Warning: Widget '' not found.")
 
         # for i in range(8):
         #     pass
@@ -957,7 +954,6 @@ class SetupRelativeCoordsPage:
         tracer_output = self.main_tracer_process(plat_df[plat_df['conc'] == plat_df_conc[0]], plat_df_conc[0], plat_df,
                                                  self.well_path_dict['pln_df_true_dx'].clearance_data, 'pln_df_true_dx')
         self.writer_plat_process(gdf_data, all_pts_data, spec_vals)
-        print("OUTPUT")
 
     def write_clearance_footages(self, footage_lst: pd.DataFrame) -> None:
         """Display clearance footage measurements in dedicated table view.
@@ -1428,7 +1424,6 @@ class SetupRelativeCoordsPage:
 
         well_paths_lst = [k for k, v in self.well_path_dict.items()]
         all_plats_df = original_all_plats_df
-        print(all_plats_df)
 
         # well_path = self.well_path_dict[i].clearance_data
         result_coords = current_plat_coords[['x', 'y', 'side']].values.tolist()
@@ -1500,7 +1495,6 @@ class SetupRelativeCoordsPage:
                 counter += 1
                 current_plat_conc = next_plat_conc
             except ValueError as e:
-                print('broke here 3')
                 all_plats_df[['x_delta', 'y_delta']] = (
                     all_plats_df.apply(
                         lambda row: get_offset_added_delta(row['x'] / 0.3048, row['y'] / 0.3048, starter_utm[0],
@@ -1714,10 +1708,7 @@ class SetupRelativeCoordsPage:
         # current_coords_df_mod.loc[0, 'west'] = current_coords_df_mod.loc[4, 'south']
         # current_coords_df_mod = current_coords_df.applymap(lambda pt:[round(pt[0],1), round(pt[1], 1)])
         # current_coords_df_zeroed = current_coords_df_mod.apply(lambda col: col.where(~col.map(tuple).duplicated(), other=np.nan))
-        print('coords stitcher')
-        print(next_coords_df)
-        print(current_coords_df)
-        print(direction, direction_boo)
+
         starting_pts, matched_pt = get_point_indices()
         diff_x_used, diff_y_used = calculate_diff_from_dfs()
 

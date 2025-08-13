@@ -567,7 +567,6 @@ class UltraFastClearer:
         for optimal performance. Special handling ensures that certain tables
         (like label and coordinate tables) are preserved.
         """
-        print('execute')
 
         # Batch clear QLineEdits (fastest operation)
         for widget in self.line_edits:
@@ -1222,19 +1221,19 @@ class ETools(QMainWindow):
 
         # 4301353727
         # 4301354659
-        self.ui.well_api_val.setText('4301354659')
-        self.connect_to_db()
-
-        self.run_api_when_entered()
-        self.process_when_dx_button_pushed()
+        # self.ui.well_api_val.setText('4301354659')
+        # self.connect_to_db()
+        #
+        # self.run_api_when_entered()
+        # self.process_when_dx_button_pushed()
 
     def connect_to_db(self):
         # Initialize database connection with error handling
         try:
             self.db = DatabaseManager()
             self.db_connect_popup()
-            if self.ui.well_api_val != "":
-                self.run_api_when_entered()
+            # if self.ui.well_api_val != "":
+            #     self.run_api_when_entered()
         except sqlalchemy.exc.OperationalError:
             self.no_db_connect_popup()
             self.db = None
@@ -1476,7 +1475,6 @@ class ETools(QMainWindow):
             main_project_drawer.clear_layout(ui_viz)
             main_project_drawer.clear_layout(ui_viz_2)
 
-        print('run api')
 
         # Reset file paths
         self.file_path_planned = None
@@ -1529,7 +1527,6 @@ class ETools(QMainWindow):
         - Initializing visualization and analysis components
         - Setting up UI interactions for survey manipulation
         """
-        print('pressed!')
         # Attempt to load survey from database
         if survey_dx_imported is None:
             survey_dx, well_elevation, north_ref = self.sql_query_survey(self.db, self.api_val, self.lateral)
@@ -1545,9 +1542,7 @@ class ETools(QMainWindow):
             if survey_dx is None:
                 survey_dx = survey_dx_imported
 
-            # error_traceback = traceback.format_exc()
-            # print(f"Error details:\n{error_traceback}")
-            # pass
+
         if not well_elevation or not north_ref:
             dialog = ManualDataInputDialog(
                 current_elevation=well_elevation,
@@ -1621,7 +1616,6 @@ class ETools(QMainWindow):
         known_parameters = pd.DataFrame(
             data={'SubmitDate': None, 'SundryNo': None, 'APINumber': [self.api_val], 'LateralNumber': [self.lateral],
                   'WellNameNumber': [self.well.well_name], "OperatorName": [None]})
-        print('name', known_parameters)
         self.wcr_process = WCR_Main(df=self.well.cl_dx_dict, ui=self.ui, db=self.db, loc_df=self.well.loc_df,
                                     spec_surveys=self.well.spec_surveys_dict, north_ref=north_ref,
                                     known_parameters=known_parameters)
@@ -2027,9 +2021,7 @@ class ETools(QMainWindow):
             else:
                 pass
         except (TypeError, ValueError, AttributeError, KeyError, FileNotFoundError) as e:
-            print(e, 'import canceled')
             error_traceback = traceback.format_exc()
-            print(f"Error details:\n{error_traceback}")
             # Re-enable buttons on error
             self.ui.load_as_drilled_survey_box.blockSignals(False)
             self.ui.load_planned_survey_box.blockSignals(False)
@@ -2742,7 +2734,6 @@ class PointChecker:
             try:
                 return self.gather_deg_pts()
             except ValueError as e:
-                print('errored 1', e)
                 pass
 
         # Otherwise, proceed with decimal conversion
@@ -2761,7 +2752,6 @@ class PointChecker:
 
             return output_a, output_b, output_pt
         except ValueError as f:
-            print('errored 3', f)
             # Try DMS as last resort
             try:
                 return self.gather_deg_pts()

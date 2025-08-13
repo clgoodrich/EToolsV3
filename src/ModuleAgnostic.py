@@ -287,7 +287,6 @@ def analyze_time_no_args(func, *args, **kwargs):
     df = df[~df['location'].str.contains(excluded, case=False, regex=False)]
     sum_self = df['tottime'].sum()
     print(f"Sum of all self‐times (df['tottime'].sum()): {sum_self:.6f} s")
-    print(df)
 
 def analyzeTime2(function_call, args_list ):
 

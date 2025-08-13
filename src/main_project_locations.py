@@ -532,9 +532,6 @@ class TownShipAndRangeProcess:
         # Store processed data for access by visualization and analysis methods
         self.plat_df = plat_df
         self.loc_df = loc_df
-        # print(self.plat_df)
-
-        # print(self.loc_df)
 
 
     def run_dialog_example(self):

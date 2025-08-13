@@ -182,11 +182,6 @@ def calculate_next_utm_points(data):
     current_y = 0.0
     points = [(0.0, 0.0)]
 
-    # print("\nTraverse Debug Information:")
-    # print("-" * 80)
-    # print(f"{'Side':<20} {'Distance':<10} {'Azimuth':<10} {'dX':<12} {'dY':<12} {'X':<12} {'Y':<12}")
-    # print("-" * 80)
-
     for item in data:
         side, distance, azimuth = item
 
@@ -204,10 +199,6 @@ def calculate_next_utm_points(data):
 
         points.append((current_x, current_y))
 
-    #     print(
-    #         f"{side:<20} {distance:<10.2f} {azimuth:<10.2f} {dx:<12.2f} {dy:<12.2f} {current_x:<12.2f} {current_y:<12.2f}")
-    #
-    # print("-" * 80)
 
     return points
 
@@ -255,12 +246,7 @@ def check_closure(points, tolerance=1.0):
     end = points[-1]
 
     closure_error = math.sqrt((end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2)
-    #
-    # print(f"\nClosure Report:")
-    # print(f"Start point: ({start[0]:.3f}, {start[1]:.3f})")
-    # print(f"End point: ({end[0]:.3f}, {end[1]:.3f})")
-    # print(f"Closure error: {closure_error:.3f} feet")
-    # print(f"Number of points: {len(points)}")
+
 
     # Calculate perimeter
     perimeter = 0
@@ -269,14 +255,11 @@ def check_closure(points, tolerance=1.0):
         dy = points[i + 1][1] - points[i][1]
         perimeter += math.sqrt(dx * dx + dy * dy)
 
-    # print(f"Perimeter: {perimeter:.2f} feet")
     # print(f"Relative error: 1:{perimeter / closure_error:.0f}" if closure_error > 0 else "Perfect closure")
     #
     # if closure_error <= tolerance:
-    #     print("✓ Traverse closes within tolerance!")
     #     return True
     # else:
-    #     print(f"✗ Warning: Traverse does not close within tolerance of {tolerance} feet")
     #     return False
 
 
@@ -294,10 +277,8 @@ def process_survey_data(df):
     points_geodesic = calculate_utm_with_geodesic(data_with_azimuths)
 
     # Check closure
-    # print("\nPlanar calculation closure:")
     # check_closure(points_planar)
 
-    # print("\nGeodesic calculation closure:")
     # check_closure(points_geodesic)
     points_geodesic = [list(i) for i in points_geodesic]
     points_planar = [list(i) for i in points_planar]

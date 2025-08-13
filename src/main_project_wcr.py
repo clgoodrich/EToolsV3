@@ -458,8 +458,7 @@ class WCR_Main:
         self._sundries_df: Optional[pd.DataFrame] = None
         self.known_parameters = known_parameters
         # Store initialization parameters
-        # print(filtered_dict['drl_df_true_dx'].clearance_data)
-        # print(df)
+
         # wcr_df = self.df['drl_df_true_dx'].clearance_data
         self.df = filtered_dict
         self.spec_surveys = {k: v for k, v in spec_surveys.items() if "drl" in k}
@@ -664,10 +663,6 @@ class WCR_Main:
 
             if dialog.exec_() == QDialog.Accepted:
                 wcr_info = dialog.get_values()
-                print("_______________________")
-                # print([self.known_parameters])
-                # print(wcr_info)
-                print("_______________________")
 
                 print("\n✅ Manual entry successful. Data collected:")
                 for key, value in wcr_info.items():
@@ -682,8 +677,7 @@ class WCR_Main:
         except AttributeError:
             wcr_casing = pd.DataFrame(columns = ['Feature', 'Top', 'Bottom', 'Diam', 'Weight', 'Grade', 'Connection Type', 'Cement Top', 'Cement Bottom', 'Cement Type', 'Sacks', 'Yield', 'Cement Weight'])
             # pass
-        print('wcr_info')
-        print(wcr_info)
+
         # Check if coordinate table has data
         model = self.ui.display_table_utm_locs.model()
         test = [[model.data(model.index(row, column)) for column in range(model.columnCount())]
@@ -699,7 +693,6 @@ class WCR_Main:
     def run_excel_process(self, wcr_info: pd.DataFrame, wcr_casing: pd.DataFrame) -> None:
         wcr_info = wcr_info.drop(columns=['SundryNo', 'SubmitDate'])
 
-        print('run excel')
         """
         Create and format the WCR Excel file with all required sections.
 
@@ -773,9 +766,7 @@ class WCR_Main:
         #     wcr_info['CompletedOrAbandonedDate'].dt.strftime('%Y-%m-%d').iloc[0]
         # ]
 
-        print(wcr_info)
         dict_info = wcr_info.iloc[0].to_dict()
-        # print(my_dict)
         # dict_info = {'WellName': wcr_info['WellNameNumber'].iloc[0],
         #              'API': wcr_info['APINumber'].iloc[0],
         #              'Operator': wcr_info['OperatorName'].iloc[0],
@@ -787,7 +778,6 @@ class WCR_Main:
         #              'CompletedOrAbandonedDate': wcr_info['CompletedOrAbandonedDate'].iloc[0]}
 
         # 'CompletedOrAbandonedDate': wcr_info['CompletedOrAbandonedDate'].dt.strftime('%Y-%m-%d').iloc[0]}
-        # print(dict_info)
         # labels = ['WellName', 'API', 'Operator', 'ConstructKey' 'WellType',
         #           'SpudDate', 'RotaryRigDate', 'TDReachedDate', 'CompletedOrAbandonedDate']
         # label_cells = ['1', '2', '3', '4', '5', '6', '7', '8']
@@ -880,7 +870,6 @@ class WCR_Main:
         # file = r"TrackingWCR.xlsx"
         try:
             data = self.get_wcr_person_db_update()
-            print('data', data)
             if data.empty:
                 # If the query succeeds but returns no data, also trigger the dialog
                 raise ValueError("Query returned no data.")
