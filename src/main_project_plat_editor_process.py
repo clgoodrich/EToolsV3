@@ -559,7 +559,7 @@ class SetupRelativeCoordsPage:
         plat_df_conc = plat_df['conc'].unique()
         min_curv_data, gdf_data, known_conc_data, all_pts_data = self.run_plat_well_tracer(
             current_plat_coords=plat_df[plat_df['conc'] == plat_df_conc[0]],
-            current_plat_conc=plat_df_conc[0], existing_data = True)
+            current_plat_conc=plat_df_conc[0], original_plat_df = plat_df, existing_data = True)
         collected_data = self.collect_relative_data()
         spec_vals = self.process_for_spec_points(min_curv_data)
 
@@ -951,9 +951,11 @@ class SetupRelativeCoordsPage:
 
         min_curv_data, gdf_data, known_conc_data, all_pts_data = self.run_plat_well_tracer(
             current_plat_coords=plat_df[plat_df['conc'] == plat_df_conc[0]],
-            current_plat_conc=plat_df_conc[0])
+            current_plat_conc=plat_df_conc[0], original_plat_df = plat_df)
         spec_vals = self.process_for_spec_points(min_curv_data)
 
+        tracer_output = self.main_tracer_process(plat_df[plat_df['conc'] == plat_df_conc[0]], plat_df_conc[0], plat_df,
+                                                 self.well_path_dict['pln_df_true_dx'].clearance_data, 'pln_df_true_dx')
         self.writer_plat_process(gdf_data, all_pts_data, spec_vals)
         print("OUTPUT")
 
@@ -1426,6 +1428,8 @@ class SetupRelativeCoordsPage:
 
         well_paths_lst = [k for k, v in self.well_path_dict.items()]
         all_plats_df = original_all_plats_df
+        print(all_plats_df)
+
         # well_path = self.well_path_dict[i].clearance_data
         result_coords = current_plat_coords[['x', 'y', 'side']].values.tolist()
         starter_pt = get_starter_pt(well_path.iloc[0], result_coords)
@@ -1449,7 +1453,6 @@ class SetupRelativeCoordsPage:
                 list(zip(current_well_path_section['e_offset_delta'], current_well_path_section['n_offset_delta'])))
             boundary = polygon_plat.exterior
             intersection_pt = intersection_segment.intersection(boundary)
-
             try:
                 current_well_path_section, intersection_pt, dir_val, index = check_full_inter_pts(intersection_pt,
                                                                                                   current_well_path_section,
@@ -1506,7 +1509,7 @@ class SetupRelativeCoordsPage:
                 return all_plats_df
         return pd.DataFrame()
 
-    def run_plat_well_tracer(self, current_plat_coords, current_plat_conc, existing_data = False):
+    def run_plat_well_tracer(self, current_plat_coords, current_plat_conc, original_plat_df, existing_data = False):
 
         def get_plat_coords():
             query = "select * from SectionPlatDataAGRC"
@@ -1571,7 +1574,7 @@ class SetupRelativeCoordsPage:
             conc=current_plat_conc,
             survey_data_df=self.well_path_dict['pln_df_grid_dx'].clearance_data,
             well_parameter_data=retrieve_well_data(),
-            ui=self.ui, existing_data = existing_data)
+            ui=self.ui, existing_data = existing_data, original_plat_df = original_plat_df)
 
         data_lst = [[known_conc_data[i], Polygon(section_degrees_data[i])] for i in range(len(known_conc_data))]
 
@@ -1711,6 +1714,10 @@ class SetupRelativeCoordsPage:
         # current_coords_df_mod.loc[0, 'west'] = current_coords_df_mod.loc[4, 'south']
         # current_coords_df_mod = current_coords_df.applymap(lambda pt:[round(pt[0],1), round(pt[1], 1)])
         # current_coords_df_zeroed = current_coords_df_mod.apply(lambda col: col.where(~col.map(tuple).duplicated(), other=np.nan))
+        print('coords stitcher')
+        print(next_coords_df)
+        print(current_coords_df)
+        print(direction, direction_boo)
         starting_pts, matched_pt = get_point_indices()
         diff_x_used, diff_y_used = calculate_diff_from_dfs()
 

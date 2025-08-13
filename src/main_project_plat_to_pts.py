@@ -22,16 +22,27 @@ def dataframe_to_list(df):
     """Convert DataFrame to list format for processing"""
     data_list = []
     for _, row in df.iterrows():
+        if 'bearing' not in row:
+            row['bearing'] = use_if_bearing_gone(row)
         data_list.append([
             row['side'],
             row['length'],
             row['degrees'],
             row['minutes'],
             row['seconds'],
-            row['bearing'],  # This is the quadrant number (1=NE, 2=SE, 3=SW, 4=NW)
+            row['bearing'] if 'bearing' in row else '',  # This is the quadrant number (1=NE, 2=SE, 3=SW, 4=NW)
             row['bearing_str'] if 'bearing_str' in row else ''
         ])
+
     return data_list
+
+
+def use_if_bearing_gone(row):
+    quad = row['bearing_str']
+    alignment = {'SE': 1, 'NE': 2, 'SW': 3, 'NW': 4}
+    if quad != '':
+        return alignment[quad]
+    return ""
 
 
 def convertToDecimal2(data):
@@ -171,10 +182,10 @@ def calculate_next_utm_points(data):
     current_y = 0.0
     points = [(0.0, 0.0)]
 
-    print("\nTraverse Debug Information:")
-    print("-" * 80)
-    print(f"{'Side':<20} {'Distance':<10} {'Azimuth':<10} {'dX':<12} {'dY':<12} {'X':<12} {'Y':<12}")
-    print("-" * 80)
+    # print("\nTraverse Debug Information:")
+    # print("-" * 80)
+    # print(f"{'Side':<20} {'Distance':<10} {'Azimuth':<10} {'dX':<12} {'dY':<12} {'X':<12} {'Y':<12}")
+    # print("-" * 80)
 
     for item in data:
         side, distance, azimuth = item
@@ -193,10 +204,10 @@ def calculate_next_utm_points(data):
 
         points.append((current_x, current_y))
 
-        print(
-            f"{side:<20} {distance:<10.2f} {azimuth:<10.2f} {dx:<12.2f} {dy:<12.2f} {current_x:<12.2f} {current_y:<12.2f}")
-
-    print("-" * 80)
+    #     print(
+    #         f"{side:<20} {distance:<10.2f} {azimuth:<10.2f} {dx:<12.2f} {dy:<12.2f} {current_x:<12.2f} {current_y:<12.2f}")
+    #
+    # print("-" * 80)
 
     return points
 
@@ -244,12 +255,12 @@ def check_closure(points, tolerance=1.0):
     end = points[-1]
 
     closure_error = math.sqrt((end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2)
-
-    print(f"\nClosure Report:")
-    print(f"Start point: ({start[0]:.3f}, {start[1]:.3f})")
-    print(f"End point: ({end[0]:.3f}, {end[1]:.3f})")
-    print(f"Closure error: {closure_error:.3f} feet")
-    print(f"Number of points: {len(points)}")
+    #
+    # print(f"\nClosure Report:")
+    # print(f"Start point: ({start[0]:.3f}, {start[1]:.3f})")
+    # print(f"End point: ({end[0]:.3f}, {end[1]:.3f})")
+    # print(f"Closure error: {closure_error:.3f} feet")
+    # print(f"Number of points: {len(points)}")
 
     # Calculate perimeter
     perimeter = 0
@@ -258,15 +269,15 @@ def check_closure(points, tolerance=1.0):
         dy = points[i + 1][1] - points[i][1]
         perimeter += math.sqrt(dx * dx + dy * dy)
 
-    print(f"Perimeter: {perimeter:.2f} feet")
-    print(f"Relative error: 1:{perimeter / closure_error:.0f}" if closure_error > 0 else "Perfect closure")
-
-    if closure_error <= tolerance:
-        print("✓ Traverse closes within tolerance!")
-        return True
-    else:
-        print(f"✗ Warning: Traverse does not close within tolerance of {tolerance} feet")
-        return False
+    # print(f"Perimeter: {perimeter:.2f} feet")
+    # print(f"Relative error: 1:{perimeter / closure_error:.0f}" if closure_error > 0 else "Perfect closure")
+    #
+    # if closure_error <= tolerance:
+    #     print("✓ Traverse closes within tolerance!")
+    #     return True
+    # else:
+    #     print(f"✗ Warning: Traverse does not close within tolerance of {tolerance} feet")
+    #     return False
 
 
 # Example usage with your data
@@ -297,10 +308,10 @@ def process_survey_data(df):
 # Debug function to verify azimuth conversions
 def debug_bearings(df):
     """Debug function to check bearing conversions"""
-    print("\nBearing Conversion and Travel Direction Debug:")
-    print("-" * 100)
-    print(f"{'Side':<20} {'Bearing Input':<25} {'Primary Azimuth':<15} {'Travel Direction':<15} {'Travel Azimuth':<15}")
-    print("-" * 100)
+    # print("\nBearing Conversion and Travel Direction Debug:")
+    # print("-" * 100)
+    # print(f"{'Side':<20} {'Bearing Input':<25} {'Primary Azimuth':<15} {'Travel Direction':<15} {'Travel Azimuth':<15}")
+    # print("-" * 100)
 
     data_list = dataframe_to_list(df)
 
@@ -349,7 +360,7 @@ def debug_bearings(df):
             travel_dir = "Northwest"
 
         bearing_input = f"{deg:3.0f}°{min:02.0f}'{sec:02.0f}\" {bearing_str}"
-        print(f"{side:<20} {bearing_input:<25} {primary_azimuth:<15.2f} {travel_dir:<15} {travel_azimuth:<15.2f}")
+        # print(f"{side:<20} {bearing_input:<25} {primary_azimuth:<15.2f} {travel_dir:<15} {travel_azimuth:<15.2f}")
 
 
 def visualize_traverse(points):

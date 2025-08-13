@@ -18,7 +18,11 @@ from shapely.ops import linemerge
 from itertools import chain
 import matplotlib.pyplot as plt
 import ModuleAgnostic as ma
+from shapely.geometry import Polygon, LineString
 
+import numpy as np
+from shapely.geometry import Polygon, Point
+from typing import List, Tuple, Dict
 
 def alterSurveyForLargeSpacingBetweenPts(lst):
     new_pts = []
@@ -62,6 +66,7 @@ def get_offset_added_delta(x, y, dx, dy):
 
     return x + float(dx), y + float(dy)
 
+
 def transform_and_correct_for_north_ref(north_ref, azimuth, convergence_angle):
     if north_ref.lower() != 'g':
         return azimuth
@@ -74,13 +79,14 @@ def transform_and_correct_for_north_ref(north_ref, azimuth, convergence_angle):
             true_azimuth += 360
         return true_azimuth
 
+
 def gather_plat_data(ui, id_val):
     side_names = [
-            'west_down_2', 'west_down_1', 'west_up_1', 'west_up_2',
-            'east_up_2', 'east_up_1', 'east_down_1', 'east_down_2',
-            'north_left_2', 'north_left_1', 'north_right_1', 'north_right_2',
-            'south_left_2', 'south_left_1', 'south_right_1', 'south_right_2'
-        ]
+        'west_down_2', 'west_down_1', 'west_up_1', 'west_up_2',
+        'east_up_2', 'east_up_1', 'east_down_1', 'east_down_2',
+        'north_left_2', 'north_left_1', 'north_right_1', 'north_right_2',
+        'south_left_2', 'south_left_1', 'south_right_1', 'south_right_2'
+    ]
     row_cols = ["length", "degrees", "minutes", "seconds", "bearing_str", 'decimal_azimuth']
     records = []
     for side in side_names:
@@ -111,6 +117,7 @@ def gather_plat_data(ui, id_val):
         rec['order'] = 1
         records.append(rec)
     df = pd.DataFrame.from_records(records)
+    print(df)
     return df
 
 
@@ -136,6 +143,7 @@ def convert_conc(sec, ts, ts_dir, rng, rng_dir, baseline):
     baseline = translations.get('baseline', {}).get(baseline, baseline).upper()
 
     return "".join([section, township, ts_dir, rng, rng_dir, baseline])
+
 
 # def sort_dataframe_by_custom_order(df):
 #     """
@@ -173,7 +181,6 @@ def convert_conc(sec, ts, ts_dir, rng, rng_dir, baseline):
 #     # Check if all values in the column exist in the custom order list
 #     missing_values = set(df_sorted[column_name].unique()) - set(custom_order_list)
 #     if missing_values:
-#         print(f"Warning: These values in '{column_name}' are not in custom_order_list: {missing_values}")
 #         # Add missing values to the end of the custom order
 #         extended_order = custom_order_list + list(missing_values)
 #     else:
@@ -195,8 +202,8 @@ def convert_conc(sec, ts, ts_dir, rng, rng_dir, baseline):
 #     return df_sorted
 
 
-def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_df, well_parameter_data,ui, existing_data):
-
+def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_df, well_parameter_data, ui,
+                     existing_data, original_plat_df):
     def sort_by_custom_order_categorical(df_to_be_sorted):
 
         """
@@ -230,24 +237,26 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
             }
             try:
                 conc = convert_conc(rec_base['section'], rec_base['township'], rec_base['township_bearing_str'],
-                                         rec_base['rng'],
-                                         rec_base['rng_bearing_str'], rec_base['baseline_str'])
+                                    rec_base['rng'],
+                                    rec_base['rng_bearing_str'], rec_base['baseline_str'])
                 all_concs.append(conc)
             except ValueError:
                 pass
         return all_concs
 
-    print('triangulator')
+    all_plats_df = original_plat_df
     north_reference, magnetic_declination, convergence_angle, target_azimuth = well_parameter_data[0], \
         well_parameter_data[1], float(well_parameter_data[2]), float(well_parameter_data[3])
 
     tsr_data = tsr_data_df.values.tolist()
     new_conc = reTranslateData_2(tsr_data[0][:6])
     data_df_new = df[df['conc'] == new_conc]
-    data_df_new['decimal_azimuth_ref_adjusted'] = data_df_new.apply(lambda x: transform_and_correct_for_north_ref(x['north_ref'], x['decimal_azimuth'], convergence_angle), axis=1)
+    data_df_new['decimal_azimuth_ref_adjusted'] = data_df_new.apply(
+        lambda x: transform_and_correct_for_north_ref(x['north_ref'], x['decimal_azimuth'], convergence_angle), axis=1)
 
     # data_df_new['azimuth'] = data_df_new.apply(lambda: transform_and_correct_for_north_ref(data_df_new['north_ref'], data_df_new['azimuth']), axis=1)
     rel_original_data = df[df['conc'] == new_conc]
+    # print(rel_original_data)
     all_known_concs = []
 
     if existing_data:
@@ -256,24 +265,11 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
         # all_known_concs = gather_existing_concs()
     else:
         data_df = df[df['conc'] == new_conc]
-        # print(data)
+    old_df = data_df
     data = data_df.to_numpy().tolist()
     data, _ = dataConverterPlatToUtm(data)
 
-    print(1, data)
-
     _, data = process_survey_data(data_df)
-    print(2, data)
-    # print('points geo', points_geodesic)
-    # print('points geo', points_planar)
-
-    # data1 = create_relative_section_polygon(data_df)
-
-    # print('data', data1)
-    # data, data_new_dec = dataConverterPlatToUtm(data)
-    # print('data', data)
-    # graphed_data = [points_geodesic]
-    # graph_plats(graphed_data)
 
     for index, sublist in enumerate(data):
         if index < 4:  # Indices 0-3
@@ -346,27 +342,33 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
     section = int(float(tsr_data[0][0]))
     data = [i[:2] for i in data]
 
-
     section_degrees_data = [data]
     min_curv_data = survey_data_df
+    well_path_tester = copy.copy(survey_data_df)
     prev_section_data = tsr_data[0][:6]
-    print("\n\n")
+    print("\n\n\n\n\n\n\n\n")
     dir_lst = ['west_down_2', 'west_down_1', 'west_up_1', 'west_up_2', 'north_left_2', 'north_left_1', 'north_right_1',
                'north_right_2', 'east_up_2', 'east_up_1', 'east_down_1', 'east_down_2', 'south_right_2',
                'south_right_1',
                'south_left_1', 'south_left_2']
+    print(min_curv_data)
     while True:
-        # print("____________________________")
+        print("____________________________")
         # print('concs', known_conc_data)
         data = [i[:2] for i in data]
         corners, sides_generated = ma.cornerGeneratorProcess(data)
         sides_generated = [[j[:-1] for j in i] for i in sides_generated]
         segment_lst = [[[i[j], i[j + 1]] for j in range(len(i) - 1)] for i in sides_generated]
+        # intersection, direction, well_index_end, well_path_tester, _ = findWellPathBoundaryIntersectionV2(segment_lst,
+        #                                                                                                     well_path_tester,
+        #                                                                                                     shl=shl)
+
         intersection, direction, well_index_end, foo, well_path_tester = findWellPathBoundaryIntersection(segment_lst,
                                                                                                           survey_data,
                                                                                                           well_parameter_data,
                                                                                                           plat_north_ref,
                                                                                                           foo, shl)
+        print('well path', well_path_tester)
         all_sides = []
         for i in sides_generated:
             all_sides.extend(i)
@@ -375,23 +377,18 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
 
         if not well_path_tester or direction == 'Null':
             # graph_plat_and_well(section_degrees_data, well_path_tester)
-            # graph_plats_and_well(section_degrees_data, well_path_tester)
-            # print(section_degrees_data)
-            # print(direction)/
-            # print('break')
+            graph_plats_and_well(section_degrees_data, well_path_tester)
+
             return min_curv_data, known_conc_data, section_degrees_data, plat_north_refs_lst, shl
         index = dirLst.index(direction)
         new_section = lst[section][index]
-        # print('direction', direction, new_section)
 
         township, townshipDir, rng, rngDir, prev_section_data = modifySection(section, new_section, prev_section_data)
         conc_info = [new_section, township, townshipDir, rng, rngDir, tsr_data[0][5]]
         new_conc = reTranslateData_2(conc_info)
         if new_conc in known_conc_data:
-            # print('already used conc', new_conc)
             known_index = known_conc_data.index(new_conc)
             data = section_degrees_data[known_index]
-
             counter += 1
         else:
 
@@ -406,7 +403,6 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
 
             new_df = sort_by_custom_order_categorical(new_df)
 
-
             data_new = new_df.to_numpy().tolist()
             if len(data_new) == 0:
                 data_new = GUIDataAdd.addDataIfAGRCNotFound(conn, new_conc, conc_info)
@@ -418,14 +414,144 @@ def mainTriangulator(conn, tsr_data_df, data_plat_coords, df, conc, survey_data_
             # data_test = create_relative_section_polygon(df[df['conc'] == new_conc])
             _, data_new_deg = process_survey_data(new_df)
             # data_new_deg, data_new_dec = dataConverterPlatToUtm(data_new)
-
+            print('data_new_deg', data_new_deg)
             rewritten_coords = coordsAdjuster(data_new_deg, data, direction, proxBoo)
+            rewritten_coords = stitch_polygons(data_new_deg, data, direction)
+            # rewritten_coords = coords_stitcher(new_df,
+            #                                    all_plats_df[all_plats_df['conc'] == known_conc_data[-2]],
+            #                                    direction.lower(), proxBoo)
             data = rewritten_coords
+            old_df = new_df
             section_degrees_data.append(data)
             counter += 1
         section = new_section
     print('break 2')
     return min_curv_data, known_conc_data, section_degrees_data, plat_north_refs_lst, shl
+
+
+def coords_stitcher(next_coords_df, current_coords_df, direction, direction_boo):
+    def get_point_indices():
+        """
+        Determines the correct starting and matched indices based on direction.
+
+        Args:
+            direction (str): The cardinal direction ("W", "N", "E", "S").
+            direction_boo (bool): True to select the first index pair, False for the second.
+
+        Returns:
+            tuple: A tuple containing the (starting_point_index, matched_point_index).
+        """
+        # Consolidate all mappings into a single, clear dictionary.
+        # Format: direction: ([start_indices], [matched_indices])
+        # POINT_MAPPING = {
+        #     "w": ([0, 4], [12, 8]),
+        #     "n": ([4, 8], [16, 12]),
+        #     "e": ([8, 12], [4, 0]),
+        #     "s": ([12, 16], [8, 4]),
+        # }
+        POINT_MAPPING = {
+            "w": ([0, 4], [14, 10]),
+            "n": ([5, 9], [19, 15]),
+            "e": ([10, 14], [4, 0]),
+            "s": ([15, 19], [9, 5]),
+        }
+        lst_dict = {"0": [0, 4], "1": [4, 8], "2": [8, 12], "3": [12, 16]}
+        matched_lst_dict = {"0": [12, 8], "1": [16, 12], "2": [4, 0], "3": [8, 4]}
+        # Use a simple integer (0 or 1) to select from the lists.
+        selector = 0 if direction_boo else 1
+        print(direction)
+        # Directly look up the lists of options for the given direction.
+        start_options, match_options = POINT_MAPPING[direction]
+
+        # Select the specific index from each list and return the pair.
+        return start_options[selector], match_options[selector]
+
+    def calculate_diff_from_dfs():
+        """
+        Calculates the difference between two coordinates selected from DataFrames.
+
+        The function translates legacy list-based indices into DataFrame locations
+        to select the appropriate points for calculation.
+
+        Args:
+            current_coords_df (pd.DataFrame): DataFrame with 'west', 'north', 'east', 'south' columns.
+            next_coords_df (pd.DataFrame): DataFrame with 'west', 'north', 'east', 'south' columns.
+            starting_pts (int): The legacy index for the point in current_coords_df.
+            matched_pt (int): The legacy index for the point in next_coords_df.
+
+        Returns:
+            tuple: A tuple containing the difference in x and y (diff_x, diff_y).
+        """
+        # Map for converting index to column name
+
+        column_map = {0: 'west', 1: 'north', 2: 'east', 3: 'south'}
+
+        # 1. Get location for the starting point in current_coords_df
+        start_col = column_map[starting_pts // 5]
+
+        start_row = (starting_pts % 5)
+        print(current_coords_df)
+        current_coords_df['point_i'] = current_coords_df.groupby('side').cumcount()
+        current_point = \
+            current_coords_df[(current_coords_df['side'] == start_col) & (current_coords_df['point_i'] == start_row)][
+                ['x', 'y']].iloc[0].values.tolist()
+        # current_point = current_coords_df.loc[start_row, start_col]
+        # 2. Get location for the matched point in next_coords_df
+        matched_col = column_map[matched_pt // 5]
+        matched_row = matched_pt % 5
+
+        next_point = \
+            next_coords_df[(next_coords_df['side'] == matched_col) & (next_coords_df['point_i'] == matched_row)][
+                ['x', 'y']].iloc[0].values.tolist()
+        # next_point = next_coords_df.loc[matched_row, matched_col]
+
+        # 3. Perform the calculation
+        diff_x_pt = current_point[0] - next_point[0]
+        diff_y_pt = current_point[1] - next_point[1]
+
+        return diff_x_pt, diff_y_pt
+
+    def my_calc(x, y):
+        return x + diff_x_used, y + diff_y_used
+
+    def update_original_dataframe(df_o, df_new):
+        dir_dict = {'n': ['north', 'south'],
+                    's': ['south', 'north'],
+                    'e': ['west', 'east'],
+                    'w': ['east', 'west']}
+        dir_lst = dir_dict[direction]
+        north_coords = df_o[df_o['side'] == dir_lst[0]][['x', 'y']].iloc[::-1].reset_index(drop=True)
+        south_indices = df_new[df_new['side'] == dir_lst[1]].index
+        df_new.loc[south_indices, ['x', 'y']] = north_coords.values
+        #
+        # df2 = df_o.set_index(['conc', 'side', 'point_i'])
+        # repl2 = df_new.set_index(['conc', 'side', 'point_i'])
+        #
+        # # 2) restrict repl2 to just the columns you want to overwrite
+        # #    (here: 'x' and 'y')
+        # repl2 = repl2[['x', 'y']]
+        #
+        # # 3) update df2 in place
+        # df2.update(repl2)
+        #
+        # # 4) (optionally) drop the index back to columns
+        # df_new = df2.reset_index()
+        return df_new
+
+    # to run this on every cell in every column:
+    # result_df = df.applymap(my_calc)
+    opp_direction_list = {"0": '2', "1": '3', "2": '0', "3": '1'}
+    cols = ['south', 'east', 'north', 'west']
+
+    starting_pts, matched_pt = get_point_indices()
+    diff_x_used, diff_y_used = calculate_diff_from_dfs()
+
+    next_coords_df[['x', 'y']] = next_coords_df.apply(lambda row: my_calc(row['x'], row['y']), axis=1,
+                                                      result_type='expand')
+    next_coords_df = update_original_dataframe(current_coords_df, next_coords_df)
+
+    # next_coords_df_mod = next_coords_df.applymap(my_calc)
+    return next_coords_df
 
 
 def create_relative_section_polygon(df):
@@ -515,6 +641,7 @@ def convertToDecimal2(data):
             return conversions[variable][val]
         else:
             return val
+
     data_converted = []
     for item in data:
         if len(item) >= 21:
@@ -525,7 +652,7 @@ def convertToDecimal2(data):
         item[2] = int(float(item[2]))
         item[3] = int(float(item[3]))
         item[4] = float(item[4])
-        item[5] = translateDirectionToNumber( 'alignment',item[5])
+        item[5] = translateDirectionToNumber('alignment', item[5])
 
         side, deg, min, sec, dir_val = map(float, item[1:6])
         dec_val_base = deg + min / 60 + sec / 3600
@@ -572,9 +699,11 @@ def calculate_next_utm_points(data):
         utm_points_2.append([pt1, pt2])
     return utm_points_2
 
+
 def reorderDecimalData(data):
     return [data[3], data[2], data[1], data[0], data[8], data[9], data[10], data[11], data[4], data[5], data[6],
             data[7], data[15], data[14], data[13], data[12]]
+
 
 def oneToMany(lst, number):
     count = -1
@@ -585,9 +714,6 @@ def oneToMany(lst, number):
             count += 1
         outLst[count].append(lst[i])
     return outLst
-
-
-
 
 
 def find_point_from_footages(polygon_coords, ns_distance, ns_type, ew_distance, ew_type):
@@ -698,6 +824,7 @@ def get_starter_pt(row, current_plat):
     out = find_point_from_footages(current_plat, float(fnsl_val), fnsl, float(fewl_val), fewl)
     return out
 
+
 def convert_to_pts(plat):
     def new_point_finder(r, angle, center_x, center_y):
         x_new = center_x + (r * math.cos(math.radians(angle)))
@@ -756,6 +883,8 @@ def convert_to_pts(plat):
     #     x, y = new_point_finder(float(row['length']), float(row['decimal_azimuth']), x, y)
     # xy_lst.append([x, y, dir_order[test]])
     return tuple(xy_lst)
+
+
 def sort_dataframe_by_custom_order(df, column_name, custom_order_list):
     """
     Sort DataFrame by a custom order for a specific column using pandas Categorical.
@@ -805,6 +934,7 @@ def sort_dataframe_by_custom_order(df, column_name, custom_order_list):
     df_sorted = df_sorted.reset_index(drop=True)
 
     return df_sorted
+
 
 def triangulatorWithKnownData(current_plat_coords, current_plat_conc, original_all_plats_df, well_path):
     """
@@ -1192,10 +1322,62 @@ def get_direction_sides(segment_lst, well_path, sides_generated):
     return [0, 0], 'Null', len(well_path), well_path, well_path_df
 
 
+def findWellPathBoundaryIntersectionV2(segment_lst, df, shl=(0, 0)):
+    """
+    Find intersection between well path and boundary segments, clip at the point after intersection.
+
+    Args:
+        segment_lst: List of boundary segments grouped by direction [W, N, E, S]
+        df: DataFrame with well survey data (already contains calculated positions)
+        shl: Surface hole location offset (x, y)
+
+    Returns:
+        intersection_point, direction, clip_index, clipped_df, offset_points
+    """
+    directions = ['W', 'N', 'E', 'S']
+
+    # Extract offset points from DataFrame
+    offset_pts = df[['e_offset', 'n_offset']].values
+    offset_pts[:, 0] += shl[0]  # Apply surface hole offset
+    offset_pts[:, 1] += shl[1]
+
+    # Check each segment of the well path for intersection
+    for i in range(1, len(offset_pts)):
+        well_segment = LineString([
+            Point(offset_pts[i - 1]),
+            Point(offset_pts[i])
+        ])
+
+        # Check against each boundary segment
+        for dir_idx, direction_segments in enumerate(segment_lst):
+            for segment in direction_segments:
+                boundary_segment = LineString([
+                    Point(segment[0]),
+                    Point(segment[1])
+                ])
+
+                intersection = well_segment.intersection(boundary_segment)
+
+                if not intersection.is_empty and intersection.geom_type == 'Point':
+                    # Found intersection - clip at the point AFTER (index i)
+                    clipped_df = df.iloc[i + 1:].copy()
+
+                    return (
+                        [intersection.x, intersection.y],
+                        directions[dir_idx],
+                        i,  # Return index of point after intersection
+                        clipped_df,
+                        offset_pts[i + 1:]
+                    )
+
+    # No intersection found - return full dataset
+    return [0, 0], 'Null', len(df) - 1, df, df
+
+
 def findWellPathBoundaryIntersection(segment_lst, survey_data, well_parameter_data, plat_ref, min_curv_data, shl):
     direction = ['W', 'N', 'E', 'S']
     north_reference, magnetic_declination, convergence_angle, target_azimuth = well_parameter_data[0], \
-    well_parameter_data[1], float(well_parameter_data[2]), float(well_parameter_data[3])
+        well_parameter_data[1], float(well_parameter_data[2]), float(well_parameter_data[3])
     md_lst, inc_lst, azi_lst = [i[0] for i in survey_data], [math.degrees(i[1]) for i in survey_data], [
         math.degrees(i[2]) for i in survey_data]
     bearing_lst = [wmc.bearing(float(azi_lst[i]), float(convergence_angle), north_reference, plat_ref, 0) for i in
@@ -1365,7 +1547,7 @@ def getBooProx(coordinates, inside_pts, direction):
     """Determine proximity to boundaries."""
     polygon = Polygon(coordinates)
     bounds = polygon.bounds  # (minx, miny, maxx, maxy)
-
+    print([inside_pts])
     last_pt = inside_pts[-1]
 
     if direction in ['N', 'S']:
@@ -1400,11 +1582,123 @@ def findUniqueListsInListOfLists(lst):
             lst_unique.append(i)
     return lst_unique
 
+def stitch_polygons(polygon1: List[List[float]], polygon2: List[List[float]], direction: str) -> List[List[float]]:
+    """
+    Stitch polygon2 to polygon1 on the specified side by replacing polygon2's side
+    with polygon1's corresponding side points.
+
+    Args:
+        polygon1: First polygon as list of [x, y] coordinates (20 points)
+        polygon2: Second polygon as list of [x, y] coordinates (20 points)
+        direction: Direction to stitch ("W", "N", "E", "S")
+
+    Returns:
+        Modified polygon2 coordinates stitched to polygon1
+    """
+    # Direction mapping: side index ranges
+    lst_dict = {"W": [0, 4], "N": [4, 8], "E": [8, 12], "S": [12, 16]}
+
+    if direction not in lst_dict:
+        raise ValueError(f"Invalid direction: {direction}. Must be one of {list(lst_dict.keys())}")
+
+    # Get side indices for specified direction
+    start_idx, end_idx = lst_dict[direction]
+
+    # Extract the side points from polygon1 (5 points including corners)
+    poly1_side = polygon1[start_idx:end_idx + 1]
+
+    # Create modified polygon2 by replacing its corresponding side
+    modified_poly2 = polygon2.copy()
+
+    # Replace polygon2's side with polygon1's side points
+    for i, point_idx in enumerate(range(start_idx, end_idx + 1)):
+        modified_poly2[point_idx] = poly1_side[i]
+
+    # Calculate translation vector to position polygon2 adjacent to polygon1
+    translation = calculate_translation_vector(polygon1, modified_poly2, direction)
+
+    # Apply translation to all points except the shared side
+    final_poly2 = translate_polygon_except_side(modified_poly2, translation, direction, lst_dict)
+
+    return final_poly2
+
+
+def calculate_translation_vector(poly1: List[List[float]], poly2: List[List[float]], direction: str) -> Tuple[
+    float, float]:
+    """Calculate translation vector to position polygon2 adjacent to polygon1."""
+
+    # Get centroids for reference
+    centroid1 = Polygon(poly1).centroid
+    centroid2 = Polygon(poly2).centroid
+
+    # Direction vectors for positioning
+    direction_vectors = {
+        "W": (-1, 0),  # West - move left
+        "N": (0, 1),  # North - move up
+        "E": (1, 0),  # East - move right
+        "S": (0, -1)  # South - move down
+    }
+
+    # Get polygon bounds
+    bounds1 = Polygon(poly1).bounds  # (minx, miny, maxx, maxy)
+    bounds2 = Polygon(poly2).bounds
+
+    dx, dy = direction_vectors[direction]
+
+    # Calculate translation based on direction
+    if direction == "W":
+        # Position polygon2 to the west of polygon1
+        translate_x = bounds1[0] - bounds2[2]  # poly1 minx - poly2 maxx
+        translate_y = centroid1.y - centroid2.y
+    elif direction == "E":
+        # Position polygon2 to the east of polygon1
+        translate_x = bounds1[2] - bounds2[0]  # poly1 maxx - poly2 minx
+        translate_y = centroid1.y - centroid2.y
+    elif direction == "N":
+        # Position polygon2 to the north of polygon1
+        translate_x = centroid1.x - centroid2.x
+        translate_y = bounds1[3] - bounds2[1]  # poly1 maxy - poly2 miny
+    else:  # direction == "S"
+        # Position polygon2 to the south of polygon1
+        translate_x = centroid1.x - centroid2.x
+        translate_y = bounds1[1] - bounds2[3]  # poly1 miny - poly2 maxy
+
+    return translate_x, translate_y
+
+
+def translate_polygon_except_side(polygon: List[List[float]], translation: Tuple[float, float],
+                                  direction: str, lst_dict: Dict[str, List[int]]) -> List[List[float]]:
+    """Apply translation to all points except those on the shared side."""
+
+    dx, dy = translation
+    start_idx, end_idx = lst_dict[direction]
+
+    translated_polygon = []
+
+    for i, point in enumerate(polygon):
+        # Don't translate points on the shared side
+        if start_idx <= i <= end_idx:
+            translated_polygon.append(point)
+        else:
+            # Translate other points
+            translated_polygon.append([point[0] + dx, point[1] + dy])
+
+    return translated_polygon
+
+
+def get_side_points(polygon: List[List[float]], direction: str) -> List[List[float]]:
+    """Extract points for a specific side of the polygon."""
+    lst_dict = {"W": [0, 4], "N": [4, 8], "E": [8, 12], "S": [12, 16]}
+    start_idx, end_idx = lst_dict[direction]
+    return polygon[start_idx:end_idx + 1]
 
 def coordsAdjuster(new_coords, last_coords, direction, direction_boo):
+
     directions_dict = {"W": '0', "N": '1', "E": "2", "S": "3"}
     direction = directions_dict[direction]
-    test_corners, old_data_organized = _corner_generator_process(last_coords)
+    test_corners, old_data_organized = ma.cornerGeneratorProcess(last_coords)
+
+    # test_corners, old_data_organized = _corner_generator_process(last_coords)
     old_data_organized = [[j[:2] for j in i] for i in old_data_organized]
     old_data_organized = [[[round(k, 1) for k in j] for j in i] for i in old_data_organized]
     old_data_organized = [findUniqueListsInListOfLists(i) for i in old_data_organized]
@@ -1420,7 +1714,8 @@ def coordsAdjuster(new_coords, last_coords, direction, direction_boo):
                      new_coords[matched_pt][1]
     new_coords_test = [[i[0] + diff_x, i[1] + diff_y] for i in new_coords]
 
-    test_corners, new_coords_test_organized = _corner_generator_process(new_coords_test)
+    # test_corners, new_coords_test_organized = _corner_generator_process(new_coords_test)
+    test_corners, new_coords_test_organized = ma.cornerGeneratorProcess(new_coords_test)
     new_coords_test_organized = [[j[:2] for j in i] for i in new_coords_test_organized]
     new_coords_test_organized = [[[round(k, 1) for k in j] for j in i] for i in new_coords_test_organized]
     new_coords_test_organized = [findUniqueListsInListOfLists(i) for i in new_coords_test_organized]
@@ -1514,8 +1809,9 @@ def graph_plat_and_well_v2(poly, well):
     # 5. Set aspect ratio and display the plot
     ax.set_aspect('equal', 'box')
     plt.show()
-def graph_plats_and_well(poly, well):
 
+
+def graph_plats_and_well(poly, well):
     x_coords_1 = [point[0] for point in well]
     y_coords_1 = [point[1] for point in well]
     fig, ax = plt.subplots()
@@ -1530,6 +1826,7 @@ def graph_plats_and_well(poly, well):
     # 5. Set aspect ratio and display the plot
     ax.set_aspect('equal', 'box')
     plt.show()
+
 
 def graph_plats(poly):
     fig, ax = plt.subplots()

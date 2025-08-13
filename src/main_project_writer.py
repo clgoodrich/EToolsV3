@@ -210,8 +210,8 @@ class DataWriter:
             survey_label (str): Survey type identifier for debugging purposes
         """
         # Clear coordinate display fields for fresh data presentation
-        self.ui.shl_lat_easting.setText("")
-        self.ui.shl_lon_northing.setText("")
+        # self.ui.shl_lat_easting.setText("")
+        # self.ui.shl_lon_northing.setText("")
 
         # Reset table model and prepare for new data
         self.dx_survey_model.setRowCount(0)
@@ -249,8 +249,8 @@ class DataWriter:
 
         # Display surface location coordinates in dedicated fields
         first_pt = survey.head(1)
-        self.ui.shl_lat_easting.setText(str(first_pt['easting'].iloc[0]))
-        self.ui.shl_lon_northing.setText(str(first_pt['northing'].iloc[0]))
+        # self.ui.shl_lat_easting.setText(str(first_pt['easting'].iloc[0]))
+        # self.ui.shl_lon_northing.setText(str(first_pt['northing'].iloc[0]))
 
     def _format_display_value(self, value: Any) -> Any:
         """Apply optimal numerical formatting for display presentation.

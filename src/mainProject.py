@@ -1588,7 +1588,7 @@ class ETools(QMainWindow):
         self.write_radio_buttons(self.well.cl_dx_dict, self.well.spec_surveys_dict)
 
         # Connect additional UI buttons
-        self.ui.calc_new_dx_with_new_shl_pushbutton.clicked.connect(self.process_with_new_shl)
+        # self.ui.calc_new_dx_with_new_shl_pushbutton.clicked.connect(self.process_with_new_shl)
         self.ui.pushbutton_rerun_coords.pressed.connect(lambda: self.etools_process_with_new_coords(north_ref))
 
     def main_processes_program(self, north_ref: str) -> None:
@@ -1903,8 +1903,8 @@ class ETools(QMainWindow):
         detected as either lat/lon or UTM format.
         """
         # Get coordinates from UI and determine format
-        pt = self.determine_coord_system(float(self.ui.shl_lat_easting.text()),
-                                         float(self.ui.shl_lon_northing.text()))
+        # pt = self.determine_coord_system(float(self.ui.shl_lat_easting.text()),
+        #                                  float(self.ui.shl_lon_northing.text()))
 
         # Update well with new starting point and reprocess
         self.well.set_starting_point(pt)
