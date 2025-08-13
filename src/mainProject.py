@@ -24,7 +24,7 @@ import os
 import pandas as pd
 import numpy as np
 import copy
-from PyQt5.QtCore import QTimer
+from PyQt5.QtCore import QTimer, QSignalBlocker
 import time
 import sys
 import weakref
@@ -1137,6 +1137,8 @@ class ETools(QMainWindow):
         super().__init__()
 
         # Initialize instance variables for major components
+        self._last_processed_api = ""
+        self._last_processed_lateral = ""
         self.writer = None
         self.survey_importer = None
         self.wcr_process = None
@@ -1175,6 +1177,8 @@ class ETools(QMainWindow):
         # Set up UI from Qt Designer file
         self.ui = Ui_Dialog()
         self.ui.setupUi(self)
+        self._update_db_button_state(connected=False)
+
         self.ui.db_connect_pushbutton.pressed.connect(self.connect_to_db)
 
         # Connect to local SQLite database for PLSS data
@@ -1191,8 +1195,12 @@ class ETools(QMainWindow):
         self.clearer = UltraFastClearer(self, self.ui.well_api_val)
 
         # Connect UI signals to handler methods
-        self.ui.well_api_val.returnPressed.connect(self.run_api_when_entered)
-        self.ui.lateral_name_line_edit.returnPressed.connect(self.run_api_when_entered)
+        self.ui.well_api_val.editingFinished.connect(self.run_api_when_entered)
+        self.ui.lateral_name_line_edit.editingFinished.connect(self.run_api_when_entered)
+
+        # self.ui.well_api_val.returnPressed.connect(self.run_api_when_entered)
+        # self.ui.lateral_name_line_edit.returnPressed.connect(self.run_api_when_entered)
+
 
         # self.ui.dx_survey_bhl_line.returnPressed.connect()
         # self.ui.dx_survey_kop_line.returnPressed.connect()
@@ -1227,17 +1235,64 @@ class ETools(QMainWindow):
         # self.run_api_when_entered()
         # self.process_when_dx_button_pushed()
 
+    def handle_api_input(self) -> None:
+        """Handle API input changes, only process if values actually changed."""
+        current_api = self.ui.well_api_val.text().strip()
+        current_lateral = self.ui.lateral_name_line_edit.text().strip()
+
+        # Only process if values actually changed AND we have a valid API
+        if (current_api and
+                (current_api != self._last_processed_api or
+                 current_lateral != self._last_processed_lateral)):
+
+            print(f"API changed from '{self._last_processed_api}' to '{current_api}'")
+            print(f"Lateral changed from '{self._last_processed_lateral}' to '{current_lateral}'")
+
+            # Update tracked values
+            self._last_processed_api = current_api
+            self._last_processed_lateral = current_lateral
+
+            # Process the new API
+            self.run_api_when_entered()
+        else:
+            print("No API change detected, skipping processing")
     def connect_to_db(self):
-        # Initialize database connection with error handling
+        print('connection')
+        """Connect to database and update button state accordingly."""
         try:
             self.db = DatabaseManager()
+            self._update_db_button_state(connected=True)
             self.db_connect_popup()
-            # if self.ui.well_api_val != "":
-            #     self.run_api_when_entered()
         except sqlalchemy.exc.OperationalError:
-            self.no_db_connect_popup()
             self.db = None
+            self._update_db_button_state(connected=False)
+            self.no_db_connect_popup()
         return self.db
+
+    def _update_db_button_state(self, connected: bool):
+        """Update button appearance based on connection status.
+
+        Args:
+            connected: True if database is connected, False otherwise
+        """
+        if connected:
+            self.ui.db_connect_pushbutton.setText("DB Connected ✓")
+            self.ui.db_connect_pushbutton.setStyleSheet(
+                "QPushButton { background-color: #4CAF50; color: white; font-weight: bold; }"
+            )
+            self.ui.db_connect_pushbutton.setEnabled(False)  # Disable when connected
+        else:
+            self.ui.db_connect_pushbutton.setText("Connect to DB")
+            self.ui.db_connect_pushbutton.setStyleSheet(
+                "QPushButton { background-color: #f44336; color: white; }"
+            )
+            self.ui.db_connect_pushbutton.setEnabled(True)
+
+    def disconnect_from_db(self):
+        """Disconnect from database and reset button state."""
+        if self.db:
+            self.db = None
+            self._update_db_button_state(connected=False)
 
     def open_dialog_new_row(self) -> None:
         """Open dialog for adding a new survey point and process the input.
@@ -1363,6 +1418,11 @@ class ETools(QMainWindow):
         QMessageBox.warning(self, "Attention", "Invalid API Detected! Fix it! (Possibly a string?)",
                             QMessageBox.Ok)
 
+    def missing_well_id(self) -> None:
+        """Display warning dialog for invalid API number input."""
+        QMessageBox.warning(self, "Attention", "You're missing either the api or the lateral number",
+                            QMessageBox.Ok)
+
     def no_db_connect_popup(self) -> None:
         """Display warning dialog for invalid API number input."""
         QMessageBox.warning(self, "Attention", "No database connected",
@@ -1450,75 +1510,93 @@ class ETools(QMainWindow):
             self.no_dx_popup()
 
     def run_api_when_entered(self) -> None:
-        """Process API number entry and initialize well data retrieval.
+        """Process API number entry and initialize well data retrieval."""
 
-        This method is triggered when the user enters an API number. It validates
-        the input, clears previous data, and prepares for survey data loading.
-        The actual survey processing is initiated separately.
+        # Store current values before clearing
+        current_api = self.ui.well_api_val.text()
+        current_lateral = self.ui.lateral_name_line_edit.text()
 
-        Processing Steps:
-            1. Clear all previous well data and visualizations
-            2. Validate API format and lateral designation
-            3. Retrieve well parameters from database
-            4. Prepare UI for new survey data
-        """
-        # Clear all existing data and visualizations
-        self.clearer.execute_clear()
-        main_project_drawer.clear_widget(self.ui.well_viz_display)
-        main_project_drawer.clear_layout(self.ui.well_viz_display_general)
-        main_project_drawer.clear_layout(self.ui.well_viz_display_tsr)
+        # Block signals to prevent recursive calls during clearing
+        self.ui.well_api_val.blockSignals(True)
+        self.ui.lateral_name_line_edit.blockSignals(True)
 
-        # Clear individual coordinate displays
-        for i in range(8):
-            ui_viz = getattr(self.ui, f"well_graphic_coords_{i + 1}")
-            ui_viz_2 = getattr(self.ui, f"well_graphic_mp_individual_{i + 1}")
-            main_project_drawer.clear_layout(ui_viz)
-            main_project_drawer.clear_layout(ui_viz_2)
-
-
-        # Reset file paths
-        self.file_path_planned = None
-        self.file_path_drilled = None
-        self.file_path_dict = {'planned': self.file_path_planned, 'drilled': self.file_path_drilled}
-
-        # Get and validate API input
-        api_val = self.ui.well_api_val.text()
-        lateral_name = self.ui.lateral_name_line_edit.text()
-
-        if lateral_name == '':
-            dialog = LateralNameDialog(parent=self)  # 'self' would be your main window
-
-            if dialog.exec_() == QDialog.Accepted:
-                lateral_name = dialog.get_value()
-                self.ui.lateral_name_line_edit.setText(lateral_name)
-                print(f"Lateral name provided by user: {lateral_name}")
-            else:
-                # Handle the case where the user cancels the dialog
-                QMessageBox.critical(self, "Operation Aborted",
-                                     "A valid lateral name is required to proceed. The process cannot continue.")
-                return  # Or raise an exception to stop execution
-        # if lateral_name == '':
-        #     lateral_name = '0000'
-        #     self.ui.lateral_name_line_edit.setText('0000')
-
-        # Truncate API to 10 digits if longer
-        if len(api_val) > 10:
-            api_val = api_val[:10]
-            self.ui.well_api_val.setText(api_val)
-
-        # Validate API is numeric
         try:
-            int(float(api_val))
-        except ValueError:
-            self.bad_api_popup()
-            return
+            # Clear all existing data and visualizations
+            self.clearer.execute_clear()
 
-        # Store validated values and retrieve well parameters
-        self.api_val = api_val
-        self.lateral = lateral_name
-        self.retrieve_well_parameters()
+            # Restore the API and lateral values after clearing
+            self.ui.well_api_val.setText(current_api)
+            self.ui.lateral_name_line_edit.setText(current_lateral)
+
+            # Continue with your existing processing logic...
+            main_project_drawer.clear_widget(self.ui.well_viz_display)
+            main_project_drawer.clear_layout(self.ui.well_viz_display_general)
+            main_project_drawer.clear_layout(self.ui.well_viz_display_tsr)
+
+            # Clear individual coordinate displays
+            for i in range(8):
+                ui_viz = getattr(self.ui, f"well_graphic_coords_{i + 1}")
+                ui_viz_2 = getattr(self.ui, f"well_graphic_mp_individual_{i + 1}")
+                main_project_drawer.clear_layout(ui_viz)
+                main_project_drawer.clear_layout(ui_viz_2)
+
+            # Reset file paths
+            self.file_path_planned = None
+            self.file_path_drilled = None
+            self.file_path_dict = {'planned': self.file_path_planned, 'drilled': self.file_path_drilled}
+
+            # Get and validate API input
+            api_val = self.ui.well_api_val.text()
+            if len(api_val) == 14:
+                self.ui.lateral_name_line_edit.setText(api_val[-4:])
+                api_val = api_val[:10]
+                self.ui.well_api_val.setText(api_val)
+
+            lateral_name = self.ui.lateral_name_line_edit.text()
+            if lateral_name == '':
+                dialog = LateralNameDialog(parent=self)  # 'self' would be your main window
+
+                if dialog.exec_() == QDialog.Accepted:
+                    lateral_name = dialog.get_value()
+                    self.ui.lateral_name_line_edit.setText(lateral_name)
+                    print(f"Lateral name provided by user: {lateral_name}")
+                else:
+                    # Handle the case where the user cancels the dialog
+                    QMessageBox.critical(self, "Operation Aborted",
+                                         "A valid lateral name is required to proceed. The process cannot continue.")
+                    # self.ui.well_api_val.blockSignals(False)
+                    # self.ui.lateral_name_line_edit.blockSignals(False)
+                    return  # Or raise an exception to stop execution
+            # if lateral_name == '':
+            #     lateral_name = '0000'
+            #     self.ui.lateral_name_line_edit.setText('0000')
+
+            # Truncate API to 10 digits if longer
+
+
+            # Validate API is numeric
+            try:
+                int(float(api_val))
+            except ValueError:
+                self.bad_api_popup()
+                # self.ui.well_api_val.blockSignals(False)
+                # self.ui.lateral_name_line_edit.blockSignals(False)
+                return
+
+            # Store validated values and retrieve well parameters
+            self.api_val = api_val
+            self.lateral = lateral_name
+            self.retrieve_well_parameters()
+
+        finally:
+            # Always restore signals
+            self.ui.well_api_val.blockSignals(False)
+            self.ui.lateral_name_line_edit.blockSignals(False)
 
     def process_when_dx_button_pushed(self, survey_dx_imported=None, well_elevation=None, north_ref=None) -> None:
+        if not self.lateral and not self.api_val:
+            self.missing_well_id()
+
         """Process directional survey data when the DX button is clicked.
 
         This method initiates the main survey processing workflow, including:
@@ -1531,10 +1609,6 @@ class ETools(QMainWindow):
         if survey_dx_imported is None:
             survey_dx, well_elevation, north_ref = self.sql_query_survey(self.db, self.api_val, self.lateral)
         else:
-            # try:
-            #     survey_dx, well_elevation, north_ref = self.sql_query_survey(self.db, self.api_val, self.lateral)
-            #
-            # except:
             # Fall back to manual entry if database query fails
             well_elevation = self.ui.dx_survey_elevation.text()
             north_ref = self.ui.dx_survey_north_ref_line.text()

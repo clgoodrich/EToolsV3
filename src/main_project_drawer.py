@@ -715,7 +715,16 @@ class DataDrawer:
         # Initialize color mapping dictionary and define visual palette
         color_map = {}
         # Color palette selected for maximum visual distinction and professional appearance
-        color_palette = ['red', 'blue', 'green', 'orange', 'purple', 'brown', 'pink', 'gray']
+        color_palette = [
+            '#000000',  # Black
+            '#E69F00',  # Orange
+            '#56B4E9',  # Sky Blue
+            '#009E73',  # Bluish Green
+            '#F0E442',  # Yellow
+            '#0072B2',  # Blue
+            '#D55E00',  # Vermillion (Red-Orange)
+            '#CC79A7'  # Reddish Purple
+        ]
 
         # Process each plat boundary for visualization
         for idx, (_, plat_row) in enumerate(self.plat_df.iterrows()):
@@ -786,7 +795,16 @@ class DataDrawer:
         # Red: Planned surveys (proposed well path)
         # Blue: Alternative or comparison surveys
         # Green: Secondary reference surveys
-        color_palette = ['black', 'red', 'blue', 'green']
+        color_palette = [
+            '#000000',  # Black
+            '#E69F00',  # Orange
+            '#56B4E9',  # Sky Blue
+            '#009E73',  # Bluish Green
+            '#F0E442',  # Yellow
+            '#0072B2',  # Blue
+            '#D55E00',  # Vermillion (Red-Orange)
+            '#CC79A7'  # Reddish Purple
+        ]
 
         # Process each survey dataset with systematic color assignment
         for idx, (survey_key, survey_data) in enumerate(survey_dict.items()):
@@ -849,7 +867,16 @@ class DataDrawer:
             6. Add traces to BOTH general and TSR figures for complete visualization
         """
 
-
+        color_palette = [
+            '#000000',  # Black
+            '#E69F00',  # Orange
+            '#56B4E9',  # Sky Blue
+            '#009E73',  # Bluish Green
+            '#F0E442',  # Yellow
+            '#0072B2',  # Blue
+            '#D55E00',  # Vermillion (Red-Orange)
+            '#CC79A7'  # Reddish Purple
+        ]
         # Compile comprehensive custom data array for hover information
         # Array structure: [tvd, md, inc, az, fnl, fsl, fel, fwl, label]
         customdata_full = np.column_stack((
@@ -894,31 +921,61 @@ class DataDrawer:
 
         # Also add traces to TSR figure so survey data appears on both tabs
         # Create copies with TSR-specific names to avoid legend conflicts
-        trace_3d_tsr = go.Scatter3d(
-            x=survey_reference['easting'],
-            y=survey_reference['northing'],
-            z=survey_reference['tvd'] * -0.3048,
-            customdata=customdata_full,
-            mode='lines',
-            name=f"{label}_3d_TSR",
-            hovertemplate=hovertemplate,
-            line=dict(color=given_color, width=4)
-        )
+        grouped = survey_reference.groupby('Conc')
+        counter = 0
+        for i, row in grouped:
+            trace_3d_tsr = go.Scatter3d(
+                x=row['easting'],
+                y=row['northing'],
+                z=row['tvd'] * -0.3048,
+                customdata=customdata_full,
+                mode='lines',
+                name=f"{label}_3d_{i}",
+                hovertemplate=hovertemplate,
+                line=dict(color=color_palette[counter], width=4)
+            )
+            #
+            trace_2d_tsr = go.Scatter3d(
+                x=row['easting'],
+                y=row['northing'],
+                z=row['tvd'] * 0,
+                customdata=customdata_full,
+                mode='lines',
+                name=f"{label}_2d_{i}",
+                hovertemplate=hovertemplate,
+                line=dict(color=color_palette[counter], width=4)
+            )
+            #
+            # # Add survey traces to TSR figure for combined plat/survey visualization
+            self.fig_tsr.add_trace(trace_3d_tsr)
+            self.fig_tsr.add_trace(trace_2d_tsr)
+            counter +=1
 
-        trace_2d_tsr = go.Scatter3d(
-            x=survey_reference['easting'],
-            y=survey_reference['northing'],
-            z=survey_reference['tvd'] * 0,
-            customdata=customdata_full,
-            mode='lines',
-            name=f"{label}_2d_TSR",
-            hovertemplate=hovertemplate,
-            line=dict(color=given_color, width=4)
-        )
-
-        # Add survey traces to TSR figure for combined plat/survey visualization
-        self.fig_tsr.add_trace(trace_3d_tsr)
-        self.fig_tsr.add_trace(trace_2d_tsr)
+        # trace_3d_tsr = go.Scatter3d(
+        #     x=survey_reference['easting'],
+        #     y=survey_reference['northing'],
+        #     z=survey_reference['tvd'] * -0.3048,
+        #     customdata=customdata_full,
+        #     mode='lines',
+        #     name=f"{label}_3d_TSR",
+        #     hovertemplate=hovertemplate,
+        #     line=dict(color=given_color, width=4)
+        # )
+        #
+        # trace_2d_tsr = go.Scatter3d(
+        #     x=survey_reference['easting'],
+        #     y=survey_reference['northing'],
+        #     z=survey_reference['tvd'] * 0,
+        #     customdata=customdata_full,
+        #     mode='lines',
+        #     name=f"{label}_2d_TSR",
+        #     hovertemplate=hovertemplate,
+        #     line=dict(color=given_color, width=4)
+        # )
+        #
+        # # Add survey traces to TSR figure for combined plat/survey visualization
+        # self.fig_tsr.add_trace(trace_3d_tsr)
+        # self.fig_tsr.add_trace(trace_2d_tsr)
 
     def check_box_activate_path(self, lbl: str, state: int) -> None:
         """Manage visibility of survey path visualization elements through checkbox controls.
