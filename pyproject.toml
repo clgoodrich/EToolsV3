@@ -1,0 +1,55 @@
+[project]
+name = "etools"
+version = "0.1.0"
+description = "Directional survey, clearance, and WCR tooling for Utah DOGM"
+requires-python = ">=3.12"
+readme = "README.md"
+
+dependencies = [
+    "nicegui>=2.0",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "SQLAlchemy>=2.0",
+    "pyodbc>=5.1",
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "scipy>=1.13",
+    "scikit-learn>=1.4",
+    "shapely>=2.0",
+    "geopandas>=1.0",
+    "pyproj>=3.6",
+    "utm>=0.7",
+    "welleng>=0.8",
+    "pygeomag>=1.0",
+    "plotly>=5.20",
+    "pdfplumber>=0.11",
+    "openpyxl>=3.1",
+    "python-dateutil>=2.9",
+    "structlog>=24.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+etools = "etools.main:run"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["etools*"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

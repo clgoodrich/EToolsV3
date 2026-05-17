@@ -1,0 +1,244 @@
+"""Map & Viz tab — 2D Leaflet map + 3D Plotly trajectory + section summary."""
+
+from __future__ import annotations
+
+from typing import Callable
+
+import geopandas as gpd
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+from nicegui import ui
+
+from etools.models import SurveyFrame
+from etools.ui.state import AppState
+
+_SECTION_COLORS = ["#4f46e5", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#84cc16"]
+
+
+def render_viz_tab(state: AppState) -> Callable[[], None]:
+    with ui.column().classes("p-4 gap-3 w-full"):
+        header_label = ui.label("Calculate clearances first.").classes("text-gray-500 italic")
+
+        controls = ui.row().classes("gap-3 items-center")
+        with controls:
+            ui.label("Citing:").classes("text-sm")
+            citing_select = (
+                ui.select(options=[], on_change=lambda _: rerender())
+                .props("dense outlined")
+                .classes("w-40")
+            )
+            ui.label("Frame:").classes("text-sm")
+            frame_state: dict[str, SurveyFrame] = {"value": SurveyFrame.TRUE}
+            ui.toggle(
+                {SurveyFrame.TRUE.value: "True", SurveyFrame.GRID.value: "Grid"},
+                value=SurveyFrame.TRUE.value,
+                on_change=lambda e: (
+                    frame_state.__setitem__("value", SurveyFrame(e.value)),
+                    rerender(),
+                ),
+            ).props("dense")
+            status = ui.label("").classes("text-sm text-gray-500 ml-2")
+        controls.set_visibility(False)
+
+        with ui.tabs().classes("w-full") as sub_tabs:
+            tab_map = ui.tab("2D Map", icon="map")
+            tab_3d = ui.tab("3D Trajectory", icon="view_in_ar")
+
+        with ui.tab_panels(sub_tabs, value=tab_map).classes("w-full"):
+            with ui.tab_panel(tab_map):
+                map_widget = ui.leaflet(center=(40.27, -110.35), zoom=12).classes("w-full").style("height: 600px")
+            with ui.tab_panel(tab_3d):
+                plot_widget = ui.plotly({}).classes("w-full").style("height: 600px")
+
+    map_layers: list = []  # tracks Leaflet layer IDs so we can clear them between renders
+
+    def clear_map() -> None:
+        for layer_id in map_layers:
+            try:
+                map_widget.remove_layer(layer_id)
+            except Exception:
+                pass
+        map_layers.clear()
+
+    def rerender() -> None:
+        if not state.clearances:
+            controls.set_visibility(False)
+            header_label.visible = True
+            return
+        header_label.visible = False
+        controls.set_visibility(True)
+
+        citing = citing_select.value
+        cr = state.clearances.get(citing)
+        sr = state.processed.get(citing)
+        if cr is None or sr is None:
+            return
+
+        ps = sr.frames[frame_state["value"]]
+        points = ps.points
+
+        # ----- 2D Leaflet -----
+        clear_map()
+        sections_wgs84 = _project_to_wgs84(cr.sections)
+        for i, (_, sec) in enumerate(sections_wgs84.iterrows()):
+            color = _SECTION_COLORS[i % len(_SECTION_COLORS)]
+            geom = sec.geometry
+            rings = _polygon_rings(geom)
+            for ring in rings:
+                map_layers.append(
+                    map_widget.generic_layer(
+                        name="polygon",
+                        args=[
+                            ring,
+                            {
+                                "color": color,
+                                "weight": 2,
+                                "fillOpacity": 0.05,
+                                "fillColor": color,
+                            },
+                        ],
+                    )
+                )
+            # Label at centroid
+            cx, cy = geom.centroid.x, geom.centroid.y
+            map_layers.append(
+                map_widget.marker(
+                    latlng=(cy, cx),
+                    options={
+                        "title": sec.label,
+                        "opacity": 0.0,
+                    },
+                )
+            )
+
+        # Trajectory polyline (lat/lon already in points)
+        latlngs = list(zip(points["lat"].tolist(), points["lon"].tolist()))
+        if latlngs:
+            map_layers.append(
+                map_widget.generic_layer(
+                    name="polyline",
+                    args=[latlngs, {"color": "#dc2626", "weight": 3}],
+                )
+            )
+        # Marker stations
+        for label, md in _significant_mds(sr).items():
+            row = points.iloc[(points["measured_depth"] - md).abs().idxmin()]
+            map_layers.append(
+                map_widget.marker(
+                    latlng=(float(row["lat"]), float(row["lon"])),
+                    options={"title": f"{label} — MD {md:.0f} ft"},
+                )
+            )
+
+        # Center on SHL
+        shl = points.iloc[0]
+        map_widget.set_center((float(shl["lat"]), float(shl["lon"])))
+        map_widget.set_zoom(13)
+
+        # ----- 3D Plotly -----
+        plot_widget.update_figure(_make_3d_figure(points, sr))
+        status.text = (
+            f"{len(points)} pts · {points['Conc'].nunique() if 'Conc' in points else cr.points['Conc'].nunique()} sections"
+        )
+
+    def refresh() -> None:
+        if not state.clearances:
+            header_label.text = "Calculate clearances first."
+            header_label.visible = True
+            controls.set_visibility(False)
+            clear_map()
+            return
+        opts = sorted(state.clearances.keys())
+        citing_select.options = opts
+        if not citing_select.value or citing_select.value not in opts:
+            citing_select.value = opts[0]
+        citing_select.update()
+        rerender()
+
+    return refresh
+
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+
+def _project_to_wgs84(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    if gdf.empty:
+        return gdf
+    if gdf.crs and str(gdf.crs).upper() != "EPSG:4326":
+        return gdf.to_crs("EPSG:4326")
+    return gdf
+
+
+def _polygon_rings(geom) -> list[list[tuple[float, float]]]:
+    """Return a list of [(lat, lon), ...] rings for either Polygon or MultiPolygon."""
+    rings: list[list[tuple[float, float]]] = []
+    if geom.geom_type == "Polygon":
+        rings.append([(y, x) for x, y in geom.exterior.coords])
+    elif geom.geom_type == "MultiPolygon":
+        for poly in geom.geoms:
+            rings.append([(y, x) for x, y in poly.exterior.coords])
+    return rings
+
+
+def _significant_mds(sr) -> dict[str, float]:
+    out: dict[str, float] = {"SHL": float(sr.frames[SurveyFrame.TRUE].points["measured_depth"].iloc[0])}
+    if sr.kop.md is not None:
+        out["KOP"] = float(sr.kop.md)
+    if sr.landing_md is not None:
+        out["Landing"] = float(sr.landing_md)
+    out["BHL"] = float(sr.frames[SurveyFrame.TRUE].points["measured_depth"].iloc[-1])
+    return out
+
+
+def _make_3d_figure(points: pd.DataFrame, sr) -> go.Figure:
+    """3D wellbore in NEV (north / east / depth) space."""
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter3d(
+            x=points["e_offset"],
+            y=points["n_offset"],
+            z=-points["tvd"],
+            mode="lines",
+            line=dict(color="#dc2626", width=4),
+            name="Wellbore",
+            hovertemplate=(
+                "MD: %{customdata[0]:.1f} ft<br>"
+                "Inc: %{customdata[1]:.2f}°<br>"
+                "Azi: %{customdata[2]:.2f}°<br>"
+                "TVD: %{customdata[3]:.1f} ft<br>"
+                "N: %{y:.1f} ft  E: %{x:.1f} ft"
+                "<extra></extra>"
+            ),
+            customdata=np.column_stack(
+                [points["measured_depth"], points["inclination"], points["azimuth"], points["tvd"]]
+            ),
+        )
+    )
+    # Significant stations
+    for label, md in _significant_mds(sr).items():
+        idx = (points["measured_depth"] - md).abs().idxmin()
+        row = points.loc[idx]
+        fig.add_trace(
+            go.Scatter3d(
+                x=[row["e_offset"]], y=[row["n_offset"]], z=[-row["tvd"]],
+                mode="markers+text",
+                marker=dict(size=6, color="#1d4ed8"),
+                text=[label],
+                textposition="top center",
+                name=label,
+                showlegend=False,
+            )
+        )
+    fig.update_layout(
+        margin=dict(l=0, r=0, t=0, b=0),
+        scene=dict(
+            xaxis_title="East offset (ft)",
+            yaxis_title="North offset (ft)",
+            zaxis_title="Depth below SHL (ft)",
+            aspectmode="data",
+        ),
+    )
+    return fig
