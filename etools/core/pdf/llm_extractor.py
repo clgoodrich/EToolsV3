@@ -206,6 +206,165 @@ def _trim_to_survey_region(markdown: str, *, target_chars: int = 20_000) -> str:
     return markdown[start : start + target_chars]
 
 
+# ---------------------------------------------------------------------------
+# WCR Form 8 schema — for parsing Well Completion Reports
+# ---------------------------------------------------------------------------
+
+
+class LLMWCRPosition(BaseModel):
+    name: str = Field(
+        description=(
+            "Section-27 row label: one of "
+            "'Surface', 'Producing Interval Top', 'Producing Interval Bottom', "
+            "'Total Depth'."
+        )
+    )
+    fnl: Optional[float] = Field(None, description="Footage from north line, ft")
+    fsl: Optional[float] = Field(None, description="Footage from south line, ft")
+    fel: Optional[float] = Field(None, description="Footage from east line, ft")
+    fwl: Optional[float] = Field(None, description="Footage from west line, ft")
+    qtr_qtr: Optional[str] = Field(None, description="QQ code like SWNW, SENE")
+    section: Optional[str] = Field(None, description="Section number, e.g. '31'")
+    township: Optional[str] = Field(None, description="Township number, e.g. '3'")
+    township_dir: Optional[str] = Field(None, description="'N' or 'S'")
+    range: Optional[str] = Field(None, description="Range number, e.g. '4'")
+    range_dir: Optional[str] = Field(None, description="'E' or 'W'")
+    meridian: Optional[str] = Field(None, description="Meridian letter, e.g. 'U' for Uintah")
+    utm_easting: Optional[float] = Field(None, description="UTM12N easting in meters")
+    utm_northing: Optional[float] = Field(None, description="UTM12N northing in meters")
+
+
+class LLMPerfStage(BaseModel):
+    stage: int
+    interval_top_md: float = Field(description="Top of perf interval, MD ft")
+    interval_bottom_md: float = Field(description="Bottom of perf interval, MD ft")
+    num_perfs: Optional[int] = Field(None, description="Number of perforations in this stage")
+
+
+class LLMFormationTop(BaseModel):
+    name: str
+    top_md: Optional[float] = None
+    top_tvd: Optional[float] = None
+
+
+class LLMCasing(BaseModel):
+    feature: str = Field(description="String code: COND, SURF, INT, LINER, PROD")
+    diameter_in: Optional[float] = None
+    weight_ppf: Optional[float] = None
+    grade: Optional[str] = None
+    top_md_ft: Optional[float] = None
+    bottom_md_ft: Optional[float] = None
+
+
+class LLMWCRExtraction(BaseModel):
+    """LLM-targeted extraction schema for a DOGM WCR (Form 8) PDF."""
+
+    well_name: Optional[str] = None
+    api_number: Optional[str] = Field(
+        None, description="10- to 14-digit API well number, digits only"
+    )
+    operator: Optional[str] = None
+    well_type: Optional[str] = None
+    field_name: Optional[str] = None
+    county: Optional[str] = None
+    well_status: Optional[str] = None
+    spud_date: Optional[str] = Field(None, description="MM/DD/YYYY")
+    rotary_date: Optional[str] = Field(None, description="MM/DD/YYYY")
+    td_date: Optional[str] = Field(None, description="MM/DD/YYYY")
+    completion_date: Optional[str] = Field(None, description="MM/DD/YYYY")
+    elevation_ft: Optional[float] = Field(
+        None, description="Depth reference (KB) elevation in feet"
+    )
+    ground_elev_ft: Optional[float] = Field(None, description="Ground level elevation in feet")
+    total_md_ft: Optional[float] = None
+    total_tvd_ft: Optional[float] = None
+    pbtd_md_ft: Optional[float] = Field(None, description="Plugged-back total depth, MD ft")
+    pbtd_tvd_ft: Optional[float] = None
+    positions: list[LLMWCRPosition] = Field(default_factory=list)
+    formations: list[LLMFormationTop] = Field(default_factory=list)
+    perf_stages: list[LLMPerfStage] = Field(default_factory=list)
+    casing: list[LLMCasing] = Field(default_factory=list)
+
+
+_WCR_SYSTEM_PROMPT = (
+    "You are a petroleum-engineering assistant. You read Utah DOGM "
+    "Well Completion Reports (Form 8) and extract structured data from them. "
+    "Numeric fields must be numbers, never strings. Use null for fields the "
+    "document does not state. The document is the official DOGM Form 8 with "
+    "numbered sections; pay close attention to Sections 1-26 (header), "
+    "27 (location footages), 28 (casing), 32 (formations), and any stage perf "
+    "table that lists Stage / Interval Top / Interval Bottom / Num Perfs."
+)
+
+
+def llm_wcr_extract(
+    markdown: str, *, client: OllamaClient | None = None
+) -> LLMWCRExtraction:
+    """Pull WCR fields out of Docling markdown using a schema-constrained LLM call.
+
+    Designed to backfill whatever the regex rules layer missed — for example,
+    formation tops, perf stages whose row spacing PyMuPDF mangles, or the
+    Section-27 location rows when the form was filled out non-standardly.
+    """
+    trimmed = _trim_to_wcr_region(markdown)
+    log.info("llm.wcr_extract.prompt", original_chars=len(markdown), kept_chars=len(trimmed))
+    prompt = (
+        "Extract structured data from this Utah DOGM Well Completion Report "
+        "(Form 8) PDF, rendered as Markdown by Docling.\n\n"
+        "Focus on these fields:\n"
+        " - Header (Sections 1-26): well name, API, operator, well type, "
+        "field, county, dates (spud/rotary/TD/completed), elevation (KB), "
+        "ground elevation, total depth MD/TVD, plugged-back TD MD/TVD, status.\n"
+        " - Section 27 location rows: Surface, Producing Interval Top, "
+        "Producing Interval Bottom, Total Depth — with FNL/FSL/FEL/FWL, "
+        "QQ code, Section/Township/Range/Meridian, UTM easting/northing.\n"
+        " - Section 28 casing: Conductor, Surface, Intermediate, Liner, "
+        "Production. Diameter, weight, grade, top MD, bottom MD per string.\n"
+        " - Section 32 formation tops: name, top MD, top TVD per row.\n"
+        " - Stage perf table (often on page 3): stage number, interval top, "
+        "interval bottom, num perfs per stage.\n\n"
+        f"<<<DOCUMENT>>>\n{trimmed}\n<<<END>>>\n"
+    )
+    return extract_with_schema(
+        prompt,
+        LLMWCRExtraction,
+        client=client,
+        system=_WCR_SYSTEM_PROMPT,
+    )
+
+
+def llm_wcr_extract_from_image(
+    images: list[bytes], *, client: OllamaClient | None = None
+) -> LLMWCRExtraction:
+    """Vision path for scanned WCR PDFs."""
+    prompt = (
+        "These are pages from a Utah DOGM Well Completion Report (Form 8). "
+        "Extract the header fields (well name, API, operator, dates, "
+        "elevation, TD, PBTD), the Section 27 location rows (Surface / "
+        "Producing Interval Top / Producing Interval Bottom / Total Depth) "
+        "with their footages and PLSS codes, the Section 28 casing strings, "
+        "the Section 32 formation tops, and the stage perf table (Stage / "
+        "Interval Top / Interval Bottom / Num Perfs)."
+    )
+    return extract_with_schema(
+        prompt,
+        LLMWCRExtraction,
+        client=client,
+        system=_WCR_SYSTEM_PROMPT,
+        images=images,
+    )
+
+
+# Wider window than the survey case — WCR fields are spread across the
+# entire document (Sec 27 on page 1, perf stages on page 3, etc.).
+def _trim_to_wcr_region(markdown: str, *, target_chars: int = 30_000) -> str:
+    if len(markdown) <= target_chars:
+        return markdown
+    # Keep the leading header (pages 1-2 of the form are fixed) and as much
+    # following content as the budget allows.
+    return markdown[:target_chars]
+
+
 def llm_extract_from_image(
     images: list[bytes], *, client: OllamaClient | None = None
 ) -> LLMSurveyExtraction:

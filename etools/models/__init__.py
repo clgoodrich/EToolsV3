@@ -10,7 +10,21 @@ from etools.models.survey import (
 )
 from etools.models.plat import PlatSection
 from etools.models.clearance import ClearanceRow, FootageSummary
-from etools.models.wcr import CasingRow, PerforationRow, WCRBundle, WCRWellInfo
+from etools.models.wcr import (
+    CasingRow,
+    DDRKeyEvent,
+    DDRRecord,
+    DDRTimeLogEntry,
+    FormationTop,
+    KeyEventType,
+    PerfStage,
+    PerforationRow,
+    WCRBundle,
+    WCRLocationRow,
+    WCRPdfData,
+    WCRWellInfo,
+    WellPositionRow,
+)
 
 __all__ = [
     "WellHeader",
@@ -25,7 +39,16 @@ __all__ = [
     "ClearanceRow",
     "FootageSummary",
     "CasingRow",
+    "DDRKeyEvent",
+    "DDRRecord",
+    "DDRTimeLogEntry",
+    "FormationTop",
+    "KeyEventType",
+    "PerfStage",
     "PerforationRow",
     "WCRBundle",
+    "WCRLocationRow",
+    "WCRPdfData",
     "WCRWellInfo",
+    "WellPositionRow",
 ]

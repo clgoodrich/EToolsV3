@@ -46,8 +46,49 @@ def locate_points(
     # Some boundary points can match two adjacent sections; keep the first.
     joined = joined[~joined.index.duplicated(keep="first")]
 
+    # Decompose the Conc into its PLSS components so downstream consumers
+    # (WCR writer, UI) don't need to re-parse. Empty for unmatched points.
+    plss = joined["Conc"].apply(_parse_conc)
+    for col in ("Section", "Township", "Township_Direction", "Range", "Range_Direction", "Baseline"):
+        joined[col] = plss.apply(lambda d, k=col: d.get(k))
+
     matched = joined["Conc"].notna().sum()
     log.info(
         "plat.locate", points=len(points), matched=int(matched), unique_sections=joined["Conc"].nunique()
     )
     return joined
+
+
+def _parse_conc(conc) -> dict[str, str | None]:
+    """``1402S05WU`` → {Section: '14', Township: '2', Township_Direction: 'S', ...}.
+
+    Returns a dict of Nones for missing/malformed codes so callers can build
+    columns without branching.
+    """
+    if not isinstance(conc, str) or len(conc) < 9:
+        return {
+            "Section": None,
+            "Township": None,
+            "Township_Direction": None,
+            "Range": None,
+            "Range_Direction": None,
+            "Baseline": None,
+        }
+    try:
+        return {
+            "Section": str(int(conc[0:2])),
+            "Township": str(int(conc[2:4])),
+            "Township_Direction": conc[4],
+            "Range": str(int(conc[5:7])),
+            "Range_Direction": conc[7],
+            "Baseline": conc[8],
+        }
+    except ValueError:
+        return {
+            "Section": None,
+            "Township": None,
+            "Township_Direction": None,
+            "Range": None,
+            "Range_Direction": None,
+            "Baseline": None,
+        }

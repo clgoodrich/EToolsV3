@@ -176,6 +176,55 @@ def process_survey(
     return out
 
 
+def interpolate_at_md(points: pd.DataFrame, target_md: float) -> dict[str, float]:
+    """Linearly interpolate the processed-survey points at an arbitrary MD.
+
+    Returns a dict with measured_depth, tvd, n_offset, e_offset, easting,
+    northing, lat, lon, inclination, azimuth (if present). Out-of-range MDs
+    clamp to the first/last station rather than raising — the WCR pipeline
+    tolerates the SHL row at MD=0 even when surveys start at a non-zero MD.
+    """
+    if points.empty:
+        raise ValueError("Cannot interpolate against an empty survey.")
+    df = points.sort_values("measured_depth").reset_index(drop=True)
+    md = df["measured_depth"].to_numpy(dtype=float)
+
+    cols = [
+        c
+        for c in (
+            "tvd",
+            "n_offset",
+            "e_offset",
+            "easting",
+            "northing",
+            "lat",
+            "lon",
+            "inclination",
+            "azimuth",
+            "dls",
+        )
+        if c in df.columns
+    ]
+
+    if target_md <= md[0]:
+        row = df.iloc[0]
+        return {"measured_depth": float(target_md), **{c: float(row[c]) for c in cols}}
+    if target_md >= md[-1]:
+        row = df.iloc[-1]
+        return {"measured_depth": float(target_md), **{c: float(row[c]) for c in cols}}
+
+    idx = int(np.searchsorted(md, target_md))
+    lo, hi = idx - 1, idx
+    span = md[hi] - md[lo]
+    t = 0.0 if span == 0 else (target_md - md[lo]) / span
+    out: dict[str, float] = {"measured_depth": float(target_md)}
+    for c in cols:
+        a = float(df[c].iloc[lo])
+        b = float(df[c].iloc[hi])
+        out[c] = a + t * (b - a)
+    return out
+
+
 def _nev_to_latlon(
     n: np.ndarray, e: np.ndarray, lat0: float, lon0: float
 ) -> tuple[np.ndarray, np.ndarray]:

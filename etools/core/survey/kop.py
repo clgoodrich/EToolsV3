@@ -116,6 +116,70 @@ def detect_kop(
     )
 
 
+def detect_kop_simple(
+    survey: pd.DataFrame,
+    *,
+    md_col: str = "measured_depth",
+    inc_col: str = "inclination",
+    vertical_threshold_deg: float = 3.0,
+    crossing_inc_deg: float = 8.0,
+    sustained_inc_deg: float = 10.0,
+    sustained_count: int = 5,
+) -> float | None:
+    """Linearly-interpolated MD where the well leaves vertical and begins to
+    build inclination.
+
+    Algorithm:
+        1. Find the last station whose inclination is below
+           ``vertical_threshold_deg`` AND whose nearest forward window of
+           ``sustained_count`` stations reaches at least
+           ``sustained_inc_deg``.
+        2. Walk forward from that station looking for the first segment
+           where inclination crosses ``crossing_inc_deg``; return the
+           linearly-interpolated MD at that crossing.
+
+    Empirically (e.g. the Javelin South Moon 5-31-32-C4-3H reference WCR),
+    matching the operator's published Control_Point requires interpolating
+    to an INC threshold of ~8°. Snapping to the last vertical station
+    underestimates the MD by 100–150 ft when the section boundary is near
+    the kickoff.
+    """
+    if survey.empty:
+        return None
+    df = survey.sort_values(md_col).reset_index(drop=True)
+    inc = df[inc_col].to_numpy(dtype=float)
+    md = df[md_col].to_numpy(dtype=float)
+    n = len(inc)
+    if n < sustained_count + 1:
+        return None
+
+    anchor_idx: int | None = None
+    for i in range(n - sustained_count):
+        if inc[i] <= vertical_threshold_deg:
+            window_max = float(inc[i + 1 : i + 1 + sustained_count].max())
+            if window_max >= sustained_inc_deg:
+                anchor_idx = i
+    if anchor_idx is None:
+        return None
+
+    # Walk forward from the anchor, find first interval that brackets the
+    # crossing inclination, and linearly interpolate the MD.
+    for j in range(anchor_idx, n - 1):
+        lo_inc, hi_inc = inc[j], inc[j + 1]
+        if lo_inc <= crossing_inc_deg <= hi_inc:
+            span = hi_inc - lo_inc
+            if span == 0:
+                return float(md[j])
+            t = (crossing_inc_deg - lo_inc) / span
+            return float(md[j] + t * (md[j + 1] - md[j]))
+        if lo_inc > crossing_inc_deg:
+            # Already above crossing — return this station.
+            return float(md[j])
+
+    # No crossing found — fall back to the anchor itself.
+    return float(md[anchor_idx])
+
+
 def detect_landing_point(
     survey: pd.DataFrame,
     kop_md: float | None = None,
