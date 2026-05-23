@@ -39,6 +39,7 @@ def parse_wcr_pdf(
     mode: str = "rules+llm",
     max_pages: int | None = None,
     skip_docling: bool = False,
+    mine_ddr_events: bool = False,
 ) -> WCRPdfData:
     """Run the layered pipeline and return a populated WCRPdfData.
 
@@ -122,13 +123,23 @@ def parse_wcr_pdf(
         layers_used.append("rules-skipped")
 
     # ---- Layer 2b: DDR (Operation Summary Report appendix) ----
-    # Always runs — DDR comments carry events (KOP, EOC, frac stages, NPT)
-    # that are richer than what's on the Form 8 itself.
+    # Always runs and ALWAYS uses the full PDF, even when max_pages
+    # restricts the structured-extraction layers above. The DDR appendix
+    # typically lives well past page 5; truncating it would cause the
+    # LLM to summarize only the first few drilling days.
     try:
         from etools.core.pdf.ddr_events import extract_events
         from etools.core.pdf.ddr_parser import parse_ddrs_from_text
 
-        ddrs = parse_ddrs_from_text(combined)
+        # Re-extract from the full PDF if we sliced for the rules layer.
+        if work_path != path:
+            full_text = _extract_text(path)
+            full_text = _collapse_padded_dates(full_text)
+            full_text = _collapse_padded_numbers(full_text)
+        else:
+            full_text = combined
+
+        ddrs = parse_ddrs_from_text(full_text)
         for ddr in ddrs:
             ddr.key_events = extract_events(ddr)
         data.ddrs = ddrs
@@ -163,7 +174,10 @@ def parse_wcr_pdf(
             data.warnings.append(f"LLM extraction failed: {exc}")
 
     # ---- DDR LLM augmentation ----
-    # Adds a free-text summary per DDR + catches events the regex missed.
+    # Always runs the summary call (small prompt, ~5 min/DDR on CPU).
+    # The event-mining call is gated on ``mine_ddr_events`` because it's
+    # another 5 min/DDR and the rules layer usually catches the structured
+    # events already.
     if use_llm and data.ddrs:
         try:
             from etools.core.llm import OllamaClient
@@ -172,7 +186,9 @@ def parse_wcr_pdf(
             client = OllamaClient()
             if client.health() and client.has_model():
                 for ddr in data.ddrs:
-                    augment_ddr_with_llm(ddr, client=client)
+                    augment_ddr_with_llm(
+                        ddr, client=client, do_events=mine_ddr_events
+                    )
                 layers_used.append("ddr-llm")
         except Exception as exc:
             log.warning("wcr_pdf.ddr_llm.failed", error=str(exc))

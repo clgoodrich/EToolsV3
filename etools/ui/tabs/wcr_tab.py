@@ -113,6 +113,18 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
             ).props("color=primary")
             parse_wcr_btn.disable()
 
+        with ui.row().classes("gap-3 items-center w-full mt-1"):
+            mine_events_checkbox = ui.checkbox(
+                "Mine extra events from time-log comments (slow)",
+                value=False,
+            )
+            mine_events_checkbox.tooltip(
+                "When enabled, the LLM does a second pass over uncategorized "
+                "time-log entries to find additional events the regex missed "
+                "(formation picks, screen-outs, BHA failures, etc.). Adds "
+                "~5 min per DDR to the parse time."
+            )
+
         # LLM availability indicator — mirrors the regular PDF Import tab.
         llm_status_label = ui.label("").classes("text-xs text-gray-500")
         _refresh_llm_status(llm_status_label)
@@ -238,15 +250,22 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
         mode = mode_select.value or "rules+llm"
         pages_val = pages_select.value or "5"
         max_pages = None if pages_val == "all" else int(pages_val)
+        mine_events = bool(mine_events_checkbox.value)
 
         parse_wcr_btn.disable()
+        events_note = " + DDR event mining" if mine_events else ""
         wcr_status.text = (
             f"Parsing {name} — mode={mode}, "
-            f"pages={'all' if max_pages is None else max_pages}…"
+            f"pages={'all' if max_pages is None else max_pages}{events_note}…"
         )
         try:
             data = await asyncio.to_thread(
-                parse_wcr_pdf, tmp_path, use_llm=None, mode=mode, max_pages=max_pages
+                parse_wcr_pdf,
+                tmp_path,
+                use_llm=None,
+                mode=mode,
+                max_pages=max_pages,
+                mine_ddr_events=mine_events,
             )
         except Exception as exc:
             log.exception("wcr.parse_failed")
@@ -694,6 +713,18 @@ def _render_ddr_card(card: ui.card, data: WCRPdfData) -> None:
     with card:
         ui.label("Operation Summary Reports (DDR)").classes("text-sm font-semibold")
         for ddr in data.ddrs:
+            # LLM-generated summary surfaced above the events expansion so
+            # the user sees the narrative without having to expand.
+            if ddr.summary:
+                with ui.row().classes("items-baseline gap-2 mt-2"):
+                    ui.label(f"{ddr.job_category or 'DDR'} summary").classes(
+                        "text-xs font-semibold text-gray-600"
+                    )
+                    ui.label("(LLM-generated)").classes("text-xs text-gray-400")
+                ui.label(ddr.summary).classes(
+                    "text-sm text-gray-800 p-2 rounded bg-blue-50 border border-blue-200"
+                )
+
             with ui.expansion(
                 f"{ddr.job_category or 'DDR'} — "
                 f"{len(ddr.entries)} entries, {len(ddr.key_events)} key events"
@@ -701,10 +732,6 @@ def _render_ddr_card(card: ui.card, data: WCRPdfData) -> None:
                 f"{ddr.end_date.date() if ddr.end_date else '?'})",
                 value=False,
             ).classes("w-full"):
-                if ddr.summary:
-                    ui.label("Summary").classes("text-xs font-semibold mt-1 text-gray-600")
-                    ui.label(ddr.summary).classes("text-xs text-gray-800")
-
                 if ddr.key_events:
                     ui.label("Key events").classes(
                         "text-xs font-semibold mt-2 text-gray-600"
