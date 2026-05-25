@@ -53,6 +53,8 @@ output/
 temp/
 *.xlsx
 !WCR_Empty.xlsm
+# Casing Review template — required dependency for the generator.
+!etools/core/casing_review/templates/casing_review_template.xlsx
 
 # Test coverage
 .coverage
@@ -68,6 +70,13 @@ desktop.ini
 data/Board_DB_Plss_Sections.db
 data/location_data.db
 data/CasingStrength.db
+
+# Casing Review test corpus (~800 MB of operator APDs + reviewed xlsx output)
+tests/APD/
+
+# Generated SQLite catalogs — rebuilt by tools/build_*_db.py from the
+# reference workbook in tests/, no need to ship them.
+etools/data/*.sqlite
 
 # Backup files
 *.bak

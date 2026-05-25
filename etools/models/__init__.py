@@ -10,6 +10,12 @@ from etools.models.survey import (
 )
 from etools.models.plat import PlatSection
 from etools.models.clearance import ClearanceRow, FootageSummary
+from etools.models.apd import (
+    APDCasingString,
+    APDFormationTop,
+    APDLocationRow,
+    APDPdfData,
+)
 from etools.models.wcr import (
     CasingRow,
     DDRKeyEvent,
@@ -30,6 +36,10 @@ __all__ = [
     "WellHeader",
     "WellLocation",
     "WellLookup",
+    "APDCasingString",
+    "APDFormationTop",
+    "APDLocationRow",
+    "APDPdfData",
     "CitingType",
     "SurveyHeader",
     "SurveyPoint",

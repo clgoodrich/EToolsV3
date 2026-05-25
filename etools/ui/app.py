@@ -19,6 +19,7 @@ from etools.ui.tabs.survey_tab import render_survey_tab
 from etools.ui.tabs.pdf_tab import render_pdf_tab
 from etools.ui.tabs.plat_tab import render_plat_tab
 from etools.ui.tabs.viz_tab import render_viz_tab
+from etools.ui.tabs.casing_review_tab import render_casing_review_tab
 from etools.ui.tabs.wcr_tab import render_wcr_tab
 
 log = get_logger(__name__)
@@ -121,11 +122,17 @@ def build_app() -> None:
         def set_busy(msg: str) -> None:
             busy_status.text = msg
 
-        async def post_load_orchestrate() -> None:
+        async def post_load_orchestrate(*, switch_to_survey: bool = True) -> None:
             """Run after a well is loaded OR a PDF survey is injected.
 
             Processes the survey, calculates clearance, refreshes every tab,
-            and routes the user to the Survey tab. Wrapped in a busy dialog.
+            and (optionally) routes the user to the Survey tab. Wrapped in
+            a busy dialog.
+
+            ``switch_to_survey`` is False when invoked from a tab that wants
+            to keep the user where they are (e.g. the Casing Review tab's
+            'Use as active well' button — switching mid-handler from a
+            different tab's slot context tends to drop the websocket).
 
             Heavily logged: each step emits a structured event before and
             after so a WebSocket drop can be correlated to an exact stage.
@@ -225,13 +232,16 @@ def build_app() -> None:
                     raise
 
                 # ---- Step 4: tab switch ----
-                log.info("post_load.tab_switch.start", target="survey")
-                try:
-                    tabs.set_value(tab_survey)
-                    log.info("post_load.tab_switch.done")
-                except Exception:
-                    log.exception("post_load.tab_switch.failed", traceback=traceback.format_exc())
-                    raise
+                if switch_to_survey:
+                    log.info("post_load.tab_switch.start", target="survey")
+                    try:
+                        tabs.set_value(tab_survey)
+                        log.info("post_load.tab_switch.done")
+                    except Exception:
+                        log.exception("post_load.tab_switch.failed", traceback=traceback.format_exc())
+                        raise
+                else:
+                    log.info("post_load.tab_switch.skipped")
 
             except Exception as exc:  # pragma: no cover
                 log.exception(
@@ -253,6 +263,11 @@ def build_app() -> None:
                 busy_dialog.close()
                 log.info("post_load.end", elapsed_s=round(time.monotonic() - t0, 2))
 
+        # Expose the orchestrator on AppState so any tab can promote a
+        # freshly-loaded well into shared state and trigger the same
+        # pipeline the Load Well tab uses.
+        state.post_load = post_load_orchestrate
+
         def clear_all_state() -> None:
             """Wipe all in-memory state and reset every tab back to its empty look."""
             state.headers = []
@@ -261,6 +276,15 @@ def build_app() -> None:
             state.processed = {}
             state.clearances = {}
             state.selected_citing = None
+            # Casing Review per-tab state
+            state.apd_data = None
+            state.apd_pdf_path = None
+            state.apd_pdf_name = None
+            state.casing_survey_df = None
+            state.casing_survey_label = None
+            state.casing_overrides = {}
+            state.casing_frac_gradient_psi_per_ft = None
+            state.casing_last_output_path = None
             fire_refresh()
             ui.notify("All loaded data cleared.", type="info")
 
@@ -296,6 +320,7 @@ def build_app() -> None:
             tab_map = ui.tab("Map & Viz", icon="map")
             tab_clearance = ui.tab("Clearance", icon="straighten")
             tab_wcr = ui.tab("WCR", icon="description")
+            tab_casing = ui.tab("Casing Review", icon="construction")
             tab_plat = ui.tab("Plat Searcher", icon="grid_on")
             tab_pdf = ui.tab("PDF Import", icon="upload_file")
 
@@ -340,6 +365,8 @@ def build_app() -> None:
                 refresh_callbacks.append(render_clearance_tab(state))
             with ui.tab_panel(tab_wcr):
                 refresh_callbacks.append(render_wcr_tab(state))
+            with ui.tab_panel(tab_casing):
+                refresh_callbacks.append(render_casing_review_tab(state))
             with ui.tab_panel(tab_plat):
                 refresh_callbacks.append(render_plat_tab())
             with ui.tab_panel(tab_pdf):
@@ -353,3 +380,29 @@ def build_app() -> None:
                 refresh_callbacks.append(
                     render_pdf_tab(state, on_inject=_on_pdf_inject)
                 )
+
+        # If the persistent_state already carries a loaded well (e.g. the
+        # user uploaded an APD, the WebSocket dropped during heavy refresh
+        # work, and they reconnected), fire every tab's refresh callback
+        # once at the end of the page render so the tabs show that state
+        # instead of their default empty placeholders.
+        #
+        # IMPORTANT: defer via ui.timer(once=True). Running fire_refresh
+        # synchronously at page-render time blocks the event loop for 5+
+        # seconds (Leaflet, Plotly, etc.), which causes the WebSocket
+        # heartbeat to time out — the page disconnects, reconnects, and
+        # re-enters this branch, creating an infinite reconnect loop.
+        # The timer lets root() return first so the websocket gets a chance
+        # to settle before the heavy work runs.
+        if state.primary is not None or state.headers:
+            log.info(
+                "page.init.schedule_fire_refresh",
+                reason="state already populated on connect",
+                primary_api=state.primary.api if state.primary else None,
+            )
+
+            def _deferred_refresh() -> None:
+                log.info("page.init.fire_refresh.run")
+                fire_refresh()
+
+            ui.timer(0.5, _deferred_refresh, once=True)
