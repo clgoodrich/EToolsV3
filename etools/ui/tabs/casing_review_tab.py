@@ -158,6 +158,8 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
         cache["design_card"].visible = False
         cache["wbd_card"] = ui.card().classes("w-full")
         cache["wbd_card"].visible = False
+        cache["sections_card"] = ui.card().classes("w-full")
+        cache["sections_card"].visible = False
 
         # Step 4 — promote + generate
         ui.label("Step 4 — Promote / generate").classes("text-sm font-semibold mt-2")
@@ -190,11 +192,9 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
     # fire_refresh to fire — important because fire_refresh's heavy work
     # in other tabs can be deferred / delayed.
     # ----------------------------------------------------------------------
-    if state.apd_data is not None:
-        # Use a microtask so we return from render_casing_review_tab first
-        # (NiceGUI needs the static UI to be fully mounted before we add
-        # the dynamic cards' content).
-        ui.timer(0.05, lambda: _rebuild_from_state(defer_heavy=False), once=True)
+    # Initial-render restore from state happens at the end, AFTER
+    # _rebuild_from_state and friends are defined further down in this
+    # function. See the call right before `return refresh` below.
 
     # ----------------------------------------------------------------------
     # Event handlers — they write to ``state`` (not cache) so reconnects
@@ -382,7 +382,7 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
     # Render helpers — all read from ``state`` so reconnects come up clean.
     # ----------------------------------------------------------------------
     def _hide_dynamic_cards() -> None:
-        for k in ("meta_card", "inputs_card", "design_card", "wbd_card", "result_card"):
+        for k in ("meta_card", "inputs_card", "design_card", "wbd_card", "sections_card", "result_card"):
             card = cache.get(k)
             if card is not None:
                 card.visible = False
@@ -480,24 +480,32 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
         _render_design(cache["design_card"], design)
         cache["design_card"].visible = True
 
+        _render_sections(cache["sections_card"], data)
+        cache["sections_card"].visible = True
+
         _render_wbd(cache["wbd_card"], design, data)
         cache["wbd_card"].visible = True
 
     def _lazy_design_render() -> None:
-        """Schedule the heavy design rebuild for AFTER the page is mounted
-        and the websocket has had a chance to settle. Prevents heartbeat
-        timeouts from triggering an infinite disconnect/reconnect loop on
-        pages that come up with state already populated."""
+        """Used to defer the heavy design rebuild via ui.timer to keep the
+        page-render path from blocking. Now that page renders are fast
+        (<50 ms) and fire_refresh yields to the event loop between tab
+        callbacks, we just call the rebuild inline. ui.timer indirection
+        risks RuntimeError if its slot gets deleted by a reconnect."""
         if state.apd_data is None:
             return
-        ui.timer(0.6, _rebuild_design_and_wbd, once=True)
+        _rebuild_design_and_wbd()
 
     def refresh() -> None:
         """Fired by ``fire_refresh()`` after global state changes (Clear All,
-        post_load completion, page reconnect). Defers the heavy design +
-        WBD rebuild via a timer so it doesn't pile onto the event loop
-        with the other tabs' refresh work and cause a heartbeat timeout."""
-        _rebuild_from_state(defer_heavy=True)
+        post_load completion, page reconnect). Rebuilds the full tab UI
+        from ``state``."""
+        _rebuild_from_state(defer_heavy=False)
+
+    # If the persistent_state already carries APD data (reconnect with
+    # previously-promoted well), restore the dynamic cards now.
+    if state.apd_data is not None:
+        _rebuild_from_state(defer_heavy=False)
 
     return refresh
 
@@ -698,6 +706,130 @@ def _render_design(card: ui.card, design: CasingDesign) -> None:
         ui.table(
             columns=_DESIGN_COLS, rows=_design_rows(design), row_key="label"
         ).classes("w-full text-xs").props("dense flat bordered")
+
+
+def _render_sections(card: ui.card, data: APDPdfData) -> None:
+    """SHL + BHL section preview: PLSS code, footages, computed UTM,
+    lat/lon, and which Excel sheet each location lands in.
+
+    Mirrors what ``writer._write_section_sheet`` writes, so the user can
+    sanity-check the geometry before generating the workbook.
+    """
+    from etools.core.casing_review.footages import (
+        footages_to_xy,
+        location_footages,
+        polygon_footages,
+    )
+    from etools.core.coordinates import utm_to_latlon
+    from etools.repositories import PlatRepository
+
+    card.clear()
+    repo = PlatRepository()
+
+    # APD-location-name → preview-row label + Excel-sheet target.
+    sheet_map = {
+        "location at surface": ("Surface", "SHL Section"),
+        "top of uppermost producing zone": ("Top of Producing", "BHL Section 1"),
+        "at total depth": ("Total Depth", "BHL Section 3"),
+    }
+
+    rows = []
+    for L in data.locations:
+        label, sheet_name = sheet_map.get(
+            L.name.lower(), (L.name, "—")
+        )
+        # PLSS code + footages.
+        plss = (
+            f"Sec {L.section} T{L.township}{L.township_dir} "
+            f"R{L.range}{L.range_dir} {L.meridian}"
+        )
+        fnl, fsl, fel, fwl = location_footages(L)
+        ns = f"{int(fnl)} FNL" if fnl else f"{int(fsl)} FSL" if fsl else "—"
+        ew = f"{int(fel)} FEL" if fel else f"{int(fwl)} FWL" if fwl else "—"
+
+        # Compute UTM + lat/lon via plat polygon.
+        utm_e, utm_n, lat, lon = "—", "—", "—", "—"
+        delta_n, delta_e = "—", "—"
+        try:
+            sec = int(L.section)
+            twp = int(L.township)
+            rng = int(L.range)
+            conc = (
+                f"{sec:02d}{twp:02d}{L.township_dir.upper()}"
+                f"{rng:02d}{L.range_dir.upper()}{L.meridian.upper()}"
+            )
+            df = repo._fetch_concs([conc])  # noqa: SLF001
+            if not df.empty:
+                gdf = repo._build_sections(df)  # noqa: SLF001
+                if not gdf.empty:
+                    poly = gdf.iloc[0].geometry
+                    x, y = footages_to_xy(poly, fnl=fnl, fsl=fsl, fel=fel, fwl=fwl)
+                    lat_v, lon_v = utm_to_latlon(x, y, 12, "N")
+                    utm_e = f"{x:,.1f}"
+                    utm_n = f"{y:,.1f}"
+                    lat = f"{lat_v:.6f}"
+                    lon = f"{lon_v:.6f}"
+                    # Round-trip footage delta for verification — should
+                    # be ~0 for cardinally-aligned sections, larger when
+                    # the polygon has meander corrections.
+                    rt = polygon_footages(poly, (x, y))
+                    if fnl is not None:
+                        delta_n = f"{abs(rt.fnl - fnl):.2f} ft (FNL)"
+                    elif fsl is not None:
+                        delta_n = f"{abs(rt.fsl - fsl):.2f} ft (FSL)"
+                    if fel is not None:
+                        delta_e = f"{abs(rt.fel - fel):.2f} ft (FEL)"
+                    elif fwl is not None:
+                        delta_e = f"{abs(rt.fwl - fwl):.2f} ft (FWL)"
+        except Exception:
+            pass  # fall through with em-dashes
+
+        rows.append({
+            "label": label,
+            "sheet": sheet_name,
+            "plss": plss,
+            "ns": ns,
+            "ew": ew,
+            "utm_e": utm_e,
+            "utm_n": utm_n,
+            "lat": lat,
+            "lon": lon,
+            "delta_n": delta_n,
+            "delta_e": delta_e,
+        })
+
+    cols = [
+        {"name": "label", "label": "Position", "field": "label", "align": "left"},
+        {"name": "sheet", "label": "Excel sheet", "field": "sheet", "align": "left"},
+        {"name": "plss", "label": "PLSS", "field": "plss", "align": "left"},
+        {"name": "ns", "label": "N/S", "field": "ns"},
+        {"name": "ew", "label": "E/W", "field": "ew"},
+        {"name": "utm_e", "label": "UTM E", "field": "utm_e"},
+        {"name": "utm_n", "label": "UTM N", "field": "utm_n"},
+        {"name": "lat", "label": "Lat", "field": "lat"},
+        {"name": "lon", "label": "Lon", "field": "lon"},
+        {"name": "delta_n", "label": "Δ N/S", "field": "delta_n", "align": "left"},
+        {"name": "delta_e", "label": "Δ E/W", "field": "delta_e", "align": "left"},
+    ]
+
+    with card:
+        ui.label("Section sheets — SHL / BHL preview").classes("text-sm font-semibold")
+        ui.label(
+            "Each APD location row maps to an Excel section sheet. PLSS + "
+            "footages come from the APD; UTM and lat/lon are computed from "
+            "the plat-DB section polygon. Round-trip Δ shows how exactly "
+            "the geometry recovers the input footages (~0 ft for cardinally "
+            "aligned sections; larger for sections with meander corrections)."
+        ).classes("text-xs text-gray-600 mb-2")
+        ui.table(columns=cols, rows=rows, row_key="label").classes(
+            "w-full text-xs"
+        ).props("dense flat bordered")
+        ui.label(
+            "BHL Section 2 + dynamic BHL Section 4-8 are populated only "
+            "when the lateral crosses additional sections beyond the APD's "
+            "three location rows — wire that in by passing "
+            "`intermediate_locations` to CasingReviewService.generate()."
+        ).classes("text-xs text-gray-500 italic mt-2")
 
 
 def _render_wbd(card: ui.card, design: CasingDesign, data: APDPdfData) -> None:

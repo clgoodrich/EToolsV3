@@ -126,8 +126,28 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
             )
 
         # LLM availability indicator — mirrors the regular PDF Import tab.
-        llm_status_label = ui.label("").classes("text-xs text-gray-500")
-        _refresh_llm_status(llm_status_label)
+        # IMPORTANT: deferred via ui.timer so the Ollama health check
+        # (two HTTP calls with 2 s + 4 s timeouts) doesn't block the
+        # page render. Was the dominant cause of the post-promote
+        # WebSocket disconnect — render was taking 4.7 s, well past
+        # the websocket heartbeat window.
+        llm_status_label = ui.label("LLM: checking…").classes("text-xs text-gray-500")
+
+        # Defer the Ollama health check off the render path. asyncio task
+        # (instead of ui.timer) avoids the "parent slot has been deleted"
+        # RuntimeError that fires when the page is replaced by a reconnect
+        # before a timer-scheduled callback runs.
+        async def _deferred_llm_check() -> None:
+            import asyncio as _a
+            await _a.sleep(0.1)
+            try:
+                _refresh_llm_status(llm_status_label)
+            except Exception:
+                # Label may have been disposed by a reconnect; ignore.
+                pass
+
+        import asyncio as _asyncio
+        _asyncio.create_task(_deferred_llm_check())
 
         # Card with extracted WCR metadata
         wcr_meta_card = ui.card().classes("w-full")

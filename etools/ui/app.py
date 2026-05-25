@@ -42,8 +42,12 @@ def build_app() -> None:
     survey_service = SurveyService()
     clearance_service = ClearanceService()
 
-    @ui.page("/")
-    def root() -> None:
+    # response_timeout=30 — root() awaits fire_refresh inline when the
+    # persistent state already carries a loaded well. Survey + clearance +
+    # viz tab refreshes total ~5 s; default 3 s response_timeout would
+    # serve a fallback page that never fully initialises.
+    @ui.page("/", response_timeout=30.0)
+    async def root() -> None:
         state = persistent_state  # alias for readability inside the page
         log.info(
             "page.init",
@@ -94,7 +98,13 @@ def build_app() -> None:
 
         refresh_callbacks: list = []
 
-        def fire_refresh() -> None:
+        async def fire_refresh() -> None:
+            """Run every tab's refresh callback, yielding to the event loop
+            between each one so the WebSocket heartbeat can fire. Without
+            the yield, the cumulative ~5 s of Leaflet + Plotly rendering
+            across all tabs blocks the loop long enough to drop the
+            connection."""
+            import asyncio as _asyncio
             for cb in refresh_callbacks:
                 cb_name = getattr(cb, "__qualname__", repr(cb))
                 try:
@@ -110,6 +120,9 @@ def build_app() -> None:
                         )
                     except Exception:
                         pass
+                # Yield so the websocket heartbeat / browser pings get
+                # processed between heavy refreshes.
+                await _asyncio.sleep(0)
 
         # Shared busy dialog — opened while we process survey + clearance after
         # a load or PDF inject, so the user sees progress instead of a frozen UI.
@@ -225,7 +238,7 @@ def build_app() -> None:
                 set_busy("Refreshing UI…")
                 log.info("post_load.refresh.start")
                 try:
-                    fire_refresh()
+                    await fire_refresh()
                     log.info("post_load.refresh.done")
                 except Exception:
                     log.exception("post_load.refresh.failed", traceback=traceback.format_exc())
@@ -268,7 +281,7 @@ def build_app() -> None:
         # pipeline the Load Well tab uses.
         state.post_load = post_load_orchestrate
 
-        def clear_all_state() -> None:
+        async def clear_all_state() -> None:
             """Wipe all in-memory state and reset every tab back to its empty look."""
             state.headers = []
             state.primary = None
@@ -285,7 +298,7 @@ def build_app() -> None:
             state.casing_overrides = {}
             state.casing_frac_gradient_psi_per_ft = None
             state.casing_last_output_path = None
-            fire_refresh()
+            await fire_refresh()
             ui.notify("All loaded data cleared.", type="info")
 
         # Confirmation dialog for the header Clear All button.
@@ -298,10 +311,15 @@ def build_app() -> None:
             ).classes("text-sm text-gray-700 max-w-sm")
             with ui.row().classes("justify-end w-full mt-3 gap-2"):
                 ui.button("Cancel", on_click=confirm_clear_dialog.close).props("flat")
+
+                async def _do_clear() -> None:
+                    confirm_clear_dialog.close()
+                    await clear_all_state()
+
                 ui.button(
                     "Clear everything",
                     icon="delete_forever",
-                    on_click=lambda: (clear_all_state(), confirm_clear_dialog.close()),
+                    on_click=_do_clear,
                 ).props("color=negative")
 
         with ui.header().classes("items-center justify-between bg-slate-800 text-white"):
@@ -324,7 +342,12 @@ def build_app() -> None:
             tab_plat = ui.tab("Plat Searcher", icon="grid_on")
             tab_pdf = ui.tab("PDF Import", icon="upload_file")
 
+        import time as _tt
+        def _tlog(name, t0):
+            log.info("tab.render", tab=name, ms=round((_tt.monotonic() - t0) * 1000, 1))
+
         with ui.tab_panels(tabs, value=tab_load).classes("w-full"):
+            _ts = _tt.monotonic()
             with ui.tab_panel(tab_load):
                 async def load_handler(lookup: WellLookup) -> None:
                     try:
@@ -355,20 +378,27 @@ def build_app() -> None:
                     on_route_to_pdf=lambda: tabs.set_value(tab_pdf),
                 )
                 refresh_callbacks.append(load_refresh)
+                _tlog("load", _ts); _ts = _tt.monotonic()
 
             with ui.tab_panel(tab_survey):
                 refresh_callbacks.append(render_survey_tab(state))
+                _tlog("survey", _ts); _ts = _tt.monotonic()
 
             with ui.tab_panel(tab_map):
                 refresh_callbacks.append(render_viz_tab(state))
+                _tlog("viz", _ts); _ts = _tt.monotonic()
             with ui.tab_panel(tab_clearance):
                 refresh_callbacks.append(render_clearance_tab(state))
+                _tlog("clearance", _ts); _ts = _tt.monotonic()
             with ui.tab_panel(tab_wcr):
                 refresh_callbacks.append(render_wcr_tab(state))
+                _tlog("wcr", _ts); _ts = _tt.monotonic()
             with ui.tab_panel(tab_casing):
                 refresh_callbacks.append(render_casing_review_tab(state))
+                _tlog("casing", _ts); _ts = _tt.monotonic()
             with ui.tab_panel(tab_plat):
                 refresh_callbacks.append(render_plat_tab())
+                _tlog("plat", _ts); _ts = _tt.monotonic()
             with ui.tab_panel(tab_pdf):
                 async def _on_pdf_inject() -> None:
                     # Return a coroutine so the caller (inject_into_pipeline) can
@@ -396,13 +426,11 @@ def build_app() -> None:
         # to settle before the heavy work runs.
         if state.primary is not None or state.headers:
             log.info(
-                "page.init.schedule_fire_refresh",
-                reason="state already populated on connect",
+                "page.init.fire_refresh.inline",
                 primary_api=state.primary.api if state.primary else None,
             )
-
-            def _deferred_refresh() -> None:
-                log.info("page.init.fire_refresh.run")
-                fire_refresh()
-
-            ui.timer(0.5, _deferred_refresh, once=True)
+            # Root is async — await fire_refresh directly. fire_refresh
+            # yields to the event loop between tab callbacks, so the
+            # websocket heartbeat stays alive throughout. No ui.timer
+            # needed (and no stale-slot RuntimeError risk).
+            await fire_refresh()

@@ -41,6 +41,7 @@ def run() -> None:
         show=False,  # we open the URL ourselves — Python's webbrowser
                      # module on Windows mis-routes to IE instead of the
                      # OS default browser.
+        reconnect_timeout=30.0,
     )
 
 
