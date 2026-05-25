@@ -73,11 +73,17 @@ class CasingReviewService:
 
         out_name = output_filename or self._default_filename(apd_data)
         out_path = self.output_dir / out_name
-        surface_loc = next(
-            (L for L in apd_data.locations if L.name.lower().startswith("location at surface")),
-            None,
+        locations = {L.name.lower(): L for L in apd_data.locations}
+        surface_loc = locations.get("location at surface")
+        producing_loc = locations.get("top of uppermost producing zone")
+        td_loc = locations.get("at total depth")
+        write_casing_review(
+            design,
+            out_path,
+            surface_location=surface_loc,
+            producing_interval_location=producing_loc,
+            td_location=td_loc,
         )
-        write_casing_review(design, out_path, surface_location=surface_loc)
         log.info(
             "casing_review.generated",
             path=str(out_path),

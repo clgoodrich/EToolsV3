@@ -27,11 +27,22 @@ def write_casing_review(
     *,
     template_path: Path | None = None,
     surface_location=None,
+    producing_interval_location=None,
+    td_location=None,
 ) -> Path:
     """Fill the Casing Review xlsx with both inputs and computed values.
 
-    ``surface_location`` (an ``APDLocationRow`` for "Location At Surface")
-    drives the SHL Section sheet's section/township/range/UTM block.
+    Section-sheet inputs:
+        * ``surface_location``              → SHL Section (PLSS + UTM block)
+        * ``producing_interval_location``   → BHL Section 1
+        * ``td_location``                   → BHL Section 3
+                                              (BHL 2 left blank for an
+                                              intermediate-section pass,
+                                              wired in when clearance data
+                                              is plumbed through)
+
+    All three are ``APDLocationRow`` instances from
+    ``APDPdfData.locations`` (Section 20 of the Form 3).
     """
     template_path = Path(template_path or CASING_REVIEW_TEMPLATE)
     output_path = Path(output_path)
@@ -55,54 +66,72 @@ def write_casing_review(
     if "DataPrint" in wb.sheetnames:
         _write_dataprint(wb["DataPrint"], design)
 
-    # SHL Section sheet — fill the well/API header and the surface
-    # location's PLSS + UTM block. The rest of the sheet's formulas
-    # resolve against the Grid Numbers reference.
-    if "SHL Section" in wb.sheetnames:
-        _write_shl_section(wb["SHL Section"], design, surface_location)
+    # SHL + BHL Section sheets. Each section sheet's row-7 input block
+    # drives every formula in that sheet via Grid-Numbers DGET lookups.
+    section_sheet_map = [
+        ("SHL Section",   surface_location),
+        ("BHL Section 1", producing_interval_location),
+        ("BHL Section 2", None),  # intermediate — needs clearance data (TODO)
+        ("BHL Section 3", td_location),
+    ]
+    for sheet_name, location in section_sheet_map:
+        if sheet_name in wb.sheetnames:
+            _write_section_sheet(
+                wb[sheet_name],
+                design,
+                location,
+                sheet_label=sheet_name,
+            )
 
     wb.save(output_path)
     return output_path
 
 
-def _write_shl_section(ws, design: CasingDesign, surface_location) -> None:
-    """Populate the input block at the top of the SHL Section sheet.
+def _write_section_sheet(
+    ws,
+    design: CasingDesign,
+    location,
+    *,
+    sheet_label: str,
+) -> None:
+    """Populate the well/API header and (if available) the PLSS input
+    block at row 7. Used for both SHL Section and BHL Section 1/2/3.
 
-    The sheet's downstream rows (KOP / Prod Interval / Total Depth)
-    inherit from row 7 via cell references, so writing the surface row
-    cascades through the whole sheet once Excel recomputes.
+    The header (B2/C2/B3/C3) is always written so the sheet identifies
+    the well even when we don't have section data for it. The PLSS
+    block (N7:S7) only writes when ``location`` is provided.
     """
     ws["C2"] = design.well_name
     ws["C3"] = design.api
-    if surface_location is None:
+    if location is None:
         return
+
     # Section / Township / Range / Meridian — integer codes per the
     # Grid Numbers schema (twp 2=S 1=N, rng 2=W 1=E, mer 2=Uintah 1=SaltLake).
-    if surface_location.section:
+    if location.section:
         try:
-            ws["N7"] = int(surface_location.section)
+            ws["N7"] = int(location.section)
         except ValueError:
             pass
-    if surface_location.township:
+    if location.township:
         try:
-            ws["O7"] = int(surface_location.township)
+            ws["O7"] = int(location.township)
         except ValueError:
             pass
-    if surface_location.township_dir:
-        ws["P7"] = 2 if surface_location.township_dir.upper() == "S" else 1
-    if surface_location.range:
+    if location.township_dir:
+        ws["P7"] = 2 if location.township_dir.upper() == "S" else 1
+    if location.range:
         try:
-            ws["Q7"] = int(surface_location.range)
+            ws["Q7"] = int(location.range)
         except ValueError:
             pass
-    if surface_location.range_dir:
-        ws["R7"] = 2 if surface_location.range_dir.upper() == "W" else 1
-    if surface_location.meridian:
-        ws["S7"] = 2 if surface_location.meridian.upper() == "U" else 1
-    # UTM coordinates — left at template values when we don't have them.
-    # The APD doesn't ship UTM; the WCR survey-PDF parser sets them on
-    # ``WCRPdfData.surface_position`` and a future iteration can pipe
-    # those through here.
+    if location.range_dir:
+        ws["R7"] = 2 if location.range_dir.upper() == "W" else 1
+    if location.meridian:
+        ws["S7"] = 2 if location.meridian.upper() == "U" else 1
+    # UTM Easting/Northing/Zone (T7/U7/V7) — left at template defaults.
+    # We don't carry UTM on APDLocationRow yet; deriving it from the
+    # plat-DB section centroid + APD footages is a follow-up.
 
 
 def _write_block(ws, top: int, s: CasingStringDesign, *, is_surface: bool) -> None:
