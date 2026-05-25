@@ -14,7 +14,15 @@ from pathlib import Path
 import openpyxl
 
 from etools.core.casing_review.domain import CasingDesign, CasingStringDesign
+from etools.core.casing_review.footages import (
+    footages_to_xy,
+    location_footages,
+    polygon_footages,
+)
 from etools.core.casing_review.generator import CASING_REVIEW_TEMPLATE
+from etools.logging_setup import get_logger
+
+log = get_logger(__name__)
 
 
 # Row offsets relative to each STRING block top (10, 25, 40, 55).
@@ -29,6 +37,8 @@ def write_casing_review(
     surface_location=None,
     producing_interval_location=None,
     td_location=None,
+    intermediate_locations: list | None = None,
+    plat_repo=None,
 ) -> Path:
     """Fill the Casing Review xlsx with both inputs and computed values.
 
@@ -68,10 +78,19 @@ def write_casing_review(
 
     # SHL + BHL Section sheets. Each section sheet's row-7 input block
     # drives every formula in that sheet via Grid-Numbers DGET lookups.
+    #
+    # Layout: SHL = surface, BHL 1 = top of producing zone, BHL 3 = TD.
+    # ``intermediate_locations`` slots into BHL 2 (first item) and any
+    # additional items create BHL Section 4, 5, 6, ... by duplicating
+    # the BHL Section 3 sheet as a template.
+    intermediate_locations = list(intermediate_locations or [])
+    bhl2_loc = intermediate_locations[0] if intermediate_locations else None
+    extra_locs = intermediate_locations[1:]
+
     section_sheet_map = [
         ("SHL Section",   surface_location),
         ("BHL Section 1", producing_interval_location),
-        ("BHL Section 2", None),  # intermediate — needs clearance data (TODO)
+        ("BHL Section 2", bhl2_loc),
         ("BHL Section 3", td_location),
     ]
     for sheet_name, location in section_sheet_map:
@@ -81,7 +100,28 @@ def write_casing_review(
                 design,
                 location,
                 sheet_label=sheet_name,
+                plat_repo=plat_repo,
             )
+
+    # Dynamic BHL Section 4+ for wells that cross more sections than
+    # the template ships with. Copy the BHL Section 3 sheet (which
+    # already has the full formula structure) and rename.
+    if extra_locs and "BHL Section 3" in wb.sheetnames:
+        template_sheet = wb["BHL Section 3"]
+        for i, loc in enumerate(extra_locs, start=4):
+            new_name = f"BHL Section {i}"
+            if new_name in wb.sheetnames:
+                continue  # don't clobber an existing sheet
+            new_sheet = wb.copy_worksheet(template_sheet)
+            new_sheet.title = new_name
+            _write_section_sheet(
+                new_sheet,
+                design,
+                loc,
+                sheet_label=new_name,
+                plat_repo=plat_repo,
+            )
+            log.info("section_sheet.created_dynamic", name=new_name)
 
     wb.save(output_path)
     return output_path
@@ -93,13 +133,15 @@ def _write_section_sheet(
     location,
     *,
     sheet_label: str,
+    plat_repo=None,
 ) -> None:
-    """Populate the well/API header and (if available) the PLSS input
-    block at row 7. Used for both SHL Section and BHL Section 1/2/3.
+    """Populate the well/API header, the PLSS input block at row 7, and
+    the computed UTM coordinates (T7/U7/V7) for the location.
 
-    The header (B2/C2/B3/C3) is always written so the sheet identifies
-    the well even when we don't have section data for it. The PLSS
-    block (N7:S7) only writes when ``location`` is provided.
+    ``plat_repo`` is an optional ``PlatRepository`` — when provided, we
+    look up the section polygon and derive UTM from the APD footages
+    via shapely geometry. With no plat polygon available the UTM cells
+    stay at the template default.
     """
     ws["C2"] = design.well_name
     ws["C3"] = design.api
@@ -129,9 +171,81 @@ def _write_section_sheet(
         ws["R7"] = 2 if location.range_dir.upper() == "W" else 1
     if location.meridian:
         ws["S7"] = 2 if location.meridian.upper() == "U" else 1
-    # UTM Easting/Northing/Zone (T7/U7/V7) — left at template defaults.
-    # We don't carry UTM on APDLocationRow yet; deriving it from the
-    # plat-DB section centroid + APD footages is a follow-up.
+
+    # Compute UTM from the APD's footages + the plat polygon. We also
+    # write the four cardinal footages back into I7/K7 — those are
+    # formula cells in the template referencing DxSurvey, but the user
+    # wants the actual APD footages here.
+    if plat_repo is None:
+        return
+    try:
+        conc = _location_to_conc(location)
+        if conc is None:
+            return
+        df = plat_repo._fetch_concs([conc])  # noqa: SLF001 — direct lookup
+        if df.empty:
+            log.info("section_sheet.plat_miss", sheet=sheet_label, conc=conc)
+            return
+        gdf = plat_repo._build_sections(df)  # noqa: SLF001
+        if gdf.empty:
+            return
+        polygon = gdf.iloc[0].geometry
+        fnl, fsl, fel, fwl = location_footages(location)
+        if (fnl is None and fsl is None) or (fel is None and fwl is None):
+            return
+        x, y = footages_to_xy(polygon, fnl=fnl, fsl=fsl, fel=fel, fwl=fwl)
+        ws["T7"] = round(x, 3)
+        ws["U7"] = round(y, 3)
+        ws["V7"] = 12  # UTM zone 12 for Utah
+
+        # Also fill the four "Section Line Footages" cells so the user
+        # sees the APD footages instead of the template's DxSurvey ref.
+        # I7 = FNL or FSL (numeric); J7 = 1 if FNL, 2 if FSL
+        # K7 = FEL or FWL (numeric); L7 = 1 if FEL, 2 if FWL
+        if fnl is not None:
+            ws["I7"] = fnl
+            ws["J7"] = 1
+        elif fsl is not None:
+            ws["I7"] = fsl
+            ws["J7"] = 2
+        if fel is not None:
+            ws["K7"] = fel
+            ws["L7"] = 1
+        elif fwl is not None:
+            ws["K7"] = fwl
+            ws["L7"] = 2
+        log.info(
+            "section_sheet.utm_written",
+            sheet=sheet_label,
+            conc=conc,
+            utm=(round(x, 1), round(y, 1)),
+        )
+    except Exception as exc:
+        log.warning(
+            "section_sheet.utm_failed",
+            sheet=sheet_label,
+            location=location.name,
+            error=str(exc),
+        )
+
+
+def _location_to_conc(location) -> str | None:
+    """Build the 9-char Conc PLSS code (matches PlatRepository.BaseData).
+
+    Format: ``"SSTTDRRRDDM"`` (2+2+1+2+1+1) → e.g. ``"2303S02WU"``.
+    """
+    try:
+        sec = int(location.section)
+        twp = int(location.township)
+        rng = int(location.range)
+    except (TypeError, ValueError):
+        return None
+    twpd = (location.township_dir or "").upper()
+    rngd = (location.range_dir or "").upper()
+    mer = (location.meridian or "").upper()
+    if twpd not in ("N", "S") or rngd not in ("E", "W") or not mer:
+        return None
+    return f"{sec:02d}{twp:02d}{twpd}{rng:02d}{rngd}{mer}"
 
 
 def _write_block(ws, top: int, s: CasingStringDesign, *, is_surface: bool) -> None:

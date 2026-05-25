@@ -27,6 +27,7 @@ from etools.core.casing_review.writer import write_casing_review
 from etools.core.pdf.apd_parser import parse_apd_pdf
 from etools.logging_setup import get_logger
 from etools.models import APDPdfData
+from etools.repositories import PlatRepository
 
 log = get_logger(__name__)
 
@@ -39,9 +40,14 @@ class CasingReviewResult:
 
 
 class CasingReviewService:
-    def __init__(self, output_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        output_dir: Path | None = None,
+        plat_repo: PlatRepository | None = None,
+    ) -> None:
         self.output_dir = Path(output_dir or settings.output_dir)
         self._engine = CasingDesignEngine()
+        self._plat_repo = plat_repo or PlatRepository()
 
     def generate(
         self,
@@ -50,6 +56,7 @@ class CasingReviewService:
         apd_data: APDPdfData | None = None,
         survey: pd.DataFrame | None = None,
         processed_survey=None,
+        intermediate_locations: list | None = None,
         output_filename: str | None = None,
         frac_gradient_override_psi_per_ft: float | None = None,
     ) -> CasingReviewResult:
@@ -83,6 +90,8 @@ class CasingReviewService:
             surface_location=surface_loc,
             producing_interval_location=producing_loc,
             td_location=td_loc,
+            intermediate_locations=intermediate_locations,
+            plat_repo=self._plat_repo,
         )
         log.info(
             "casing_review.generated",
