@@ -35,6 +35,16 @@ def _utf8_stream(stream):
 
 _INSTALLED = False
 
+# Ring buffer of the most recent uncaught exceptions. The NiceGUI
+# page.disconnect handler reads this so we can correlate a websocket drop
+# with the exception that likely caused it.
+last_error_ring: list[dict] = []
+
+
+def recent_errors(n: int = 3) -> list[dict]:
+    """Return the most recent uncaught exceptions (newest last)."""
+    return list(last_error_ring[-n:])
+
 
 def configure_logging() -> None:
     global _INSTALLED
@@ -74,6 +84,43 @@ def configure_logging() -> None:
         handlers=handlers,
         force=True,  # in case basicConfig was called earlier with the old stream
     )
+
+    # Capture exc_info from log.exception()/logger.error(exc_info=True) into
+    # the same ring buffer, so page.disconnect can surface UI handler errors
+    # (e.g. the wcr_tab blur cascade) without us routing every call site
+    # through sys.excepthook.
+    class _ExcRingFilter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            exc_info = getattr(record, "exc_info", None)
+            # The same record passes through every handler; tag it so the
+            # second handler's copy of this filter doesn't double-append.
+            if exc_info and exc_info[0] is not None and not getattr(record, "_etools_rung", False):
+                etype, evalue, etb = exc_info
+                tb_str = "".join(traceback.format_exception(etype, evalue, etb))
+                last_error_ring.append({
+                    "type": etype.__name__,
+                    "msg": str(evalue),
+                    "tb": tb_str,
+                })
+                while len(last_error_ring) > 10:
+                    last_error_ring.pop(0)
+                record._etools_rung = True
+            return True
+
+    # Filters attached to a logger only fire for records originating at that
+    # logger — they don't fire for propagated records. Attaching to each
+    # handler instead means every record (from any logger) flows through.
+    _ring_filter = _ExcRingFilter()
+    for h in handlers:
+        h.addFilter(_ring_filter)
+
+    # Silence the per-request firehose from httpx/httpcore/urllib3 — every
+    # Ollama health poll otherwise dumps ~12 lines of connect_tcp /
+    # send_request_headers / receive_response noise that drowns out real
+    # app events and makes the page.disconnect cause invisible.
+    for noisy in ("httpx", "httpcore", "httpcore.http11", "httpcore.connection",
+                  "urllib3", "urllib3.connectionpool", "asyncio"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
@@ -97,6 +144,14 @@ def _install_exception_hooks(*, file_path: Path | None) -> None:
 
     def _hook(exc_type, exc_value, exc_tb) -> None:
         tb_str = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+        last_error_ring.append({
+            "type": exc_type.__name__ if exc_type else "?",
+            "msg": str(exc_value),
+            "tb": tb_str,
+        })
+        # Keep the ring bounded.
+        while len(last_error_ring) > 10:
+            last_error_ring.pop(0)
         root_log.error(
             "uncaught.exception",
             error_type=exc_type.__name__ if exc_type else "?",

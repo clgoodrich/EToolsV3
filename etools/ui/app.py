@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from nicegui import ui
 
-from etools.logging_setup import get_logger
+from etools.logging_setup import get_logger, recent_errors
 from etools.models import SurveyFrame, WellLookup
 from etools.services import ClearanceService, SurveyService, WellService
 from etools.services.well_service import WellNotFoundError
@@ -55,12 +55,39 @@ def build_app() -> None:
         # Hook NiceGUI's connect/disconnect events so we can correlate UI
         # crashes to the moment the WebSocket actually drops.
         try:
+            import time as _t
             from nicegui import context
             client = context.client
+            connect_t = {"t": _t.monotonic()}
+
+            def _on_disconnect() -> None:
+                # Pull the last few uncaught exceptions out of the ring so
+                # the disconnect is correlated to a cause (instead of being
+                # a context-free warning that says "websocket dropped").
+                errs = recent_errors(3)
+                tail = [{"type": e["type"], "msg": e["msg"][:200]} for e in errs]
+                log.warning(
+                    "page.disconnect",
+                    client_id=getattr(client, "id", "?"),
+                    uptime_s=round(_t.monotonic() - connect_t["t"], 2),
+                    recent_errors=tail or None,
+                )
+                # Dump the most-recent full traceback so we can actually
+                # debug it without scrolling through the rest of the log.
+                if errs:
+                    log.warning(
+                        "page.disconnect.last_traceback",
+                        traceback=errs[-1]["tb"],
+                    )
+
+            def _on_connect() -> None:
+                connect_t["t"] = _t.monotonic()
+                log.info("page.connect", client_id=getattr(client, "id", "?"))
+
             if hasattr(client, "on_disconnect"):
-                client.on_disconnect(lambda: log.warning("page.disconnect", client_id=getattr(client, "id", "?")))
+                client.on_disconnect(_on_disconnect)
             if hasattr(client, "on_connect"):
-                client.on_connect(lambda: log.info("page.connect", client_id=getattr(client, "id", "?")))
+                client.on_connect(_on_connect)
         except Exception as exc:
             log.warning("page.hook.failed", error=str(exc))
 

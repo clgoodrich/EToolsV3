@@ -32,13 +32,47 @@ def run() -> None:
     )
     print(f"\n[etools] Persistent log: {log_file}\n")
     build_app()
+    _open_in_default_browser(f"http://127.0.0.1:{settings.port}/")
     ui.run(
         host="127.0.0.1",
         port=settings.port,
         title="ETools — DOGM",
         reload=False,
-        show=True,
+        show=False,  # we open the URL ourselves — Python's webbrowser
+                     # module on Windows mis-routes to IE instead of the
+                     # OS default browser.
     )
+
+
+def _open_in_default_browser(url: str) -> None:
+    """Open ``url`` in the OS's real default browser.
+
+    Python's ``webbrowser`` module on Windows often picks Internet Explorer
+    even when Firefox/Edge/Chrome is the registered default. ``os.startfile``
+    routes through the Windows shell, which respects the per-user default
+    set in Settings → Apps → Default Apps.
+    """
+    import os
+    import sys
+    import threading
+
+    def _go():
+        try:
+            if sys.platform == "win32":
+                os.startfile(url)  # noqa: S606  — shell call to default handler
+            elif sys.platform == "darwin":
+                import subprocess
+                subprocess.Popen(["open", url])
+            else:
+                import subprocess
+                subprocess.Popen(["xdg-open", url])
+        except Exception:
+            # Fall back to webbrowser if the shell call fails.
+            import webbrowser
+            webbrowser.open(url, new=2)
+
+    # Defer slightly so the server is listening when the browser hits the URL.
+    threading.Timer(1.0, _go).start()
 
 
 if __name__ in {"__main__", "__mp_main__"}:
