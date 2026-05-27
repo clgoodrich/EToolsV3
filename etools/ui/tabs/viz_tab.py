@@ -80,7 +80,12 @@ def render_viz_tab(state: AppState) -> Callable[[], None]:
 
         # ----- 2D Leaflet -----
         clear_map()
-        sections_wgs84 = _project_to_wgs84(cr.sections)
+        # Prefer state.section_definitions when populated — that's the
+        # authoritative model the Casing Review SHL/BHL section tabs edit.
+        # Falls back to the raw clearance polygons when no SectionDefinitions
+        # are seeded (e.g. a section that isn't in the Grid Numbers DB).
+        sections_source = _sections_from_state(state, cr)
+        sections_wgs84 = _project_to_wgs84(sections_source)
         for i, (_, sec) in enumerate(sections_wgs84.iterrows()):
             color = _SECTION_COLORS[i % len(_SECTION_COLORS)]
             geom = sec.geometry
@@ -162,6 +167,34 @@ def render_viz_tab(state: AppState) -> Callable[[], None]:
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+
+
+def _sections_from_state(state: AppState, cr) -> gpd.GeoDataFrame:
+    """Return the polygon GeoDataFrame to render on the map.
+
+    If ``state.section_definitions`` is populated, use the resolved polygons
+    (which honor any user-entered per-segment / corner overrides from the
+    Casing Review SHL/BHL section tabs). Per-Conc fallback to ``cr.sections``
+    when a section isn't in the Grid Numbers DB.
+    """
+    if not state.section_definitions:
+        return cr.sections
+    raw = cr.sections
+    if raw is None or raw.empty:
+        return raw
+    rows = []
+    for _, sec in raw.iterrows():
+        conc = sec.get("Conc")
+        sd = state.section_definitions.get(conc) if conc else None
+        if sd is not None:
+            try:
+                geom = sd.resolve_polygon()
+            except Exception:
+                geom = sec.geometry
+        else:
+            geom = sec.geometry
+        rows.append({"Conc": conc, "label": sec.get("label", conc), "geometry": geom})
+    return gpd.GeoDataFrame(rows, geometry="geometry", crs=raw.crs)
 
 
 def _project_to_wgs84(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:

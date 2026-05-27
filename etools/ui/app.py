@@ -234,6 +234,55 @@ def build_app() -> None:
                         log.exception("post_load.clearance.failed", traceback=traceback.format_exc())
                         raise
 
+                # ---- Step 2b: build SectionDefinitions ----
+                # Authoritative model for plat geometry, keyed by Conc.
+                # Section sheets read/write per-segment overrides; Map &
+                # Viz reads the resolved polygons so user edits in the
+                # Casing Review tab reshape the on-map polygons.
+                if state.clearances:
+                    set_busy("Loading section geometry from plat + Grid Numbers DBs…")
+                    log.info("post_load.section_defs.start")
+                    try:
+                        def _seed_section_defs():
+                            from etools.core.casing_review.grid_corners import (
+                                GridCornerCatalog,
+                            )
+                            from etools.core.casing_review.sections import (
+                                build_section_definitions,
+                            )
+                            from etools.repositories import PlatRepository
+                            concs: set[str] = set()
+                            for cr in state.clearances.values():
+                                if cr.sections is not None and not cr.sections.empty:
+                                    concs.update(cr.sections["Conc"].dropna().tolist())
+                            if not concs:
+                                return {}
+                            catalog = GridCornerCatalog()
+                            repo = PlatRepository()
+                            return build_section_definitions(
+                                concs=sorted(concs), catalog=catalog, plat_repo=repo
+                            )
+
+                        new_defs = await loop.run_in_executor(None, _seed_section_defs)
+                        # Preserve any existing user overrides for sections
+                        # already in state — don't clobber unsaved edits.
+                        for conc, sd in new_defs.items():
+                            existing = state.section_definitions.get(conc)
+                            if existing is not None:
+                                sd.segment_overrides = existing.segment_overrides
+                                sd.corner_overrides = existing.corner_overrides
+                                sd.north_ref_choice = existing.north_ref_choice
+                        state.section_definitions = new_defs
+                        log.info(
+                            "post_load.section_defs.done",
+                            sections=len(state.section_definitions),
+                            concs=sorted(state.section_definitions.keys())[:8],
+                        )
+                    except Exception:
+                        log.exception("post_load.section_defs.failed")
+                        # Non-fatal: section UI falls back to plat polygons
+                        # and Map & Viz keeps working with raw clearance data.
+
                 # ---- Step 3: refresh UI ----
                 set_busy("Refreshing UI…")
                 log.info("post_load.refresh.start")
@@ -298,6 +347,7 @@ def build_app() -> None:
             state.casing_overrides = {}
             state.casing_frac_gradient_psi_per_ft = None
             state.casing_last_output_path = None
+            state.section_definitions = {}
             await fire_refresh()
             ui.notify("All loaded data cleared.", type="info")
 
@@ -385,7 +435,9 @@ def build_app() -> None:
                 _tlog("survey", _ts); _ts = _tt.monotonic()
 
             with ui.tab_panel(tab_map):
-                refresh_callbacks.append(render_viz_tab(state))
+                _viz_refresh = render_viz_tab(state)
+                refresh_callbacks.append(_viz_refresh)
+                state.viz_refresh = _viz_refresh
                 _tlog("viz", _ts); _ts = _tt.monotonic()
             with ui.tab_panel(tab_clearance):
                 refresh_callbacks.append(render_clearance_tab(state))

@@ -480,7 +480,7 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
         _render_design(cache["design_card"], design)
         cache["design_card"].visible = True
 
-        _render_sections(cache["sections_card"], data)
+        _render_sections(cache["sections_card"], data, state)
         cache["sections_card"].visible = True
 
         _render_wbd(cache["wbd_card"], design, data)
@@ -708,128 +708,497 @@ def _render_design(card: ui.card, design: CasingDesign) -> None:
         ).classes("w-full text-xs").props("dense flat bordered")
 
 
-def _render_sections(card: ui.card, data: APDPdfData) -> None:
-    """SHL + BHL section preview: PLSS code, footages, computed UTM,
-    lat/lon, and which Excel sheet each location lands in.
+def _render_sections(card: ui.card, data: APDPdfData, state: AppState) -> None:
+    """SHL + BHL section sub-tabs — one tab per PLSS section the well crosses.
 
-    Mirrors what ``writer._write_section_sheet`` writes, so the user can
-    sanity-check the geometry before generating the workbook.
+    Tab list comes from the trajectory's actual section traversal (the
+    clearance result's Conc column, in MD order). First section = SHL
+    Section, then BHL Section 1, 2, 3, …
+
+    Each sub-tab carries the per-location coord switcher + the 3x3
+    segment grid with each input pre-populated from the Grid Numbers DB.
     """
-    from etools.core.casing_review.footages import (
-        footages_to_xy,
-        location_footages,
-        polygon_footages,
-    )
-    from etools.core.coordinates import utm_to_latlon
-    from etools.repositories import PlatRepository
-
     card.clear()
-    repo = PlatRepository()
-
-    # APD-location-name → preview-row label + Excel-sheet target.
-    sheet_map = {
-        "location at surface": ("Surface", "SHL Section"),
-        "top of uppermost producing zone": ("Top of Producing", "BHL Section 1"),
-        "at total depth": ("Total Depth", "BHL Section 3"),
-    }
-
-    rows = []
-    for L in data.locations:
-        label, sheet_name = sheet_map.get(
-            L.name.lower(), (L.name, "—")
-        )
-        # PLSS code + footages.
-        plss = (
-            f"Sec {L.section} T{L.township}{L.township_dir} "
-            f"R{L.range}{L.range_dir} {L.meridian}"
-        )
-        fnl, fsl, fel, fwl = location_footages(L)
-        ns = f"{int(fnl)} FNL" if fnl else f"{int(fsl)} FSL" if fsl else "—"
-        ew = f"{int(fel)} FEL" if fel else f"{int(fwl)} FWL" if fwl else "—"
-
-        # Compute UTM + lat/lon via plat polygon.
-        utm_e, utm_n, lat, lon = "—", "—", "—", "—"
-        delta_n, delta_e = "—", "—"
-        try:
-            sec = int(L.section)
-            twp = int(L.township)
-            rng = int(L.range)
-            conc = (
-                f"{sec:02d}{twp:02d}{L.township_dir.upper()}"
-                f"{rng:02d}{L.range_dir.upper()}{L.meridian.upper()}"
-            )
-            df = repo._fetch_concs([conc])  # noqa: SLF001
-            if not df.empty:
-                gdf = repo._build_sections(df)  # noqa: SLF001
-                if not gdf.empty:
-                    poly = gdf.iloc[0].geometry
-                    x, y = footages_to_xy(poly, fnl=fnl, fsl=fsl, fel=fel, fwl=fwl)
-                    lat_v, lon_v = utm_to_latlon(x, y, 12, "N")
-                    utm_e = f"{x:,.1f}"
-                    utm_n = f"{y:,.1f}"
-                    lat = f"{lat_v:.6f}"
-                    lon = f"{lon_v:.6f}"
-                    # Round-trip footage delta for verification — should
-                    # be ~0 for cardinally-aligned sections, larger when
-                    # the polygon has meander corrections.
-                    rt = polygon_footages(poly, (x, y))
-                    if fnl is not None:
-                        delta_n = f"{abs(rt.fnl - fnl):.2f} ft (FNL)"
-                    elif fsl is not None:
-                        delta_n = f"{abs(rt.fsl - fsl):.2f} ft (FSL)"
-                    if fel is not None:
-                        delta_e = f"{abs(rt.fel - fel):.2f} ft (FEL)"
-                    elif fwl is not None:
-                        delta_e = f"{abs(rt.fwl - fwl):.2f} ft (FWL)"
-        except Exception:
-            pass  # fall through with em-dashes
-
-        rows.append({
-            "label": label,
-            "sheet": sheet_name,
-            "plss": plss,
-            "ns": ns,
-            "ew": ew,
-            "utm_e": utm_e,
-            "utm_n": utm_n,
-            "lat": lat,
-            "lon": lon,
-            "delta_n": delta_n,
-            "delta_e": delta_e,
-        })
-
-    cols = [
-        {"name": "label", "label": "Position", "field": "label", "align": "left"},
-        {"name": "sheet", "label": "Excel sheet", "field": "sheet", "align": "left"},
-        {"name": "plss", "label": "PLSS", "field": "plss", "align": "left"},
-        {"name": "ns", "label": "N/S", "field": "ns"},
-        {"name": "ew", "label": "E/W", "field": "ew"},
-        {"name": "utm_e", "label": "UTM E", "field": "utm_e"},
-        {"name": "utm_n", "label": "UTM N", "field": "utm_n"},
-        {"name": "lat", "label": "Lat", "field": "lat"},
-        {"name": "lon", "label": "Lon", "field": "lon"},
-        {"name": "delta_n", "label": "Δ N/S", "field": "delta_n", "align": "left"},
-        {"name": "delta_e", "label": "Δ E/W", "field": "delta_e", "align": "left"},
-    ]
+    panels = _build_section_panels(data, state)
 
     with card:
-        ui.label("Section sheets — SHL / BHL preview").classes("text-sm font-semibold")
+        ui.label("Section sheets — SHL / BHL").classes("text-sm font-semibold")
         ui.label(
-            "Each APD location row maps to an Excel section sheet. PLSS + "
-            "footages come from the APD; UTM and lat/lon are computed from "
-            "the plat-DB section polygon. Round-trip Δ shows how exactly "
-            "the geometry recovers the input footages (~0 ft for cardinally "
-            "aligned sections; larger for sections with meander corrections)."
+            "One sub-tab per section the well crosses (in MD order — SHL "
+            "first, then BHL 1, 2, 3…). Each of the 16 boundary-segment "
+            "inputs comes pre-populated from the Grid Numbers DB; type "
+            "to override, blank to revert to the default. Overrides reshape "
+            "the polygon drawn on Map & Viz."
         ).classes("text-xs text-gray-600 mb-2")
-        ui.table(columns=cols, rows=rows, row_key="label").classes(
-            "w-full text-xs"
-        ).props("dense flat bordered")
-        ui.label(
-            "BHL Section 2 + dynamic BHL Section 4-8 are populated only "
-            "when the lateral crosses additional sections beyond the APD's "
-            "three location rows — wire that in by passing "
-            "`intermediate_locations` to CasingReviewService.generate()."
-        ).classes("text-xs text-gray-500 italic mt-2")
+
+        if not panels:
+            ui.label(
+                "No sections detected yet — parse + promote the APD so "
+                "the clearance step can identify which PLSS sections the "
+                "well crosses."
+            ).classes("text-xs text-amber-700 bg-amber-50 p-2 rounded")
+            return
+
+        with ui.tabs().classes("w-full").props("dense inline-label") as tabs:
+            for sheet_name, _conc, _loc, _label in panels:
+                ui.tab(sheet_name)
+        first_name = panels[0][0]
+        with ui.tab_panels(tabs, value=first_name).classes("w-full"):
+            for sheet_name, conc, loc_point, display_label in panels:
+                with ui.tab_panel(sheet_name):
+                    _render_section_panel(
+                        sheet_name, display_label, loc_point, conc, data, state
+                    )
+
+
+def _build_section_panels(
+    data: APDPdfData, state: AppState
+) -> list[tuple[str, str, dict, str]]:
+    """Return [(sheet_name, conc, location_point, display_label), …] in MD order.
+
+    Pulls the section traversal from ``state.clearances`` if available
+    (one entry per unique Conc in MD order); otherwise falls back to the
+    APD's location rows. ``location_point`` is a dict carrying
+    ``fnl/fsl/fel/fwl`` for whichever direction the source row supplied.
+    """
+    # APD-name → display label so SHL/BHL 1/3 keep their familiar names.
+    apd_label_map = {
+        "location at surface": "Surface (SHL)",
+        "top of uppermost producing zone": "Top of Producing Zone",
+        "at total depth": "Total Depth",
+    }
+    # Build a quick lookup of (conc → APD location row) so an auto-detected
+    # section that *does* have an APD row uses the APD's exact footages.
+    apd_by_conc: dict[str, tuple[object, str]] = {}
+    for L in data.locations or []:
+        from etools.core.casing_review.sections import PLSSKey
+        plss = PLSSKey.from_location(L)
+        if plss is None:
+            continue
+        apd_by_conc[plss.conc] = (L, apd_label_map.get(L.name.lower(), L.name))
+
+    # Trajectory section order — first occurrence of each Conc along MD.
+    traversal: list[tuple[str, dict]] = []
+    seen: set[str] = set()
+    if state.clearances:
+        # Pick any citing (the section list is the same shape across citings).
+        cr = next(iter(state.clearances.values()))
+        if cr.points is not None and not cr.points.empty and "Conc" in cr.points:
+            for _, row in cr.points.iterrows():
+                conc = row.get("Conc")
+                if not isinstance(conc, str) or conc in seen:
+                    continue
+                seen.add(conc)
+                traversal.append((conc, {
+                    "fnl": _safe_float(row.get("FNL")),
+                    "fsl": _safe_float(row.get("FSL")),
+                    "fel": _safe_float(row.get("FEL")),
+                    "fwl": _safe_float(row.get("FWL")),
+                }))
+
+    # If no clearance traversal, fall back to APD locations.
+    if not traversal:
+        from etools.core.casing_review.footages import location_footages
+        from etools.core.casing_review.sections import PLSSKey
+        for L in data.locations or []:
+            plss = PLSSKey.from_location(L)
+            if plss is None or plss.conc in seen:
+                continue
+            seen.add(plss.conc)
+            fnl, fsl, fel, fwl = location_footages(L)
+            traversal.append((plss.conc, {
+                "fnl": fnl, "fsl": fsl, "fel": fel, "fwl": fwl,
+            }))
+
+    panels: list[tuple[str, str, dict, str]] = []
+    for idx, (conc, loc_point) in enumerate(traversal):
+        sheet_name = "SHL Section" if idx == 0 else f"BHL Section {idx}"
+        # If an APD row exists for this section, use its footages over the
+        # clearance-derived ones (APD is authoritative for SHL / producing / TD).
+        if conc in apd_by_conc:
+            from etools.core.casing_review.footages import location_footages
+            L, label = apd_by_conc[conc]
+            fnl, fsl, fel, fwl = location_footages(L)
+            loc_point = {"fnl": fnl, "fsl": fsl, "fel": fel, "fwl": fwl}
+            display_label = f"{label} — {conc}"
+        else:
+            display_label = f"Intermediate — {conc}"
+        panels.append((sheet_name, conc, loc_point, display_label))
+    return panels
+
+
+def _safe_float(v) -> float | None:
+    try:
+        if v is None:
+            return None
+        f = float(v)
+        import math as _math
+        return None if _math.isnan(f) else f
+    except (TypeError, ValueError):
+        return None
+
+
+def _render_section_panel(
+    sheet_name: str,
+    display_label: str,
+    location_point: dict,
+    conc: str,
+    data: APDPdfData,
+    state: AppState,
+) -> None:
+    from etools.core.casing_review.sections import (
+        PLSSKey,
+        build_section_definition,
+    )
+
+    ui.label(display_label).classes("text-base font-semibold")
+
+    try:
+        plss = PLSSKey.from_conc(conc)
+    except ValueError:
+        ui.label(f"Bad Conc code: {conc!r}").classes(
+            "text-xs text-red-700 bg-red-50 p-2 rounded"
+        )
+        return
+
+    sd = state.section_definitions.get(conc)
+    if sd is None:
+        # Lazy-build on demand so the panel works even before a promote.
+        try:
+            from etools.core.casing_review.grid_corners import GridCornerCatalog
+            from etools.repositories import PlatRepository
+            cat = GridCornerCatalog()
+            repo = PlatRepository()
+            base = repo._fetch_concs([conc])  # noqa: SLF001
+            gdf = repo._build_sections(base) if not base.empty else None  # noqa: SLF001
+            poly = gdf.iloc[0].geometry if gdf is not None and not gdf.empty else None
+            sd = build_section_definition(plss=plss, catalog=cat, plat_polygon=poly)
+            state.section_definitions[conc] = sd
+        except Exception as exc:
+            ui.label(f"Could not build SectionDefinition: {exc}").classes(
+                "text-xs text-red-700 bg-red-50 p-2 rounded"
+            )
+            return
+
+    # ----------------------------------------------------------------------
+    # Per-location coordinate switcher (top of panel)
+    # ----------------------------------------------------------------------
+    fnl = location_point.get("fnl")
+    fsl = location_point.get("fsl")
+    fel = location_point.get("fel")
+    fwl = location_point.get("fwl")
+    initial_ns = "FNL" if fnl is not None else ("FSL" if fsl is not None else "FSL")
+    initial_ew = "FEL" if fel is not None else ("FWL" if fwl is not None else "FWL")
+    initial_ns_val = fnl if fnl is not None else (fsl if fsl is not None else 0.0)
+    initial_ew_val = fel if fel is not None else (fwl if fwl is not None else 0.0)
+
+    refs: dict = {}  # element refs for cross-syncing
+
+    def _compute_from_footages() -> None:
+        try:
+            ns = refs["ns_dir"].value
+            ew = refs["ew_dir"].value
+            nv = float(refs["ns_val"].value or 0)
+            ev = float(refs["ew_val"].value or 0)
+            kwargs = {("fnl" if ns == "FNL" else "fsl"): nv,
+                      ("fel" if ew == "FEL" else "fwl"): ev}
+            r = sd.footages_to_latlon(**kwargs)
+            _push_other_frames(r, skip="footages")
+        except Exception as exc:
+            log.warning("section_panel.footage_sync.failed", error=str(exc))
+
+    def _compute_from_latlon() -> None:
+        try:
+            lat = float(refs["lat"].value)
+            lon = float(refs["lon"].value)
+            r = sd.latlon_to_footages(lat, lon)
+            _push_other_frames(r, skip="latlon")
+        except (ValueError, TypeError):
+            pass
+
+    def _compute_from_utm() -> None:
+        try:
+            e = float(refs["utm_e"].value)
+            n = float(refs["utm_n"].value)
+            r = sd.utm_to_footages(e, n)
+            _push_other_frames(r, skip="utm")
+        except (ValueError, TypeError):
+            pass
+
+    def _push_other_frames(r, *, skip: str) -> None:
+        if skip != "footages":
+            ns = refs["ns_dir"].value
+            ew = refs["ew_dir"].value
+            refs["ns_val"].value = f"{(r.fnl if ns == 'FNL' else r.fsl):.2f}"
+            refs["ew_val"].value = f"{(r.fel if ew == 'FEL' else r.fwl):.2f}"
+        if skip != "utm":
+            refs["utm_e"].value = f"{r.utm_easting:.3f}"
+            refs["utm_n"].value = f"{r.utm_northing:.3f}"
+        if skip != "latlon":
+            refs["lat"].value = f"{r.lat:.6f}"
+            refs["lon"].value = f"{r.lon:.6f}"
+
+    ui.label("Location — coordinate switcher").classes(
+        "text-sm font-semibold mt-3 text-gray-700"
+    )
+    with ui.row().classes("gap-3 items-center flex-wrap"):
+        ui.label("N/S:").classes("text-xs text-gray-500")
+        refs["ns_dir"] = ui.toggle(
+            {"FNL": "FNL", "FSL": "FSL"},
+            value=initial_ns,
+            on_change=lambda _: _compute_from_footages(),
+        ).props("dense")
+        refs["ns_val"] = (
+            ui.input(value=f"{initial_ns_val:.2f}")
+            .props("dense outlined suffix=ft")
+            .classes("w-28")
+            .on("blur", lambda _: _compute_from_footages())
+            .on("keydown.enter", lambda _: _compute_from_footages())
+        )
+        ui.label("E/W:").classes("text-xs text-gray-500 ml-3")
+        refs["ew_dir"] = ui.toggle(
+            {"FEL": "FEL", "FWL": "FWL"},
+            value=initial_ew,
+            on_change=lambda _: _compute_from_footages(),
+        ).props("dense")
+        refs["ew_val"] = (
+            ui.input(value=f"{initial_ew_val:.2f}")
+            .props("dense outlined suffix=ft")
+            .classes("w-28")
+            .on("blur", lambda _: _compute_from_footages())
+            .on("keydown.enter", lambda _: _compute_from_footages())
+        )
+    with ui.row().classes("gap-3 items-center mt-1 flex-wrap"):
+        ui.label("Lat:").classes("text-xs text-gray-500")
+        refs["lat"] = (
+            ui.input(value="").props("dense outlined").classes("w-32")
+            .on("blur", lambda _: _compute_from_latlon())
+            .on("keydown.enter", lambda _: _compute_from_latlon())
+        )
+        ui.label("Lon:").classes("text-xs text-gray-500 ml-2")
+        refs["lon"] = (
+            ui.input(value="").props("dense outlined").classes("w-32")
+            .on("blur", lambda _: _compute_from_latlon())
+            .on("keydown.enter", lambda _: _compute_from_latlon())
+        )
+        ui.label("UTM E:").classes("text-xs text-gray-500 ml-3")
+        refs["utm_e"] = (
+            ui.input(value="").props("dense outlined").classes("w-32")
+            .on("blur", lambda _: _compute_from_utm())
+            .on("keydown.enter", lambda _: _compute_from_utm())
+        )
+        ui.label("N:").classes("text-xs text-gray-500")
+        refs["utm_n"] = (
+            ui.input(value="").props("dense outlined").classes("w-32")
+            .on("blur", lambda _: _compute_from_utm())
+            .on("keydown.enter", lambda _: _compute_from_utm())
+        )
+        ui.label("Zone 12 N").classes("text-xs text-gray-500")
+    with ui.row().classes("gap-3 items-center mt-1"):
+        ui.label("North reference:").classes("text-xs text-gray-500")
+        ui.toggle(
+            {"T": "True", "G": "Grid", "M": "Magnetic"},
+            value=sd.north_ref_choice,
+            on_change=lambda e: setattr(sd, "north_ref_choice", e.value),
+        ).props("dense")
+
+    # Seed lat/lon + UTM from the initial footages.
+    if (fnl is not None or fsl is not None) and (fel is not None or fwl is not None):
+        _compute_from_footages()
+
+    # ----------------------------------------------------------------------
+    # 3×3 section-geometry grid + 16 segment editor
+    # ----------------------------------------------------------------------
+    ui.separator().classes("my-3")
+    ui.label("Section geometry — 16 boundary segments").classes(
+        "text-sm font-semibold text-gray-700"
+    )
+    ui.label(
+        f"PLSS {plss.conc} — defaults from Grid Numbers DB; user overrides "
+        "win and reshape the polygon on Map & Viz."
+    ).classes("text-xs text-gray-500 mb-2")
+
+    # 3×3 grid of corner blocks. Each block carries the segments that meet
+    # at that point: corners get 2 segments (one per adjacent side), the
+    # center is a placeholder, and the 4 quarter corners get 2 segments
+    # (the two halves of that boundary that share the quarter-corner).
+    corner_segment_map: dict[str, list[str]] = {
+        "NW_SC": ["North-Left2", "West-Up2"],
+        "N_QC":  ["North-Left1", "North-Right1"],
+        "NE_SC": ["North-Right2", "East-Up2"],
+        "W_QC":  ["West-Up1", "West-Down1"],
+        "CENTER": [],
+        "E_QC":  ["East-Up1", "East-Down1"],
+        "SW_SC": ["South-Left2", "West-Down2"],
+        "S_QC":  ["South-Left1", "South-Right1"],
+        "SE_SC": ["South-Right2", "East-Down2"],
+    }
+    cell_layout = [
+        ["NW_SC", "N_QC", "NE_SC"],
+        ["W_QC",  "CENTER", "E_QC"],
+        ["SW_SC", "S_QC", "SE_SC"],
+    ]
+    corner_labels = {
+        "NW_SC": "NW Section Corner", "N_QC": "N Quarter Corner", "NE_SC": "NE Section Corner",
+        "W_QC":  "W Quarter Corner",  "CENTER": "(section center)", "E_QC": "E Quarter Corner",
+        "SW_SC": "SW Section Corner", "S_QC": "S Quarter Corner",  "SE_SC": "SE Section Corner",
+    }
+
+    with ui.grid(columns=3).classes("gap-2 w-full"):
+        for row in cell_layout:
+            for cell in row:
+                with ui.card().classes("p-2 w-full text-xs"):
+                    ui.label(corner_labels[cell]).classes(
+                        "font-semibold text-xs text-gray-700"
+                    )
+                    if cell == "CENTER":
+                        # Center cell shows the PLSS code + location pin.
+                        ui.label(f"PLSS {plss.conc}").classes("text-xs")
+                        ui.label(
+                            f"Sec {plss.section} T{plss.township}"
+                            f"{'N' if plss.township_dir==1 else 'S'} "
+                            f"R{plss.range_}{'E' if plss.range_dir==1 else 'W'} "
+                            f"{'SaltLake' if plss.baseline==1 else 'Uintah'}"
+                        ).classes("text-xs text-gray-500")
+                        # Show resolved corner coords (live updated by overrides).
+                        try:
+                            corners = sd.resolve_corners()
+                            for nm in ("NW_SC", "NE_SC", "SE_SC", "SW_SC"):
+                                x, y = corners[nm]
+                                ui.label(
+                                    f"{nm}: ({x:,.1f}, {y:,.1f})"
+                                ).classes("text-xs text-gray-500")
+                        except Exception:
+                            pass
+                    else:
+                        for seg_key in corner_segment_map[cell]:
+                            _render_segment_row(sd, seg_key, state)
+
+
+def _render_segment_row(sd, seg_key: str, state: AppState) -> None:
+    """One editable row for a Grid Numbers boundary segment.
+
+    Each input is pre-populated with the *effective* value (override if
+    set, else the Grid Numbers DB default). Typing replaces it; clearing
+    the cell reverts to the default. The reset button restores all 5
+    fields to defaults and clears the override.
+
+    On any edit, fires ``state.viz_refresh()`` so the Map & Viz polygon
+    immediately reshapes to reflect the new geometry.
+    """
+    from etools.core.casing_review.sections import SegmentData
+
+    default = sd.segments.get(seg_key, SegmentData())
+
+    def _effective(field: str):
+        ov = sd.segment_overrides.get(seg_key)
+        if ov is not None:
+            v = getattr(ov, field)
+            if v is not None:
+                return v
+        return getattr(default, field)
+
+    def _fmt(value, kind: str) -> str:
+        if value is None:
+            return ""
+        if kind == "float":
+            return f"{value:.2f}"
+        return str(int(value))
+
+    def _fire_viz_refresh() -> None:
+        cb = getattr(state, "viz_refresh", None)
+        if cb is None:
+            return
+        try:
+            cb()
+        except Exception as exc:
+            log.warning("section_panel.viz_refresh.failed", error=str(exc))
+
+    def _apply():
+        new_dist = _parse_optional(refs["dist"].value, cast=float)
+        new_deg = _parse_optional(refs["deg"].value, cast=int)
+        new_min = _parse_optional(refs["min"].value, cast=int)
+        new_sec = _parse_optional(refs["sec"].value, cast=int)
+        new_align = _parse_optional(refs["dir"].value, cast=int)
+
+        def _diff(new, base):
+            if new is None:
+                return None
+            if base is not None and abs(float(new) - float(base)) < 1e-6:
+                return None
+            return new
+
+        ov = SegmentData(
+            length_ft=_diff(new_dist, default.length_ft),
+            degrees=_diff(new_deg, default.degrees),
+            minutes=_diff(new_min, default.minutes),
+            seconds=_diff(new_sec, default.seconds),
+            alignment=_diff(new_align, default.alignment),
+            north_ref=default.north_ref,
+        )
+        if ov.is_blank():
+            sd.segment_overrides.pop(seg_key, None)
+        else:
+            sd.segment_overrides[seg_key] = ov
+        badge.text = "✎" if seg_key in sd.segment_overrides else ""
+        _fire_viz_refresh()
+
+    def _reset():
+        """Drop the override and snap all 5 inputs back to the DB defaults."""
+        sd.segment_overrides.pop(seg_key, None)
+        refs["dist"].value = _fmt(default.length_ft, "float")
+        refs["deg"].value = _fmt(default.degrees, "int")
+        refs["min"].value = _fmt(default.minutes, "int")
+        refs["sec"].value = _fmt(default.seconds, "int")
+        refs["dir"].value = _fmt(default.alignment, "int")
+        badge.text = ""
+        _fire_viz_refresh()
+
+    refs: dict = {}
+    with ui.row().classes("items-center gap-1 mt-1"):
+        ui.label(seg_key).classes("w-24 text-xs text-gray-700 font-mono")
+        badge = ui.label("✎" if seg_key in sd.segment_overrides else "").classes(
+            "text-xs text-amber-600 w-4"
+        )
+        refs["dist"] = (
+            ui.input(value=_fmt(_effective("length_ft"), "float"))
+            .props("dense outlined suffix=ft")
+            .classes("w-24")
+            .on("blur", lambda _: _apply())
+            .on("keydown.enter", lambda _: _apply())
+        )
+        refs["deg"] = (
+            ui.input(value=_fmt(_effective("degrees"), "int"))
+            .props("dense outlined suffix=°")
+            .classes("w-16")
+            .on("blur", lambda _: _apply())
+            .on("keydown.enter", lambda _: _apply())
+        )
+        refs["min"] = (
+            ui.input(value=_fmt(_effective("minutes"), "int"))
+            .props("dense outlined suffix='")
+            .classes("w-16")
+            .on("blur", lambda _: _apply())
+            .on("keydown.enter", lambda _: _apply())
+        )
+        refs["sec"] = (
+            ui.input(value=_fmt(_effective("seconds"), "int"))
+            .props("dense outlined suffix=\"")
+            .classes("w-16")
+            .on("blur", lambda _: _apply())
+            .on("keydown.enter", lambda _: _apply())
+        )
+        refs["dir"] = (
+            ui.input(value=_fmt(_effective("alignment"), "int"))
+            .props("dense outlined")
+            .classes("w-12")
+            .tooltip("Quadrant code: 1=NE 2=NW 3=SW 4=SE")
+            .on("blur", lambda _: _apply())
+            .on("keydown.enter", lambda _: _apply())
+        )
+        ui.button(icon="restart_alt", on_click=lambda _=None: _reset()).props(
+            "flat dense round size=xs color=grey"
+        ).tooltip("Reset this segment to its Grid Numbers DB default")
 
 
 def _render_wbd(card: ui.card, design: CasingDesign, data: APDPdfData) -> None:

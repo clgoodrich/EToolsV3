@@ -34,6 +34,12 @@ class AppState:
     # full pipeline (process survey → calculate clearances → refresh
     # every tab) the same way the Load Well tab does.
     post_load: Callable[[], Awaitable[None]] | None = None
+    # Bound by the root page to the Map & Viz tab's refresh callback so
+    # any tab (e.g. Casing Review's segment override editor) can trigger
+    # an immediate re-render of the map polygons after mutating
+    # section_definitions. Synchronous — viz tab's refresh is already
+    # designed to be cheap.
+    viz_refresh: Callable[[], None] | None = None
 
     # ---- Casing Review tab persistent state ----------------------------
     # Survives WebSocket reconnects so the tab can rebuild its full UI
@@ -53,6 +59,15 @@ class AppState:
     casing_frac_gradient_psi_per_ft: float | None = None
     # Path of the most recently generated Casing Review xlsx.
     casing_last_output_path: Optional[Path] = None
+
+    # ---- Section definitions (PLSS sections the well touches) -----------
+    # Authoritative model for plat geometry. Keyed by Conc code (e.g.
+    # ``"2303S02WU"``). Populated at promote-time by seeding from
+    # PlatRepository + GridCornerCatalog. Read by Casing Review SHL/BHL
+    # section sub-tabs (editable per-segment override grid) AND by the
+    # Map & Viz tab (polygons shown on the 2D map reflect any overrides
+    # the user has typed in). See ``etools.core.casing_review.sections``.
+    section_definitions: dict[str, Any] = field(default_factory=dict)
 
 
 def empty_state() -> AppState:
