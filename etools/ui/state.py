@@ -16,7 +16,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 import pandas as pd
 
-from etools.models import APDPdfData, WellHeader
+from etools.models import APDPdfData, WCRPdfData, WellHeader
 from etools.services import ClearanceResult, SurveyResult
 
 
@@ -40,6 +40,12 @@ class AppState:
     # section_definitions. Synchronous — viz tab's refresh is already
     # designed to be cheap.
     viz_refresh: Callable[[], None] | None = None
+    # Bound by the root page to ``fire_refresh`` — calls every tab's
+    # refresh() callback in order. Use this after mutating state from
+    # a handler that needs the downstream tabs to re-render (e.g. Load
+    # Well's PDF parse handlers, after which the user is routed to the
+    # target tab and that tab needs to rebuild from the new state).
+    fire_refresh: Callable[[], Awaitable[None]] | None = None
 
     # ---- Casing Review tab persistent state ----------------------------
     # Survives WebSocket reconnects so the tab can rebuild its full UI
@@ -68,6 +74,17 @@ class AppState:
     # Map & Viz tab (polygons shown on the 2D map reflect any overrides
     # the user has typed in). See ``etools.core.casing_review.sections``.
     section_definitions: dict[str, Any] = field(default_factory=dict)
+
+    # ---- WCR tab persistent state --------------------------------------
+    # Mirrors the Casing Review state shape so WCR survives reconnects.
+    # Populated by Load Well's "From WCR PDF" sub-tab; consumed by the
+    # WCR tab to render parsed data + drive Generate / Promote.
+    wcr_data: WCRPdfData | None = None
+    wcr_pdf_path: str | None = None
+    wcr_pdf_name: str | None = None
+    wcr_survey_df: Optional[pd.DataFrame] = None
+    wcr_survey_label: str | None = None
+    wcr_survey_source: str | None = None  # "db" or "pdf"
 
 
 def empty_state() -> AppState:

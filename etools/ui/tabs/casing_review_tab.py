@@ -50,10 +50,150 @@ from etools.ui.state import AppState
 log = get_logger(__name__)
 
 
+# JS executed on every plat-SVG render. Idempotently defines:
+#   * etoolsSetSegHover(key, on) — toggles hover highlight on a segment
+#     line + its matching cell card.
+#   * etoolsWireSegHover() — attaches mouseenter/leave to every new
+#     line.seg-line and every new .seg-cell.
+#   * etoolsWirePlatPanZoom() — attaches wheel-zoom + click-drag-pan +
+#     double-click-reset to every new svg.plat-svg.
+#   * __etoolsWireAll() — runs both wiring functions.
+#
+# The script is invoked via ui.run_javascript after each ui.html(svg)
+# insert; setTimeout(...,0) ensures Vue has flushed the DOM update first.
+_PLAT_RUNTIME_JS = r"""
+(function(){
+  if (window.__etoolsPlatRuntimeReady) return;
+  window.__etoolsPlatRuntimeReady = true;
+
+  window.etoolsSetSegHover = function(key, on) {
+    try {
+      var cell = document.getElementById('seg-cell-' + key);
+      if (cell) cell.classList.toggle('seg-cell-hover', on);
+      document.querySelectorAll('line.seg-line[data-seg="' + key + '"]').forEach(function(ln){
+        ln.classList.toggle('seg-line-hover', on);
+      });
+    } catch (e) {}
+  };
+
+  window.etoolsWireSegHover = function() {
+    document.querySelectorAll('line.seg-line').forEach(function(el){
+      if (el.__wired) return;
+      el.__wired = true;
+      var key = el.getAttribute('data-seg');
+      el.addEventListener('mouseenter', function(){ etoolsSetSegHover(key, true); });
+      el.addEventListener('mouseleave', function(){ etoolsSetSegHover(key, false); });
+    });
+    document.querySelectorAll('.seg-cell').forEach(function(el){
+      if (el.__wired) return;
+      el.__wired = true;
+      var id = el.id || '';
+      var key = id.indexOf('seg-cell-') === 0 ? id.slice(9) : '';
+      if (!key) return;
+      el.addEventListener('mouseenter', function(){ etoolsSetSegHover(key, true); });
+      el.addEventListener('mouseleave', function(){ etoolsSetSegHover(key, false); });
+    });
+  };
+
+  window.etoolsWirePlatPanZoom = function() {
+    document.querySelectorAll('svg.plat-svg').forEach(function(svg){
+      if (svg.__panzoomWired) return;
+      svg.__panzoomWired = true;
+      var vbAttr = (svg.getAttribute('viewBox') || '').trim().split(/\s+/).map(Number);
+      if (vbAttr.length !== 4 || vbAttr.some(isNaN)) return;
+      var st  = {x:vbAttr[0], y:vbAttr[1], w:vbAttr[2], h:vbAttr[3]};
+      var initX = st.x, initY = st.y, initW = st.w, initH = st.h;
+      function apply(){
+        svg.setAttribute('viewBox', st.x+' '+st.y+' '+st.w+' '+st.h);
+      }
+      svg.addEventListener('wheel', function(e){
+        e.preventDefault();
+        var r = svg.getBoundingClientRect();
+        if (!r.width || !r.height) return;
+        var mx = (e.clientX - r.left) / r.width;
+        var my = (e.clientY - r.top)  / r.height;
+        var f  = e.deltaY > 0 ? 1.15 : (1/1.15);
+        var nw = st.w * f, nh = st.h * f;
+        if (nw > initW * 50 || nw < initW * 0.02) return;
+        st.x = st.x + (st.w - nw) * mx;
+        st.y = st.y + (st.h - nh) * my;
+        st.w = nw; st.h = nh;
+        apply();
+      }, {passive:false});
+      var drag = false, sx=0, sy=0, ox=0, oy=0;
+      svg.addEventListener('mousedown', function(e){
+        if (e.button !== 0) return;
+        drag = true;
+        sx = e.clientX; sy = e.clientY;
+        ox = st.x; oy = st.y;
+        svg.style.cursor = 'grabbing';
+        e.preventDefault();
+      });
+      window.addEventListener('mousemove', function(e){
+        if (!drag) return;
+        var r = svg.getBoundingClientRect();
+        if (!r.width || !r.height) return;
+        var dx = (e.clientX - sx) * (st.w / r.width);
+        var dy = (e.clientY - sy) * (st.h / r.height);
+        st.x = ox - dx; st.y = oy - dy;
+        apply();
+      });
+      window.addEventListener('mouseup', function(){
+        if (!drag) return;
+        drag = false;
+        svg.style.cursor = '';
+      });
+      svg.addEventListener('dblclick', function(e){
+        e.preventDefault();
+        st.x = initX; st.y = initY; st.w = initW; st.h = initH;
+        apply();
+      });
+    });
+  };
+
+  window.__etoolsWireAll = function(){
+    window.etoolsWireSegHover();
+    window.etoolsWirePlatPanZoom();
+  };
+
+  // Catch-all: any future DOM insertion also gets wired automatically.
+  try {
+    var mo = new MutationObserver(function(){ window.__etoolsWireAll(); });
+    mo.observe(document.body, {childList:true, subtree:true});
+  } catch (e) {}
+})();
+"""
+
+
 def render_casing_review_tab(state: AppState) -> Callable[[], None]:
     svc = CasingReviewService()
     engine = CasingDesignEngine()
     survey_repo = SurveyRepository()
+
+    # Inject the segment-hover + pan/zoom CSS via add_head_html (this
+    # part is purely declarative and always runs at page load). The
+    # imperative JS that wires events lives in ``_install_plat_runtime``
+    # which is called via ui.run_javascript on every render so it always
+    # runs AFTER the SVG is in the DOM, regardless of add_head_html's
+    # quirks inside @page handlers.
+    ui.add_head_html(
+        """
+        <style>
+          .seg-line { vector-effect: non-scaling-stroke;
+                      stroke: #475569; stroke-width: 1.4;
+                      transition: stroke .08s, stroke-width .08s;
+                      cursor: pointer; }
+          .seg-line-hover { stroke: #f59e0b !important;
+                            stroke-width: 5 !important; }
+          .seg-cell-hover .q-card { box-shadow: 0 0 0 2px #f59e0b !important;
+                                    background: #fffbeb !important;
+                                    transition: box-shadow .08s; }
+          .seg-cell { transition: box-shadow .08s; }
+          svg.plat-svg { cursor: grab; touch-action: none; }
+          svg.plat-svg:active { cursor: grabbing; }
+        </style>
+        """
+    )
 
     # ``cache`` ONLY holds element refs for the current render. Persistent
     # data goes on ``state``. Anything stored here is gone after reconnect.
@@ -77,113 +217,116 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
 
     # ----------------------------------------------------------------------
     # Top-level layout — built once per render
+    #
+    # Two-zone design:
+    #   * Sticky control panel at the top with everything the user needs to
+    #     act on (upload + parse + survey + frac + promote + generate buttons
+    #     + status badges) — always visible, never collapsed.
+    #   * Stack of collapsible expansions below for the heavy work areas
+    #     (Parsed APD / Inputs / Design / Sections / WBD / Output). The
+    #     ones that aren't immediately load-bearing (parsed APD dump, the
+    #     editable inputs detail, the Plotly WBD) default to collapsed so
+    #     the page stays scannable.
     # ----------------------------------------------------------------------
     with ui.column().classes("p-4 gap-3 w-full"):
-        ui.label("Generate Casing Review Excel").classes("text-xl font-semibold")
+        ui.label("Casing Review").classes("text-xl font-semibold")
 
-        # Step 1
-        ui.label("Step 1 — APD PDF").classes("text-sm font-semibold mt-2")
-        with ui.row().classes("gap-3 items-center w-full"):
-            apd_upload = ui.upload(
-                label="Drop APD application PDF here",
-                auto_upload=True,
-                multiple=False,
-                on_upload=lambda e: handle_apd_upload(e),
-                on_rejected=lambda e: ui.notify(f"Upload rejected: {e}", type="negative"),
-            ).classes("max-w-md").props("accept=.pdf")
-            cache["apd_status"] = ui.label("No APD uploaded.").classes(
-                "text-xs text-gray-600"
-            )
-
-        with ui.row().classes("gap-3 items-center w-full mt-1"):
-            ui.label("Mode:").classes("text-sm")
-            cache["mode_select"] = (
-                ui.select(
-                    options={
-                        "rules": "Rules only",
-                        "rules+llm": "Rules + LLM backfill",
-                        "llm": "LLM only",
-                    },
-                    value="rules+llm",
-                )
-                .props("dense outlined")
-                .classes("w-72")
-            )
-            cache["parse_btn"] = ui.button(
-                "Parse APD PDF",
-                icon="play_arrow",
-                on_click=lambda: parse_now(),
-            ).props("color=primary")
-            cache["parse_btn"].disable()
-
-        cache["meta_card"] = ui.card().classes("w-full")
-        cache["meta_card"].visible = False
-
-        # Step 2 — survey source
-        ui.label("Step 2 — Survey source").classes("text-sm font-semibold mt-2")
-        cache["survey_status"] = ui.label("Upload an APD first.").classes(
-            "text-sm px-3 py-2 rounded bg-slate-100 text-slate-700"
+        # Empty-state shown until an APD is loaded on the Load Well tab.
+        cache["empty_state"] = ui.card().classes(
+            "w-full bg-slate-50 border border-dashed border-slate-300 p-6"
         )
-        cache["survey_upload_row"] = ui.row().classes("gap-3 items-center w-full")
-        with cache["survey_upload_row"]:
-            survey_upload = ui.upload(
-                label="Drop directional survey PDF here",
-                auto_upload=True,
-                multiple=False,
-                on_upload=lambda e: handle_survey_upload(e),
-                on_rejected=lambda e: ui.notify(f"Upload rejected: {e}", type="negative"),
-            ).classes("max-w-md").props("accept=.pdf")
-        cache["survey_upload_row"].visible = False
-
-        # Step 3
-        ui.label("Step 3 — Frac gradient @ production shoe").classes(
-            "text-sm font-semibold mt-2"
-        )
-        with ui.row().classes("gap-3 items-center"):
-            ui.label("psi/ft:").classes("text-sm")
-            cache["frac_input"] = (
-                ui.input(value="1.00")
-                .props("dense outlined")
-                .classes("w-28")
-                .on("blur", lambda _: _on_frac_change())
-                .on("keydown.enter", lambda _: _on_frac_change())
-            )
+        with cache["empty_state"]:
+            ui.label("No APD loaded").classes("text-sm font-semibold text-slate-700")
             ui.label(
-                "Auto-detected from page 2; conservative default 1.0 if not found."
-            ).classes("text-xs text-gray-500")
+                "Go to the Load Well tab → From APD PDF to upload and parse "
+                "an APD application. You'll be routed back here automatically."
+            ).classes("text-xs text-slate-600")
 
-        cache["inputs_card"] = ui.card().classes("w-full")
-        cache["inputs_card"].visible = False
-        cache["design_card"] = ui.card().classes("w-full")
-        cache["design_card"].visible = False
-        cache["wbd_card"] = ui.card().classes("w-full")
-        cache["wbd_card"].visible = False
-        cache["sections_card"] = ui.card().classes("w-full")
-        cache["sections_card"].visible = False
+        # --- COMPACT ACTION BAR (visible once APD is parsed) ----------
+        cache["action_bar"] = ui.card().classes(
+            "w-full bg-slate-50 border border-slate-200"
+        )
+        cache["action_bar"].visible = False
+        with cache["action_bar"]:
+            with ui.row().classes("gap-3 items-center w-full"):
+                cache["source_label"] = ui.label("").classes(
+                    "text-xs text-slate-600 font-mono"
+                )
+                ui.space()
+                cache["survey_status"] = ui.label("").classes(
+                    "text-xs px-2 py-1 rounded bg-slate-200 text-slate-700"
+                )
+                ui.label("Frac:").classes("text-xs text-slate-600 ml-2")
+                cache["frac_input"] = (
+                    ui.input(value="1.00")
+                    .props("dense outlined suffix=psi/ft")
+                    .classes("w-28")
+                    .on("blur", lambda _: _on_frac_change())
+                    .on("keydown.enter", lambda _: _on_frac_change())
+                )
+                cache["promote_btn"] = ui.button(
+                    "Use as active well",
+                    icon="upgrade",
+                    on_click=lambda: promote_to_primary(),
+                ).props("color=secondary dense")
+                cache["promote_btn"].tooltip(
+                    "Push this APD + survey into shared state so Survey, "
+                    "Map & Viz, and Clearance tabs populate with this well."
+                )
+                cache["gen_btn"] = ui.button(
+                    "Generate Excel",
+                    icon="description",
+                    on_click=lambda: generate(),
+                ).props("color=primary dense")
+            # Survey-PDF upload only appears when no DB survey was found.
+            cache["survey_upload_row"] = ui.row().classes("gap-2 items-center mt-1")
+            with cache["survey_upload_row"]:
+                survey_upload = ui.upload(
+                    label="Survey PDF (optional)",
+                    auto_upload=True,
+                    multiple=False,
+                    on_upload=lambda e: handle_survey_upload(e),
+                    on_rejected=lambda e: ui.notify(
+                        f"Upload rejected: {e}", type="negative"
+                    ),
+                ).classes("max-w-xs").props("accept=.pdf flat dense")
+            cache["survey_upload_row"].visible = False
+            cache["gen_status"] = ui.label("").classes("text-xs text-slate-500")
 
-        # Step 4 — promote + generate
-        ui.label("Step 4 — Promote / generate").classes("text-sm font-semibold mt-2")
-        with ui.row().classes("gap-3 items-center"):
-            cache["promote_btn"] = ui.button(
-                "Use as active well",
-                icon="upgrade",
-                on_click=lambda: promote_to_primary(),
-            ).props("color=secondary")
-            cache["promote_btn"].disable()
-            cache["promote_btn"].tooltip(
-                "Pushes the APD + survey into shared state so Survey, "
-                "Map & Viz, and Clearance tabs populate with this well."
-            )
-            cache["gen_btn"] = ui.button(
-                "Generate Casing Review Excel",
-                icon="description",
-                on_click=lambda: generate(),
-            ).props("color=primary")
-            cache["gen_btn"].disable()
-            cache["gen_status"] = ui.label("").classes("text-sm text-gray-500 ml-2")
+        # Legacy aliases the existing handlers still reach for.
+        cache["apd_status"] = cache["source_label"]
+        cache["mode_select"] = None  # not used here anymore
+        cache["parse_btn"] = None    # not used here anymore
 
-        cache["result_card"] = ui.card().classes("w-full mt-2")
-        cache["result_card"].visible = False
+        # --- SUB-TABS (one tab per work area) -------------------------
+        # Whole tabs widget hidden until an APD is parsed.
+        cache["tabs_wrap"] = ui.element("div").classes("w-full")
+        cache["tabs_wrap"].visible = False
+        with cache["tabs_wrap"]:
+            with ui.tabs().classes("w-full") as cr_tabs:
+                cache["meta_tab"] = ui.tab("Parsed APD", icon="description")
+                cache["inputs_tab"] = ui.tab("Casing inputs", icon="edit_note")
+                cache["design_tab"] = ui.tab("Computed design", icon="calculate")
+                cache["sections_tab"] = ui.tab("Sections", icon="grid_on")
+                cache["wbd_tab"] = ui.tab("WBD", icon="view_in_ar")
+                cache["result_tab"] = ui.tab("Output", icon="folder_open")
+            with ui.tab_panels(cr_tabs, value=cache["meta_tab"]).classes("w-full"):
+                with ui.tab_panel(cache["meta_tab"]) as p:
+                    cache["meta_card"] = p
+                with ui.tab_panel(cache["inputs_tab"]) as p:
+                    cache["inputs_card"] = p
+                with ui.tab_panel(cache["design_tab"]) as p:
+                    cache["design_card"] = p
+                with ui.tab_panel(cache["sections_tab"]) as p:
+                    cache["sections_card"] = p
+                with ui.tab_panel(cache["wbd_tab"]) as p:
+                    cache["wbd_card"] = p
+                with ui.tab_panel(cache["result_tab"]) as p:
+                    cache["result_card"] = p
+        # Each tab button is hidden until its content has been rendered.
+        for k in ("meta_tab", "inputs_tab", "design_tab",
+                  "sections_tab", "wbd_tab", "result_tab"):
+            cache[k].visible = False
 
     # ----------------------------------------------------------------------
     # If state already carries APD data (e.g. user navigated away and back,
@@ -198,58 +341,8 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
 
     # ----------------------------------------------------------------------
     # Event handlers — they write to ``state`` (not cache) so reconnects
-    # preserve everything.
+    # preserve everything. Upload + parse moved to the Load Well tab.
     # ----------------------------------------------------------------------
-    async def handle_apd_upload(e: events.UploadEventArguments) -> None:
-        upload = getattr(e, "file", None) or getattr(e, "content", None)
-        name = getattr(upload, "name", None) or getattr(e, "name", "uploaded.pdf")
-        cache["apd_status"].text = f"Saving {name}…"
-        try:
-            tmp_path = await _save_upload(upload, name)
-        except Exception as exc:
-            ui.notify(f"Upload failed: {exc}", type="negative")
-            return
-        state.apd_pdf_path = tmp_path
-        state.apd_pdf_name = name
-        state.apd_data = None
-        state.casing_survey_df = None
-        state.casing_survey_label = None
-        state.casing_overrides = {}
-        state.casing_last_output_path = None
-        try:
-            apd_upload.reset()
-        except Exception:
-            pass
-        _hide_dynamic_cards()
-        cache["promote_btn"].disable()
-        cache["gen_btn"].disable()
-        cache["apd_status"].text = f"Loaded {name}. Click 'Parse APD PDF' to extract."
-        cache["parse_btn"].enable()
-
-    async def parse_now() -> None:
-        tmp_path = state.apd_pdf_path
-        if not tmp_path:
-            ui.notify("Upload an APD PDF first.", type="warning")
-            return
-        mode = cache["mode_select"].value or "rules+llm"
-        cache["parse_btn"].disable()
-        cache["apd_status"].text = f"Parsing {state.apd_pdf_name} (mode={mode})…"
-        try:
-            data = await asyncio.to_thread(parse_apd_pdf, tmp_path, mode=mode)
-        except Exception as exc:
-            log.exception("casing_review.parse_failed")
-            ui.notify(f"Parse failed: {exc}", type="negative")
-            cache["apd_status"].text = "Parse failed."
-            cache["parse_btn"].enable()
-            return
-        state.apd_data = data
-        # Seed frac gradient from PDF if we don't have an explicit user override.
-        if state.casing_frac_gradient_psi_per_ft is None and data.frac_gradient_psi_per_ft is not None:
-            state.casing_frac_gradient_psi_per_ft = data.frac_gradient_psi_per_ft
-        await _try_db_survey()
-        _rebuild_from_state()
-        cache["parse_btn"].enable()
-
     async def _try_db_survey() -> None:
         data = state.apd_data
         if data is None or not data.api:
@@ -375,17 +468,20 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
         out = result.output_path
         cache["gen_status"].text = f"Saved {out.name}"
         _render_result(cache["result_card"], out, _serve_output_file(out))
-        cache["result_card"].visible = True
+        cache["result_tab"].visible = True
         ui.notify(f"Casing Review generated: {out.name}", type="positive")
 
     # ----------------------------------------------------------------------
     # Render helpers — all read from ``state`` so reconnects come up clean.
     # ----------------------------------------------------------------------
     def _hide_dynamic_cards() -> None:
-        for k in ("meta_card", "inputs_card", "design_card", "wbd_card", "sections_card", "result_card"):
-            card = cache.get(k)
-            if card is not None:
-                card.visible = False
+        if cache.get("tabs_wrap") is not None:
+            cache["tabs_wrap"].visible = False
+        for k in ("meta_tab", "inputs_tab", "design_tab",
+                  "sections_tab", "wbd_tab", "result_tab"):
+            t = cache.get(k)
+            if t is not None:
+                t.visible = False
 
     def _rebuild_from_state(*, defer_heavy: bool = False) -> None:
         """Restore the tab UI from ``state``. Idempotent.
@@ -399,22 +495,20 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
         data = state.apd_data
         if data is None:
             _hide_dynamic_cards()
-            cache["apd_status"].text = "No APD uploaded."
-            cache["survey_status"].text = "Upload an APD first."
-            cache["survey_status"].classes(
-                replace="text-sm px-3 py-2 rounded bg-slate-100 text-slate-700"
-            )
-            cache["gen_status"].text = ""
-            cache["promote_btn"].disable()
-            cache["gen_btn"].disable()
+            cache["action_bar"].visible = False
+            cache["empty_state"].visible = True
             return
 
-        cache["apd_status"].text = (
-            f"Parsed {state.apd_pdf_name or 'APD'}: {data.well_name or '(unnamed)'} "
-            f"API {data.api or '—'} — {len(data.casing)} strings"
+        cache["empty_state"].visible = False
+        cache["action_bar"].visible = True
+        cache["source_label"].text = (
+            f"{state.apd_pdf_name or 'APD'} · "
+            f"{data.well_name or '(unnamed)'} · API {data.api or '—'} · "
+            f"{len(data.casing)} strings"
         )
+        cache["tabs_wrap"].visible = True
         _render_meta(cache["meta_card"], data)
-        cache["meta_card"].visible = True
+        cache["meta_tab"].visible = True
 
         if state.casing_survey_df is not None and not state.casing_survey_df.empty:
             cache["survey_status"].text = f"Using survey: {state.casing_survey_label}"
@@ -447,7 +541,7 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
                 state.casing_last_output_path,
                 _serve_output_file(state.casing_last_output_path),
             )
-            cache["result_card"].visible = True
+            cache["result_tab"].visible = True
 
     def _rebuild_design_and_wbd() -> None:
         """Recompute design from state + render inputs / design table / WBD.
@@ -471,20 +565,38 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
         design = engine.build(data, welltrack=welltrack)
         _apply_string_overrides(design, state.casing_overrides)
 
+        # Inputs card is rendered once per full rebuild. Edits cascade
+        # only to the design table + WBD (via _recompute_downstream) so
+        # the input widget that fired the blur event isn't destroyed
+        # mid-event by re-rendering its own parent.
+        def _recompute_downstream() -> None:
+            d = state.apd_data
+            if d is None:
+                return
+            wt = (
+                welltrack_from_dataframe(state.casing_survey_df)
+                if state.casing_survey_df is not None
+                else None
+            )
+            new_design = engine.build(d, welltrack=wt)
+            _apply_string_overrides(new_design, state.casing_overrides)
+            _render_design(cache["design_card"], new_design)
+            _render_wbd(cache["wbd_card"], new_design, d)
+
         _render_inputs(
-            cache["inputs_card"], data, state, design,
-            on_change=_rebuild_design_and_wbd,
+            cache["inputs_card"], data, state,
+            on_change=_recompute_downstream,
         )
-        cache["inputs_card"].visible = True
+        cache["inputs_tab"].visible = True
 
         _render_design(cache["design_card"], design)
-        cache["design_card"].visible = True
+        cache["design_tab"].visible = True
 
         _render_sections(cache["sections_card"], data, state)
-        cache["sections_card"].visible = True
+        cache["sections_tab"].visible = True
 
         _render_wbd(cache["wbd_card"], design, data)
-        cache["wbd_card"].visible = True
+        cache["wbd_tab"].visible = True
 
     def _lazy_design_render() -> None:
         """Used to defer the heavy design rebuild via ui.timer to keep the
@@ -938,153 +1050,197 @@ def _render_section_panel(
             refs["lat"].value = f"{r.lat:.6f}"
             refs["lon"].value = f"{r.lon:.6f}"
 
-    ui.label("Location — coordinate switcher").classes(
-        "text-sm font-semibold mt-3 text-gray-700"
-    )
-    with ui.row().classes("gap-3 items-center flex-wrap"):
-        ui.label("N/S:").classes("text-xs text-gray-500")
-        refs["ns_dir"] = ui.toggle(
-            {"FNL": "FNL", "FSL": "FSL"},
-            value=initial_ns,
-            on_change=lambda _: _compute_from_footages(),
-        ).props("dense")
-        refs["ns_val"] = (
-            ui.input(value=f"{initial_ns_val:.2f}")
-            .props("dense outlined suffix=ft")
-            .classes("w-28")
-            .on("blur", lambda _: _compute_from_footages())
-            .on("keydown.enter", lambda _: _compute_from_footages())
-        )
-        ui.label("E/W:").classes("text-xs text-gray-500 ml-3")
-        refs["ew_dir"] = ui.toggle(
-            {"FEL": "FEL", "FWL": "FWL"},
-            value=initial_ew,
-            on_change=lambda _: _compute_from_footages(),
-        ).props("dense")
-        refs["ew_val"] = (
-            ui.input(value=f"{initial_ew_val:.2f}")
-            .props("dense outlined suffix=ft")
-            .classes("w-28")
-            .on("blur", lambda _: _compute_from_footages())
-            .on("keydown.enter", lambda _: _compute_from_footages())
-        )
-    with ui.row().classes("gap-3 items-center mt-1 flex-wrap"):
-        ui.label("Lat:").classes("text-xs text-gray-500")
-        refs["lat"] = (
-            ui.input(value="").props("dense outlined").classes("w-32")
-            .on("blur", lambda _: _compute_from_latlon())
-            .on("keydown.enter", lambda _: _compute_from_latlon())
-        )
-        ui.label("Lon:").classes("text-xs text-gray-500 ml-2")
-        refs["lon"] = (
-            ui.input(value="").props("dense outlined").classes("w-32")
-            .on("blur", lambda _: _compute_from_latlon())
-            .on("keydown.enter", lambda _: _compute_from_latlon())
-        )
-        ui.label("UTM E:").classes("text-xs text-gray-500 ml-3")
-        refs["utm_e"] = (
-            ui.input(value="").props("dense outlined").classes("w-32")
-            .on("blur", lambda _: _compute_from_utm())
-            .on("keydown.enter", lambda _: _compute_from_utm())
-        )
-        ui.label("N:").classes("text-xs text-gray-500")
-        refs["utm_n"] = (
-            ui.input(value="").props("dense outlined").classes("w-32")
-            .on("blur", lambda _: _compute_from_utm())
-            .on("keydown.enter", lambda _: _compute_from_utm())
-        )
-        ui.label("Zone 12 N").classes("text-xs text-gray-500")
-    with ui.row().classes("gap-3 items-center mt-1"):
-        ui.label("North reference:").classes("text-xs text-gray-500")
-        ui.toggle(
-            {"T": "True", "G": "Grid", "M": "Magnetic"},
-            value=sd.north_ref_choice,
-            on_change=lambda e: setattr(sd, "north_ref_choice", e.value),
-        ).props("dense")
+    plat_holder: dict = {}
+
+    def _refresh_plat() -> None:
+        if plat_holder.get("container") is None:
+            return
+        _render_plat_svg(plat_holder["container"], sd, state)
+
+    # ------------------------------------------------------------------
+    # Top: 2-column row.
+    #   LEFT  — 3x3 section-geometry grid (16 cells + plat preview)
+    #   RIGHT — this panel's location (footages / lat-lon / UTM /
+    #           north-reference), pinned to a fixed-width side card.
+    # ------------------------------------------------------------------
+    with ui.row().classes("w-full gap-3 flex-nowrap items-start mt-2"):
+        # ---- LEFT: section geometry ----
+        with ui.column().classes("gap-1 shrink-0"):
+            with ui.row().classes("w-full items-baseline gap-3"):
+                ui.label(f"PLSS {plss.conc}").classes(
+                    "text-xs font-mono text-gray-700"
+                )
+                ui.label(
+                    f"Sec {plss.section} T{plss.township}"
+                    f"{'N' if plss.township_dir==1 else 'S'} "
+                    f"R{plss.range_}{'E' if plss.range_dir==1 else 'W'} "
+                    f"{'SaltLake' if plss.baseline==1 else 'Uintah'}"
+                ).classes("text-xs text-gray-500")
+            with ui.element("div").style(
+                "display: grid; "
+                "grid-template-columns: 170px repeat(4, 170px) 170px; "
+                "grid-template-rows: auto repeat(4, auto) auto; "
+                "gap: 4px;"
+            ):
+                for col, key in enumerate(
+                    ["North-Left2", "North-Left1", "North-Right1", "North-Right2"],
+                    start=2,
+                ):
+                    with ui.element("div").style(f"grid-column: {col}; grid-row: 1;"):
+                        _render_segment_cell(sd, key, state, _refresh_plat)
+                for row, key in enumerate(
+                    ["West-Up2", "West-Up1", "West-Down1", "West-Down2"],
+                    start=2,
+                ):
+                    with ui.element("div").style(f"grid-column: 1; grid-row: {row};"):
+                        _render_segment_cell(sd, key, state, _refresh_plat)
+                for row, key in enumerate(
+                    ["East-Up2", "East-Up1", "East-Down1", "East-Down2"],
+                    start=2,
+                ):
+                    with ui.element("div").style(f"grid-column: 6; grid-row: {row};"):
+                        _render_segment_cell(sd, key, state, _refresh_plat)
+                for col, key in enumerate(
+                    ["South-Left2", "South-Left1", "South-Right1", "South-Right2"],
+                    start=2,
+                ):
+                    with ui.element("div").style(f"grid-column: {col}; grid-row: 6;"):
+                        _render_segment_cell(sd, key, state, _refresh_plat)
+                with ui.element("div").style(
+                    "grid-column: 2 / span 4; grid-row: 2 / span 4; "
+                    "display: flex; align-items: center; justify-content: center;"
+                ):
+                    plat_holder["container"] = ui.element("div").style(
+                        "width: 100%; height: 100%; "
+                        "border: 1px solid #cbd5e1; border-radius: 6px; "
+                        "background: white; padding: 4px; "
+                        "display: flex; flex-direction: column;"
+                    )
+                    _render_plat_svg(plat_holder["container"], sd, state)
+
+        # ---- RIGHT: coord switcher (top) + APD locations (below), stacked ----
+        with ui.column().classes("gap-2 shrink-0").style("width: 340px;"):
+            with ui.card().classes("w-full p-3 gap-1"):
+                ui.label(display_label).classes(
+                    "text-sm font-semibold text-gray-700"
+                )
+                ui.label(
+                    "Footages / lat-lon / UTM auto-sync; edit any one."
+                ).classes("text-xs text-gray-500 mb-1")
+
+                with ui.row().classes("gap-2 items-center no-wrap w-full"):
+                    refs["ns_dir"] = ui.toggle(
+                        {"FNL": "FNL", "FSL": "FSL"},
+                        value=initial_ns,
+                        on_change=lambda _: _compute_from_footages(),
+                    ).props("dense")
+                    refs["ns_val"] = (
+                        ui.input(value=f"{initial_ns_val:.2f}")
+                        .props("dense outlined hide-bottom-space suffix=ft")
+                        .classes("flex-1 min-w-0")
+                        .on("blur", lambda _: _compute_from_footages())
+                        .on("keydown.enter", lambda _: _compute_from_footages())
+                    )
+                with ui.row().classes("gap-2 items-center no-wrap w-full"):
+                    refs["ew_dir"] = ui.toggle(
+                        {"FEL": "FEL", "FWL": "FWL"},
+                        value=initial_ew,
+                        on_change=lambda _: _compute_from_footages(),
+                    ).props("dense")
+                    refs["ew_val"] = (
+                        ui.input(value=f"{initial_ew_val:.2f}")
+                        .props("dense outlined hide-bottom-space suffix=ft")
+                        .classes("flex-1 min-w-0")
+                        .on("blur", lambda _: _compute_from_footages())
+                        .on("keydown.enter", lambda _: _compute_from_footages())
+                    )
+
+                with ui.row().classes("gap-2 no-wrap w-full"):
+                    refs["lat"] = (
+                        ui.input(value="")
+                        .props('dense outlined hide-bottom-space stack-label label="Lat"')
+                        .classes("flex-1 min-w-0")
+                        .on("blur", lambda _: _compute_from_latlon())
+                        .on("keydown.enter", lambda _: _compute_from_latlon())
+                    )
+                    refs["lon"] = (
+                        ui.input(value="")
+                        .props('dense outlined hide-bottom-space stack-label label="Lon"')
+                        .classes("flex-1 min-w-0")
+                        .on("blur", lambda _: _compute_from_latlon())
+                        .on("keydown.enter", lambda _: _compute_from_latlon())
+                    )
+
+                with ui.row().classes("gap-2 no-wrap w-full"):
+                    refs["utm_e"] = (
+                        ui.input(value="")
+                        .props('dense outlined hide-bottom-space stack-label label="UTM E"')
+                        .classes("flex-1 min-w-0")
+                        .on("blur", lambda _: _compute_from_utm())
+                        .on("keydown.enter", lambda _: _compute_from_utm())
+                    )
+                    refs["utm_n"] = (
+                        ui.input(value="")
+                        .props('dense outlined hide-bottom-space stack-label label="UTM N"')
+                        .classes("flex-1 min-w-0")
+                        .on("blur", lambda _: _compute_from_utm())
+                        .on("keydown.enter", lambda _: _compute_from_utm())
+                    )
+
+                with ui.row().classes("gap-2 items-center"):
+                    ui.label("North ref:").classes("text-xs text-gray-500")
+                    ui.toggle(
+                        {"T": "True", "G": "Grid", "M": "Magnetic"},
+                        value=sd.north_ref_choice,
+                        on_change=lambda e: setattr(sd, "north_ref_choice", e.value),
+                    ).props("dense")
+                    ui.label("Z12 N").classes("text-xs text-gray-500 ml-auto")
+
+            # Extracted APD well locations — stacked under the switcher.
+            if data.locations:
+                with ui.card().classes(
+                    "w-full bg-amber-50 border border-amber-200 p-2 gap-1"
+                ):
+                    ui.label("Extracted APD well locations").classes(
+                        "text-sm font-semibold text-amber-900"
+                    )
+                    for L in data.locations:
+                        ns = (f"{int(L.fnl)} FNL" if L.fnl
+                              else f"{int(L.fsl)} FSL" if L.fsl else "—")
+                        ew = (f"{int(L.fel)} FEL" if L.fel
+                              else f"{int(L.fwl)} FWL" if L.fwl else "—")
+                        with ui.column().classes(
+                            "gap-0 px-2 py-1 bg-white/60 rounded border "
+                            "border-amber-200 w-full"
+                        ):
+                            ui.label(L.name).classes(
+                                "text-xs font-semibold text-amber-900"
+                            )
+                            ui.label(f"{ns} · {ew}").classes(
+                                "text-xs text-amber-800 font-mono"
+                            )
+                            ui.label(
+                                f"Sec {L.section or '—'} "
+                                f"T{L.township or '?'}{L.township_dir or ''} "
+                                f"R{L.range or '?'}{L.range_dir or ''} "
+                                f"{L.meridian or '—'}"
+                            ).classes("text-xs text-amber-700 font-mono")
 
     # Seed lat/lon + UTM from the initial footages.
     if (fnl is not None or fsl is not None) and (fel is not None or fwl is not None):
         _compute_from_footages()
 
-    # ----------------------------------------------------------------------
-    # 3×3 section-geometry grid + 16 segment editor
-    # ----------------------------------------------------------------------
-    ui.separator().classes("my-3")
-    ui.label("Section geometry — 16 boundary segments").classes(
-        "text-sm font-semibold text-gray-700"
-    )
-    ui.label(
-        f"PLSS {plss.conc} — defaults from Grid Numbers DB; user overrides "
-        "win and reshape the polygon on Map & Viz."
-    ).classes("text-xs text-gray-500 mb-2")
 
-    # 3×3 grid of corner blocks. Each block carries the segments that meet
-    # at that point: corners get 2 segments (one per adjacent side), the
-    # center is a placeholder, and the 4 quarter corners get 2 segments
-    # (the two halves of that boundary that share the quarter-corner).
-    corner_segment_map: dict[str, list[str]] = {
-        "NW_SC": ["North-Left2", "West-Up2"],
-        "N_QC":  ["North-Left1", "North-Right1"],
-        "NE_SC": ["North-Right2", "East-Up2"],
-        "W_QC":  ["West-Up1", "West-Down1"],
-        "CENTER": [],
-        "E_QC":  ["East-Up1", "East-Down1"],
-        "SW_SC": ["South-Left2", "West-Down2"],
-        "S_QC":  ["South-Left1", "South-Right1"],
-        "SE_SC": ["South-Right2", "East-Down2"],
-    }
-    cell_layout = [
-        ["NW_SC", "N_QC", "NE_SC"],
-        ["W_QC",  "CENTER", "E_QC"],
-        ["SW_SC", "S_QC", "SE_SC"],
-    ]
-    corner_labels = {
-        "NW_SC": "NW Section Corner", "N_QC": "N Quarter Corner", "NE_SC": "NE Section Corner",
-        "W_QC":  "W Quarter Corner",  "CENTER": "(section center)", "E_QC": "E Quarter Corner",
-        "SW_SC": "SW Section Corner", "S_QC": "S Quarter Corner",  "SE_SC": "SE Section Corner",
-    }
+def _render_segment_cell(
+    sd, seg_key: str, state: AppState, on_geometry_change
+) -> None:
+    """One editable *cell* for a Grid Numbers boundary segment, laid out
+    vertically (label on top, then dist/deg/min/sec/align stacked, then
+    a small reset button). Sized for the perimeter frame layout.
 
-    with ui.grid(columns=3).classes("gap-2 w-full"):
-        for row in cell_layout:
-            for cell in row:
-                with ui.card().classes("p-2 w-full text-xs"):
-                    ui.label(corner_labels[cell]).classes(
-                        "font-semibold text-xs text-gray-700"
-                    )
-                    if cell == "CENTER":
-                        # Center cell shows the PLSS code + location pin.
-                        ui.label(f"PLSS {plss.conc}").classes("text-xs")
-                        ui.label(
-                            f"Sec {plss.section} T{plss.township}"
-                            f"{'N' if plss.township_dir==1 else 'S'} "
-                            f"R{plss.range_}{'E' if plss.range_dir==1 else 'W'} "
-                            f"{'SaltLake' if plss.baseline==1 else 'Uintah'}"
-                        ).classes("text-xs text-gray-500")
-                        # Show resolved corner coords (live updated by overrides).
-                        try:
-                            corners = sd.resolve_corners()
-                            for nm in ("NW_SC", "NE_SC", "SE_SC", "SW_SC"):
-                                x, y = corners[nm]
-                                ui.label(
-                                    f"{nm}: ({x:,.1f}, {y:,.1f})"
-                                ).classes("text-xs text-gray-500")
-                        except Exception:
-                            pass
-                    else:
-                        for seg_key in corner_segment_map[cell]:
-                            _render_segment_row(sd, seg_key, state)
-
-
-def _render_segment_row(sd, seg_key: str, state: AppState) -> None:
-    """One editable row for a Grid Numbers boundary segment.
-
-    Each input is pre-populated with the *effective* value (override if
-    set, else the Grid Numbers DB default). Typing replaces it; clearing
-    the cell reverts to the default. The reset button restores all 5
-    fields to defaults and clears the override.
-
-    On any edit, fires ``state.viz_refresh()`` so the Map & Viz polygon
-    immediately reshapes to reflect the new geometry.
+    Pre-populated with the *effective* value (override if set, else the
+    Grid Numbers DB default). On any edit fires ``state.viz_refresh()``
+    AND the local ``on_geometry_change`` so the center plat redraws.
     """
     from etools.core.casing_review.sections import SegmentData
 
@@ -1107,12 +1263,16 @@ def _render_segment_row(sd, seg_key: str, state: AppState) -> None:
 
     def _fire_viz_refresh() -> None:
         cb = getattr(state, "viz_refresh", None)
-        if cb is None:
-            return
-        try:
-            cb()
-        except Exception as exc:
-            log.warning("section_panel.viz_refresh.failed", error=str(exc))
+        if cb is not None:
+            try:
+                cb()
+            except Exception as exc:
+                log.warning("section_panel.viz_refresh.failed", error=str(exc))
+        if on_geometry_change is not None:
+            try:
+                on_geometry_change()
+            except Exception as exc:
+                log.warning("section_panel.plat_refresh.failed", error=str(exc))
 
     def _apply():
         new_dist = _parse_optional(refs["dist"].value, cast=float)
@@ -1144,7 +1304,6 @@ def _render_segment_row(sd, seg_key: str, state: AppState) -> None:
         _fire_viz_refresh()
 
     def _reset():
-        """Drop the override and snap all 5 inputs back to the DB defaults."""
         sd.segment_overrides.pop(seg_key, None)
         refs["dist"].value = _fmt(default.length_ft, "float")
         refs["deg"].value = _fmt(default.degrees, "int")
@@ -1155,50 +1314,292 @@ def _render_segment_row(sd, seg_key: str, state: AppState) -> None:
         _fire_viz_refresh()
 
     refs: dict = {}
-    with ui.row().classes("items-center gap-1 mt-1"):
-        ui.label(seg_key).classes("w-24 text-xs text-gray-700 font-mono")
-        badge = ui.label("✎" if seg_key in sd.segment_overrides else "").classes(
-            "text-xs text-amber-600 w-4"
+    # Compact cell — wrapped in a plain div with a stable DOM id so the
+    # plat SVG's segment hover handlers can highlight the matching cell.
+    # Labels float inside each Quasar input (label= prop) so no external
+    # label rows are needed; that's what keeps the cell short.
+    dom_id = f"seg-cell-{seg_key}"
+    with ui.element("div").props(f'id="{dom_id}"').classes(
+        "seg-cell w-full h-full"
+    ):
+        with ui.card().classes("p-1 w-full h-full"):
+            with ui.row().classes("items-center gap-1 w-full no-wrap"):
+                ui.label(seg_key).classes(
+                    "text-[11px] font-mono font-semibold text-gray-700 "
+                    "flex-1 truncate leading-none"
+                )
+                badge = ui.label(
+                    "✎" if seg_key in sd.segment_overrides else ""
+                ).classes("text-xs text-amber-600 w-3")
+                ui.button(icon="restart_alt", on_click=lambda _=None: _reset()).props(
+                    "flat dense round size=xs color=grey"
+                ).tooltip("Reset to Grid Numbers DB default")
+
+            def _mk_input(*, value: str, label: str, tooltip: str | None = None,
+                          width_cls: str = "w-full"):
+                inp = (
+                    ui.input(value=value)
+                    .props(f'dense outlined hide-bottom-space stack-label label="{label}"')
+                    .classes(width_cls)
+                    .on("blur", lambda _: _apply())
+                    .on("keydown.enter", lambda _: _apply())
+                )
+                if tooltip:
+                    inp.tooltip(tooltip)
+                return inp
+
+            refs["dist"] = _mk_input(
+                value=_fmt(_effective("length_ft"), "float"),
+                label="Distance (ft)",
+            )
+            with ui.row().classes("gap-1 w-full no-wrap"):
+                refs["deg"] = _mk_input(
+                    value=_fmt(_effective("degrees"), "int"),
+                    label="Deg",
+                    width_cls="flex-1 min-w-0",
+                )
+                refs["min"] = _mk_input(
+                    value=_fmt(_effective("minutes"), "int"),
+                    label="Min",
+                    width_cls="flex-1 min-w-0",
+                )
+                refs["sec"] = _mk_input(
+                    value=_fmt(_effective("seconds"), "int"),
+                    label="Sec",
+                    width_cls="flex-1 min-w-0",
+                )
+                refs["dir"] = _mk_input(
+                    value=_fmt(_effective("alignment"), "int"),
+                    label="Align",
+                    tooltip="Quadrant: 1=NE 2=NW 3=SW 4=SE",
+                    width_cls="flex-1 min-w-0",
+                )
+
+
+def _render_plat_svg(container, sd, state: AppState | None = None) -> None:
+    """Render the section as an inline SVG.
+
+    What's drawn:
+      * Fill polygon from the *walked* 16-segment boundary (so the
+        polygon visibly opens when override lengths break closure).
+      * 16 visible boundary segments (one per Grid Numbers cell) with
+        short-code labels, each backed by a fat transparent hover hit
+        zone so the segment is easy to mouse onto.
+      * 8 corner dots (NW_SC, N_QC, NE_SC, E_QC, SE_SC, S_QC, SW_SC,
+        W_QC) marking segment endpoints / quarter corners.
+      * Red dashed line from walked endpoint → anchor when the walk
+        does NOT close back to the start (override-driven mismatch).
+      * The well's surface→bottom trajectory clipped to this view, when
+        a processed survey is available on ``state``.
+      * N / S / E / W compass labels.
+
+    Hovering any segment line highlights both the segment and the
+    matching ``#seg-cell-<KEY>`` card via JS installed in
+    ``render_casing_review_tab`` head.
+    """
+    container.clear()
+    try:
+        walked = sd.walk_segment_endpoints()  # 16 segments
+    except Exception as exc:
+        with container:
+            ui.label(f"Plat preview unavailable: {exc}").classes(
+                "text-xs text-gray-500 p-2"
+            )
+        return
+    if not walked:
+        return
+
+    # Build the open polyline (start + each segment end). Closure check
+    # vs the original anchor: anything more than ~1 ft off is an "open
+    # polygon" — visibly indicate it.
+    anchor = walked[0][1]
+    ring_pts = [anchor] + [seg[2] for seg in walked]
+    end_pt = ring_pts[-1]
+    closure_err = ((end_pt[0] - anchor[0]) ** 2 + (end_pt[1] - anchor[1]) ** 2) ** 0.5
+    is_closed = closure_err < 1.0  # meters
+
+    # ---- view box ----
+    all_xs = [p[0] for p in ring_pts]
+    all_ys = [p[1] for p in ring_pts]
+    # Include wellpath bounds (if any) so it's not clipped.
+    well_xy = _wellpath_xy_for_section(sd, state)
+    if well_xy:
+        all_xs += [x for x, _ in well_xy]
+        all_ys += [y for _, y in well_xy]
+    min_x, max_x = min(all_xs), max(all_xs)
+    min_y, max_y = min(all_ys), max(all_ys)
+    span_x = max(max_x - min_x, 1.0)
+    span_y = max(max_y - min_y, 1.0)
+    pad = 0.07 * max(span_x, span_y)
+    vb_x, vb_y = min_x - pad, min_y - pad
+    vb_w, vb_h = span_x + 2 * pad, span_y + 2 * pad
+
+    def _flip(y: float) -> float:
+        return (vb_y + vb_h) - (y - vb_y)
+
+    # ---- polygon fill (from the walked ring; may be slightly open) ----
+    fill_pts = " ".join(f"{x:.2f},{_flip(y):.2f}" for x, y in ring_pts)
+
+    seg_elems = []
+    hit_elems = []
+    for key, (x1, y1), (x2, y2) in walked:
+        # 1. Visible segment line (thin, neutral colour).
+        seg_elems.append(
+            f'<line class="seg-line" data-seg="{key}" '
+            f'x1="{x1:.2f}" y1="{_flip(y1):.2f}" '
+            f'x2="{x2:.2f}" y2="{_flip(y2):.2f}"/>'
         )
-        refs["dist"] = (
-            ui.input(value=_fmt(_effective("length_ft"), "float"))
-            .props("dense outlined suffix=ft")
-            .classes("w-24")
-            .on("blur", lambda _: _apply())
-            .on("keydown.enter", lambda _: _apply())
+        # 2. Fat transparent hit zone *over* the visible line so the
+        # mouseover hit area is generous even for thin walked lines.
+        hit_elems.append(
+            f'<line class="seg-line" data-seg="{key}" '
+            f'x1="{x1:.2f}" y1="{_flip(y1):.2f}" '
+            f'x2="{x2:.2f}" y2="{_flip(y2):.2f}" '
+            f'style="stroke:transparent !important; stroke-width:18px !important;'
+            f'pointer-events:stroke; vector-effect:non-scaling-stroke;">'
+            f'<title>{key}</title></line>'
         )
-        refs["deg"] = (
-            ui.input(value=_fmt(_effective("degrees"), "int"))
-            .props("dense outlined suffix=°")
-            .classes("w-16")
-            .on("blur", lambda _: _apply())
-            .on("keydown.enter", lambda _: _apply())
+
+    # ---- uniform segment endpoint dots (17 total — start + 16 ends) ----
+    dot_r = max(vb_w, vb_h) * 0.011
+    dot_elems = []
+    for x, y in ring_pts:
+        dot_elems.append(
+            f'<circle cx="{x:.2f}" cy="{_flip(y):.2f}" r="{dot_r:.3f}" '
+            f'fill="#0f172a" stroke="white" stroke-width="0.5" '
+            f'style="vector-effect:non-scaling-stroke;"/>'
         )
-        refs["min"] = (
-            ui.input(value=_fmt(_effective("minutes"), "int"))
-            .props("dense outlined suffix='")
-            .classes("w-16")
-            .on("blur", lambda _: _apply())
-            .on("keydown.enter", lambda _: _apply())
+
+    # ---- non-closure indicator ----
+    closure_elem = ""
+    if not is_closed:
+        closure_elem = (
+            f'<line x1="{end_pt[0]:.2f}" y1="{_flip(end_pt[1]):.2f}" '
+            f'x2="{anchor[0]:.2f}" y2="{_flip(anchor[1]):.2f}" '
+            f'stroke="#dc2626" stroke-width="2" stroke-dasharray="6,4" '
+            f'style="vector-effect:non-scaling-stroke;">'
+            f'<title>Walk gap: {closure_err * 3.28084:.1f} ft</title></line>'
         )
-        refs["sec"] = (
-            ui.input(value=_fmt(_effective("seconds"), "int"))
-            .props("dense outlined suffix=\"")
-            .classes("w-16")
-            .on("blur", lambda _: _apply())
-            .on("keydown.enter", lambda _: _apply())
+
+    # ---- wellpath ----
+    well_elem = ""
+    if well_xy and len(well_xy) >= 2:
+        wp = " ".join(f"{x:.2f},{_flip(y):.2f}" for x, y in well_xy)
+        sx, sy = well_xy[0]
+        ex, ey = well_xy[-1]
+        well_elem = (
+            f'<polyline points="{wp}" fill="none" stroke="#16a34a" '
+            f'stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" '
+            f'style="vector-effect:non-scaling-stroke;"/>'
+            f'<circle cx="{sx:.2f}" cy="{_flip(sy):.2f}" r="{qc_r:.3f}" '
+            f'fill="#16a34a" stroke="white" stroke-width="0.5" '
+            f'style="vector-effect:non-scaling-stroke;">'
+            f'<title>SHL</title></circle>'
+            f'<circle cx="{ex:.2f}" cy="{_flip(ey):.2f}" r="{qc_r:.3f}" '
+            f'fill="#dc2626" stroke="white" stroke-width="0.5" '
+            f'style="vector-effect:non-scaling-stroke;">'
+            f'<title>BHL</title></circle>'
         )
-        refs["dir"] = (
-            ui.input(value=_fmt(_effective("alignment"), "int"))
-            .props("dense outlined")
-            .classes("w-12")
-            .tooltip("Quadrant code: 1=NE 2=NW 3=SW 4=SE")
-            .on("blur", lambda _: _apply())
-            .on("keydown.enter", lambda _: _apply())
+
+    # ---- compass labels ----
+    n_y = vb_y + pad * 0.45
+    s_y = vb_y + vb_h - pad * 0.15
+    e_x = vb_x + vb_w - pad * 0.15
+    w_x = vb_x + pad * 0.45
+    cf = max(vb_w, vb_h) * 0.04
+
+    svg = f"""
+    <svg class="plat-svg" viewBox="{vb_x} {vb_y} {vb_w} {vb_h}"
+         preserveAspectRatio="xMidYMid meet"
+         style="width:100%; height:100%; display:block;
+                user-select:none; -webkit-user-select:none;">
+      <polygon points="{fill_pts}"
+               fill="rgba(56,189,248,0.18)" stroke="none"/>
+      {''.join(seg_elems)}
+      {closure_elem}
+      {''.join(dot_elems)}
+      {well_elem}
+      {''.join(hit_elems)}
+      <text x="{(vb_x + vb_w / 2):.2f}" y="{n_y:.2f}"
+            text-anchor="middle" font-size="{cf:.2f}"
+            fill="#1e293b" font-weight="700">N</text>
+      <text x="{(vb_x + vb_w / 2):.2f}" y="{s_y:.2f}"
+            text-anchor="middle" font-size="{cf:.2f}"
+            fill="#1e293b" font-weight="700">S</text>
+      <text x="{e_x:.2f}" y="{(vb_y + vb_h / 2):.2f}"
+            text-anchor="end" dominant-baseline="middle"
+            font-size="{cf:.2f}" fill="#1e293b" font-weight="700">E</text>
+      <text x="{w_x:.2f}" y="{(vb_y + vb_h / 2):.2f}"
+            text-anchor="start" dominant-baseline="middle"
+            font-size="{cf:.2f}" fill="#1e293b" font-weight="700">W</text>
+    </svg>
+    """
+    closure_ft = closure_err * 3.28084
+    if is_closed:
+        closure_text = f"Closure: ✓ closed ({closure_ft:.2f} ft)"
+        closure_cls = "text-xs text-emerald-700 font-medium"
+    else:
+        closure_text = f"Closure gap: {closure_ft:,.2f} ft"
+        closure_cls = "text-xs text-red-700 font-semibold"
+
+    with container:
+        ui.html(svg).style("flex:1 1 auto; min-height:0;")
+        ui.label(closure_text).classes(
+            f"{closure_cls} mt-1 text-center w-full"
         )
-        ui.button(icon="restart_alt", on_click=lambda _=None: _reset()).props(
-            "flat dense round size=xs color=grey"
-        ).tooltip("Reset this segment to its Grid Numbers DB default")
+        # Defer wiring to after the DOM is updated. The setTimeout(...,0)
+        # gives Vue one tick to insert the SVG before we query for it.
+        ui.run_javascript(_PLAT_RUNTIME_JS + "setTimeout(__etoolsWireAll, 0);")
+
+
+def _wellpath_xy_for_section(sd, state) -> list[tuple[float, float]]:
+    """Return (easting, northing) points in UTM-m for the well trajectory.
+
+    Tries ``state.processed`` first (full processed survey from
+    SurveyService); falls back to ``state.clearances`` (which already
+    carries easting/northing columns) so the wellpath shows up even when
+    the user has parsed an APD but not yet promoted it.
+    """
+    if state is None:
+        return []
+    try:
+        # ---- preferred: state.processed (full processed survey) ----
+        if getattr(state, "processed", None):
+            from etools.models import SurveyFrame
+            result = (
+                state.processed.get("AsDrilled")
+                or state.processed.get("Planned")
+                or next(iter(state.processed.values()))
+            )
+            if result is not None:
+                proc = (
+                    result.frames.get(SurveyFrame.TRUE)
+                    or next(iter(result.frames.values()))
+                )
+                df = proc.points
+                if "easting" in df.columns and "northing" in df.columns and len(df) > 1:
+                    step = max(1, len(df) // 600)
+                    return [
+                        (float(r.easting), float(r.northing))
+                        for r in df.iloc[::step].itertuples()
+                    ]
+        # ---- fallback: state.clearances (post-clearance trajectory) ----
+        if getattr(state, "clearances", None):
+            cr = (
+                state.clearances.get("AsDrilled")
+                or state.clearances.get("Planned")
+                or next(iter(state.clearances.values()))
+            )
+            df = getattr(cr, "points", None)
+            if df is not None and "easting" in df.columns and "northing" in df.columns and len(df) > 1:
+                step = max(1, len(df) // 600)
+                return [
+                    (float(r.easting), float(r.northing))
+                    for r in df.iloc[::step].itertuples()
+                ]
+    except Exception as exc:
+        log.warning("section_panel.wellpath.failed", error=str(exc))
+    return []
 
 
 def _render_wbd(card: ui.card, design: CasingDesign, data: APDPdfData) -> None:
@@ -1221,12 +1622,12 @@ def _render_inputs(
     card: ui.card,
     data: APDPdfData,
     state: AppState,
-    design: CasingDesign,
     *,
     on_change,
 ) -> None:
-    """Editable per-string inputs. Edits mutate ``data.casing[*]`` and
-    ``state.casing_overrides``, then trigger ``on_change``."""
+    """Editable per-string inputs — one row per APD casing string, including
+    Conductor. Edits mutate ``data.casing[*]`` and ``state.casing_overrides``,
+    then trigger ``on_change`` which rebuilds the design table + WBD."""
     from etools.core.casing_review.engine import _TAG_TO_LABEL  # type: ignore
 
     card.clear()
@@ -1235,17 +1636,20 @@ def _render_inputs(
     with card:
         ui.label("Casing string inputs (editable)").classes("text-sm font-semibold")
         ui.label(
-            "Edit any cell — design table and WBD recompute when you tab away."
+            "Edit any cell — design table and WBD recompute when you tab away. "
+            "Conductor is shown for reference but is not part of the engineering "
+            "design (no washout / internal-gradient knobs)."
         ).classes("text-xs text-gray-600 mb-2")
 
-        for design_idx, s in enumerate(design.strings):
-            apd = _design_idx_to_apd(data, design_idx)
-            if apd is None:
-                continue
+        for apd in data.casing:
+            mapping = _TAG_TO_LABEL.get(apd.tag)
+            label_text = mapping[0] if mapping else apd.tag
+            design_idx = mapping[1] if mapping else -1
+
             with ui.row().classes(
                 "items-center gap-1 mt-1 flex-wrap p-2 rounded bg-slate-50"
             ):
-                ui.label(s.label).classes("font-semibold w-24 text-xs")
+                ui.label(label_text).classes("font-semibold w-24 text-xs")
 
                 def _on_apd(attr, apd_ref=apd, cast=float):
                     return lambda e: (
@@ -1261,7 +1665,7 @@ def _render_inputs(
                         on_change(),
                     )
 
-                for label, value, attr, ovr, cast, width in [
+                base_fields = [
                     ("hole",     apd.hole_size_in,       "hole_size_in",       False, float, "w-16"),
                     ("csg",      apd.casing_size_in,     "casing_size_in",     False, float, "w-16"),
                     ("set MD",   apd.length_bottom_ft,   "length_bottom_ft",   False, float, "w-20"),
@@ -1269,13 +1673,30 @@ def _render_inputs(
                     ("grade",    apd.grade,              "grade",              False, str,   "w-20"),
                     ("collar",   apd.collar,             "collar",             False, str,   "w-16"),
                     ("MW",       apd.max_mud_weight_ppg, "max_mud_weight_ppg", False, float, "w-14"),
-                    ("washout%", s.hole_washout_pct,     "hole_washout_pct",   True,  float, "w-16"),
-                    ("int grad", s.internal_gradient_psi_per_ft, "internal_gradient_psi_per_ft", True, float, "w-16"),
+                ]
+                # Design-only override knobs only apply to engineered strings.
+                # Pre-populate with the engine's defaults so the user sees the
+                # value the engine will actually use (surface = 10%/0.12, deeper
+                # = 4%/0.22) instead of a blank box.
+                if design_idx >= 0:
+                    ov = overrides.get(design_idx, {})
+                    is_surface = design_idx == 0
+                    washout_default = 10.0 if is_surface else 4.0
+                    grad_default = 0.12 if is_surface else 0.22
+                    washout_val = ov.get("hole_washout_pct", washout_default)
+                    grad_val = ov.get("internal_gradient_psi_per_ft", grad_default)
+                    base_fields += [
+                        ("washout%", washout_val, "hole_washout_pct",            True, float, "w-16"),
+                        ("int grad", grad_val,    "internal_gradient_psi_per_ft", True, float, "w-16"),
+                    ]
+                base_fields += [
                     ("lead sx",  apd.cement_lead_sacks,  "cement_lead_sacks",  False, int,   "w-16"),
                     ("lead yld", apd.cement_lead_yield,  "cement_lead_yield",  False, float, "w-16"),
                     ("tail sx",  apd.cement_tail_sacks,  "cement_tail_sacks",  False, int,   "w-16"),
                     ("tail yld", apd.cement_tail_yield,  "cement_tail_yield",  False, float, "w-16"),
-                ]:
+                ]
+
+                for label, value, attr, ovr, cast, width in base_fields:
                     ui.label(label).classes("text-xs text-gray-500")
                     inp = (
                         ui.input(value=str(value) if value is not None else "")

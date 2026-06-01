@@ -329,6 +329,29 @@ class SectionDefinition:
             "W_QC": (minx, midy),
         }
 
+    def walk_segment_endpoints(self) -> list[tuple[str, tuple[float, float], tuple[float, float]]]:
+        """Walk the 16 boundary segments from the anchor (NW corner) in
+        clockwise order, returning ``(segment_key, start_xy, end_xy)`` for
+        each. The final segment's end_xy is the walked closure point — it
+        will equal the start anchor only if the segment lengths happen to
+        close. Use this in renderers that want to *show* open polygons
+        when the user breaks closure with overrides.
+        """
+        anchor = self._bbox_corners()["NW_SC"] if self.anchor_utm is None else self.anchor_utm
+        x, y = anchor
+        out: list[tuple[str, tuple[float, float], tuple[float, float]]] = []
+        ft_to_m = 0.3048
+        for key in SIDE_ORDER:
+            seg = self.effective_segment(key)
+            length_m = (seg.length_ft or 0.0) * ft_to_m
+            travel_rad = math.radians(_TRAVEL_BEARING_DEG[key])
+            dx = math.sin(travel_rad) * length_m
+            dy = math.cos(travel_rad) * length_m
+            nx, ny = x + dx, y + dy
+            out.append((key, (x, y), (nx, ny)))
+            x, y = nx, ny
+        return out
+
     def _walk_corners(self) -> dict[str, tuple[float, float]]:
         """Segment-walk corner derivation. Starts at NW corner taken from
         the bbox approximation and walks clockwise through all 16 segments.

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from etools.models import APDPdfData, WellHeader
+from etools.models import APDPdfData, WellHeader, WCRPdfData
 
 
 def well_header_from_apd(apd: APDPdfData, *, lateral: str = "0000") -> WellHeader:
@@ -75,6 +75,75 @@ def well_header_from_apd(apd: APDPdfData, *, lateral: str = "0000") -> WellHeade
         surface_y=surface_y,
         utm_zone="12N" if surface_x is not None else None,
         upload_filename=apd.source_pdf,
+    )
+
+
+def well_header_from_wcr(wcr: WCRPdfData, *, lateral: str = "0000") -> WellHeader:
+    """Build a synthetic ``WellHeader`` from a parsed WCR (Form 8).
+
+    Mirrors :func:`well_header_from_apd` but reads from ``wcr.positions``
+    instead of ``apd.locations``. The WCR's "Surface" position carries
+    UTM E/N directly (Section 27); when those are populated we trust
+    them, otherwise we fall back to the PLSS section centroid like the
+    APD path does.
+
+    ``citing_type`` defaults to "AsDrilled" since WCR is a completion
+    report — the survey it carries is the actual drilled geometry, not
+    a planned trajectory.
+    """
+    api = (wcr.api or "")[:10]
+    pkey = abs(hash((api, lateral))) % (2**31)
+
+    surface = wcr.surface_position
+
+    plss = None
+    if surface is not None:
+        ns = (
+            f"{int(surface.fnl)} FNL" if surface.fnl
+            else f"{int(surface.fsl)} FSL" if surface.fsl
+            else None
+        )
+        ew = (
+            f"{int(surface.fel)} FEL" if surface.fel
+            else f"{int(surface.fwl)} FWL" if surface.fwl
+            else None
+        )
+        twp = f"{surface.township}{surface.township_dir or ''}"
+        rng = f"{surface.range}{surface.range_dir or ''}"
+        plss = (
+            f"{ns or ''} {ew or ''} {surface.qtr_qtr or ''} "
+            f"Sec {surface.section or '?'} T{twp} R{rng} {surface.meridian or ''}"
+        ).strip()
+
+    surface_x = getattr(surface, "utm_easting", None) if surface else None
+    surface_y = getattr(surface, "utm_northing", None) if surface else None
+    if surface_x is not None and surface_y is not None:
+        try:
+            from etools.core.coordinates import utm_to_latlon
+            surface_lat, surface_lon = utm_to_latlon(surface_x, surface_y, 12, "N")
+        except Exception:
+            surface_lat = surface_lon = None
+    else:
+        surface_lat, surface_lon, surface_x, surface_y = _derive_surface_coords(surface)
+
+    elev_ft = wcr.elevation_ft if wcr.elevation_ft is not None else wcr.ground_elev_ft
+    return WellHeader(
+        pkey=pkey,
+        api=api or "0000000000",
+        lateral=lateral,
+        well_name=wcr.well_name,
+        operator=wcr.operator,
+        citing_type="AsDrilled",
+        surface_elevation=elev_ft,
+        elevation_reference=("KB" if wcr.elevation_ft else ("GR" if wcr.ground_elev_ft else None)),
+        north_reference="grid",
+        plss_location=plss,
+        surface_lat=surface_lat,
+        surface_lon=surface_lon,
+        surface_x=surface_x,
+        surface_y=surface_y,
+        utm_zone="12N" if surface_x is not None else None,
+        upload_filename=wcr.source_pdf,
     )
 
 

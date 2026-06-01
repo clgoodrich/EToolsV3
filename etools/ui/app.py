@@ -16,7 +16,6 @@ from etools.ui.state import AppState
 from etools.ui.tabs.clearance_tab import render_clearance_tab
 from etools.ui.tabs.load_tab import render_load_tab
 from etools.ui.tabs.survey_tab import render_survey_tab
-from etools.ui.tabs.pdf_tab import render_pdf_tab
 from etools.ui.tabs.plat_tab import render_plat_tab
 from etools.ui.tabs.viz_tab import render_viz_tab
 from etools.ui.tabs.casing_review_tab import render_casing_review_tab
@@ -329,6 +328,11 @@ def build_app() -> None:
         # freshly-loaded well into shared state and trigger the same
         # pipeline the Load Well tab uses.
         state.post_load = post_load_orchestrate
+        # Also expose fire_refresh so handlers that mutate state need to
+        # poke every tab into rebuilding from it (e.g. Load Well's PDF
+        # parse hands off to the Casing Review / WCR tab, which must
+        # refresh from the new state.apd_data / state.wcr_data).
+        state.fire_refresh = fire_refresh
 
         async def clear_all_state() -> None:
             """Wipe all in-memory state and reset every tab back to its empty look."""
@@ -384,13 +388,12 @@ def build_app() -> None:
 
         with ui.tabs().classes("w-full") as tabs:
             tab_load = ui.tab("Load Well", icon="search")
+            tab_casing = ui.tab("Casing Review", icon="construction")
+            tab_wcr = ui.tab("WCR", icon="description")
             tab_survey = ui.tab("Survey", icon="timeline")
             tab_map = ui.tab("Map & Viz", icon="map")
             tab_clearance = ui.tab("Clearance", icon="straighten")
-            tab_wcr = ui.tab("WCR", icon="description")
-            tab_casing = ui.tab("Casing Review", icon="construction")
             tab_plat = ui.tab("Plat Searcher", icon="grid_on")
-            tab_pdf = ui.tab("PDF Import", icon="upload_file")
 
         import time as _tt
         def _tlog(name, t0):
@@ -425,7 +428,8 @@ def build_app() -> None:
                 load_refresh = render_load_tab(
                     state,
                     load_handler,
-                    on_route_to_pdf=lambda: tabs.set_value(tab_pdf),
+                    on_route_to_casing=lambda: tabs.set_value(tab_casing),
+                    on_route_to_wcr=lambda: tabs.set_value(tab_wcr),
                 )
                 refresh_callbacks.append(load_refresh)
                 _tlog("load", _ts); _ts = _tt.monotonic()
@@ -451,17 +455,6 @@ def build_app() -> None:
             with ui.tab_panel(tab_plat):
                 refresh_callbacks.append(render_plat_tab())
                 _tlog("plat", _ts); _ts = _tt.monotonic()
-            with ui.tab_panel(tab_pdf):
-                async def _on_pdf_inject() -> None:
-                    # Return a coroutine so the caller (inject_into_pipeline) can
-                    # await it inside the proper NiceGUI per-client slot context.
-                    # asyncio.create_task() loses that context and the WebSocket
-                    # disconnects mid-refresh.
-                    await post_load_orchestrate()
-
-                refresh_callbacks.append(
-                    render_pdf_tab(state, on_inject=_on_pdf_inject)
-                )
 
         # If the persistent_state already carries a loaded well (e.g. the
         # user uploaded an APD, the WebSocket dropped during heavy refresh

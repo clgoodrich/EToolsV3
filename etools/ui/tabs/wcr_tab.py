@@ -62,143 +62,80 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
     }
 
     with ui.column().classes("p-4 gap-3 w-full"):
-        ui.label("Generate WCR Excel").classes("text-xl font-semibold")
+        ui.label("WCR").classes("text-xl font-semibold")
 
-        # ------------------------------------------------------------------
-        # Step 1 — upload WCR PDF
-        # ------------------------------------------------------------------
-        ui.label("Step 1 — WCR PDF").classes("text-sm font-semibold mt-2")
-        with ui.row().classes("gap-3 items-center w-full"):
-            wcr_upload = ui.upload(
-                label="Drop WCR PDF here",
-                auto_upload=True,
-                multiple=False,
-                on_upload=lambda e: handle_wcr_upload(e),
-                on_rejected=lambda e: ui.notify(f"Upload rejected: {e}", type="negative"),
-            ).classes("max-w-md").props("accept=.pdf")
-            wcr_status = ui.label("No WCR PDF uploaded.").classes("text-xs text-gray-600")
+        # Empty-state when no WCR has been loaded.
+        empty_state = ui.card().classes(
+            "w-full bg-slate-50 border border-dashed border-slate-300 p-6"
+        )
+        with empty_state:
+            ui.label("No WCR loaded").classes("text-sm font-semibold text-slate-700")
+            ui.label(
+                "Go to the Load Well tab → From WCR PDF to upload and parse "
+                "a Form 8 WCR. You'll be routed back here automatically."
+            ).classes("text-xs text-slate-600")
 
-        # Parsing controls — mode + page range + the trigger buttons.
-        with ui.row().classes("gap-3 items-center w-full mt-1"):
-            ui.label("Mode:").classes("text-sm")
-            mode_select = (
-                ui.select(
-                    options={
-                        "rules": "Rules (Docling + regex)",
-                        "rules+llm": "Rules + LLM (regex first, LLM fills gaps)",
-                        "llm": "LLM only (skip regex)",
-                    },
-                    value="rules+llm",
+        # --- COMPACT ACTION BAR (visible once a WCR is parsed) --------
+        action_bar = ui.card().classes(
+            "w-full bg-slate-50 border border-slate-200"
+        )
+        action_bar.visible = False
+        with action_bar:
+            with ui.row().classes("gap-3 items-center w-full"):
+                source_label = ui.label("").classes(
+                    "text-xs text-slate-600 font-mono"
                 )
-                .props("dense outlined")
-                .classes("w-72")
-            )
-            ui.label("Pages:").classes("text-sm ml-2")
-            pages_select = (
-                ui.select(
-                    options={
-                        "5": "First 5 pages (Form 8 only)",
-                        "10": "First 10 pages",
-                        "all": "All pages (includes Operation Summary)",
-                    },
-                    value="5",
+                ui.space()
+                survey_status = ui.label("").classes(
+                    "text-xs px-2 py-1 rounded bg-slate-200 text-slate-700"
                 )
-                .props("dense outlined")
-                .classes("w-64")
-            )
-            parse_wcr_btn = ui.button(
-                "Parse WCR PDF",
-                icon="play_arrow",
-                on_click=lambda: parse_wcr_now(),
-            ).props("color=primary")
-            parse_wcr_btn.disable()
+                promote_btn = ui.button(
+                    "Use as active well",
+                    icon="upgrade",
+                    on_click=lambda: promote_to_primary(),
+                ).props("color=secondary dense")
+                promote_btn.tooltip(
+                    "Push this WCR + survey into shared state so Survey, "
+                    "Map & Viz, and Clearance tabs populate with this well."
+                )
+                generate_btn = ui.button(
+                    "Generate WCR Excel",
+                    icon="description",
+                    on_click=lambda: generate_from_pdf(),
+                ).props("color=primary dense")
+            # Survey-PDF fallback upload — visible only when no DB survey was found.
+            survey_upload_row = ui.row().classes("gap-2 items-center mt-1")
+            with survey_upload_row:
+                survey_upload = ui.upload(
+                    label="Survey PDF",
+                    auto_upload=True,
+                    multiple=False,
+                    on_upload=lambda e: handle_survey_upload(e),
+                    on_rejected=lambda e: ui.notify(
+                        f"Upload rejected: {e}", type="negative"
+                    ),
+                ).classes("max-w-xs").props("accept=.pdf flat dense")
+                survey_parse_status = ui.label("").classes("text-xs text-gray-600")
+            survey_upload_row.visible = False
+            generate_status = ui.label("").classes("text-xs text-slate-500")
 
-        with ui.row().classes("gap-3 items-center w-full mt-1"):
-            mine_events_checkbox = ui.checkbox(
-                "Mine extra events from time-log comments (slow)",
-                value=False,
-            )
-            mine_events_checkbox.tooltip(
-                "When enabled, the LLM does a second pass over uncategorized "
-                "time-log entries to find additional events the regex missed "
-                "(formation picks, screen-outs, BHA failures, etc.). Adds "
-                "~5 min per DDR to the parse time."
-            )
-
-        # LLM availability indicator — mirrors the regular PDF Import tab.
-        # IMPORTANT: deferred via ui.timer so the Ollama health check
-        # (two HTTP calls with 2 s + 4 s timeouts) doesn't block the
-        # page render. Was the dominant cause of the post-promote
-        # WebSocket disconnect — render was taking 4.7 s, well past
-        # the websocket heartbeat window.
-        llm_status_label = ui.label("LLM: checking…").classes("text-xs text-gray-500")
-
-        # Defer the Ollama health check off the render path. asyncio task
-        # (instead of ui.timer) avoids the "parent slot has been deleted"
-        # RuntimeError that fires when the page is replaced by a reconnect
-        # before a timer-scheduled callback runs.
-        async def _deferred_llm_check() -> None:
-            import asyncio as _a
-            await _a.sleep(0.1)
-            try:
-                _refresh_llm_status(llm_status_label)
-            except Exception:
-                # Label may have been disposed by a reconnect; ignore.
-                pass
-
-        import asyncio as _asyncio
-        _asyncio.create_task(_deferred_llm_check())
-
-        # Card with extracted WCR metadata
-        wcr_meta_card = ui.card().classes("w-full")
+        # --- COLLAPSIBLE WORK AREAS (default-collapsed) ----------------
+        wcr_meta_card = ui.expansion(
+            "Parsed WCR data", icon="description", value=False,
+        ).classes("w-full")
         wcr_meta_card.visible = False
 
-        # Card with DDR (drilling/completion daily log) highlights.
-        ddr_card = ui.card().classes("w-full")
+        ddr_card = ui.expansion(
+            "Operation Summary Reports (DDR)", icon="receipt_long", value=False,
+        ).classes("w-full")
         ddr_card.visible = False
 
-        # ------------------------------------------------------------------
-        # Step 2 — survey source (DB lookup, fallback to PDF upload)
-        # ------------------------------------------------------------------
-        ui.label("Step 2 — Survey source").classes("text-sm font-semibold mt-2")
-        survey_status = ui.label("Upload a WCR PDF first.").classes(
-            "text-sm px-3 py-2 rounded bg-slate-100 text-slate-700"
-        )
-
-        survey_upload_row = ui.row().classes("gap-3 items-center w-full")
-        with survey_upload_row:
-            survey_upload = ui.upload(
-                label="Drop directional survey PDF here",
-                auto_upload=True,
-                multiple=False,
-                on_upload=lambda e: handle_survey_upload(e),
-                on_rejected=lambda e: ui.notify(f"Upload rejected: {e}", type="negative"),
-            ).classes("max-w-md").props("accept=.pdf")
-            survey_parse_status = ui.label("").classes("text-xs text-gray-600")
-        survey_upload_row.visible = False
-
-        # ------------------------------------------------------------------
-        # Step 3 — generate
-        # ------------------------------------------------------------------
-        ui.label("Step 3 — Generate").classes("text-sm font-semibold mt-2")
-        with ui.row().classes("gap-3 items-center"):
-            generate_btn = ui.button(
-                "Generate WCR Excel",
-                icon="description",
-                on_click=lambda: generate_from_pdf(),
-            ).props("color=primary")
-            generate_btn.disable()
-            generate_status = ui.label("").classes("text-sm text-gray-500 ml-2")
-
-        # Card showing the generated WCR's five location rows.
-        results_card = ui.card().classes("w-full mt-2")
+        results_card = ui.expansion(
+            "Generated output", icon="folder_open", value=False,
+        ).classes("w-full")
         results_card.visible = False
 
-        ui.separator()
-
-        # ------------------------------------------------------------------
-        # Legacy DB-driven flow (kept available)
-        # ------------------------------------------------------------------
+        # Legacy DB flow stays inside its own expansion at the bottom.
         with ui.expansion("Legacy flow — generate from DB bundle", value=False).classes("w-full"):
             legacy_header_label = ui.label("Calculate clearances first.").classes("text-gray-500 italic")
             legacy_controls = ui.row().classes("gap-3 items-center")
@@ -218,96 +155,9 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
             legacy_info_card = ui.card().classes("w-full")
 
     # ----------------------------------------------------------------------
-    # Step 1 — WCR PDF upload + immediate parse
+    # Upload + parse moved to the Load Well tab → From WCR PDF.
+    # This tab now reads state.wcr_data and renders it.
     # ----------------------------------------------------------------------
-    async def handle_wcr_upload(e: events.UploadEventArguments) -> None:
-        """Stage the upload only. Parsing waits for the user to click the
-        ``Parse WCR PDF`` button so they stay in control of when the
-        pipeline kicks off."""
-        upload = getattr(e, "file", None) or getattr(e, "content", None)
-        name = getattr(upload, "name", None) or getattr(e, "name", "uploaded.pdf")
-        wcr_status.text = f"Saving {name}…"
-        try:
-            tmp_path = await _save_upload(upload, name)
-        except Exception as exc:
-            ui.notify(f"Upload failed: {exc}", type="negative")
-            wcr_status.text = "Upload failed."
-            return
-        cache["wcr_pdf_path"] = tmp_path
-        cache["wcr_pdf_name"] = name
-        try:
-            wcr_upload.reset()
-        except Exception:
-            pass
-
-        # Reset any prior parse output — we're staging a new file.
-        cache["wcr_data"] = None
-        cache["surveys"] = None
-        cache["surveys_label"] = None
-        cache["survey_source"] = None
-        cache["survey_pdf_lat"] = None
-        cache["survey_pdf_lon"] = None
-        cache["survey_pdf_elev"] = None
-        cache["survey_pdf_north_ref"] = None
-        wcr_meta_card.visible = False
-        survey_upload_row.visible = False
-        results_card.visible = False
-        survey_status.text = "Click 'Parse WCR PDF' to extract metadata."
-        survey_status.classes(
-            replace="text-sm px-3 py-2 rounded bg-slate-100 text-slate-700"
-        )
-        _refresh_generate_button()
-
-        wcr_status.text = f"Loaded {name}. Click 'Parse WCR PDF' to extract."
-        parse_wcr_btn.enable()
-
-    async def parse_wcr_now() -> None:
-        tmp_path = cache.get("wcr_pdf_path")
-        name = cache.get("wcr_pdf_name") or "uploaded.pdf"
-        if not tmp_path:
-            ui.notify("Upload a WCR PDF first.", type="warning")
-            return
-        mode = mode_select.value or "rules+llm"
-        pages_val = pages_select.value or "5"
-        max_pages = None if pages_val == "all" else int(pages_val)
-        mine_events = bool(mine_events_checkbox.value)
-
-        parse_wcr_btn.disable()
-        events_note = " + DDR event mining" if mine_events else ""
-        wcr_status.text = (
-            f"Parsing {name} — mode={mode}, "
-            f"pages={'all' if max_pages is None else max_pages}{events_note}…"
-        )
-        try:
-            data = await asyncio.to_thread(
-                parse_wcr_pdf,
-                tmp_path,
-                use_llm=None,
-                mode=mode,
-                max_pages=max_pages,
-                mine_ddr_events=mine_events,
-            )
-        except Exception as exc:
-            log.exception("wcr.parse_failed")
-            ui.notify(f"WCR parse failed: {exc}", type="negative")
-            wcr_status.text = "Parse failed."
-            parse_wcr_btn.enable()
-            return
-
-        cache["wcr_data"] = data
-        wcr_status.text = f"Parsed {name}: {data.well_name or '(unnamed)'}  API {data.api or '—'}"
-        _render_wcr_metadata(wcr_meta_card, data)
-        wcr_meta_card.visible = True
-        if data.ddrs:
-            _render_ddr_card(ddr_card, data)
-            ddr_card.visible = True
-        else:
-            ddr_card.visible = False
-
-        await _try_db_survey_lookup()
-        _refresh_generate_button()
-        parse_wcr_btn.enable()
-
     async def _try_db_survey_lookup() -> None:
         data: WCRPdfData | None = cache.get("wcr_data")
         if data is None or not data.api:
@@ -404,11 +254,70 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
     # Step 3 — generate
     # ----------------------------------------------------------------------
     def _refresh_generate_button() -> None:
-        ready = bool(cache.get("wcr_data")) and cache.get("surveys") is not None
-        if ready:
+        has_wcr = bool(cache.get("wcr_data"))
+        has_survey = cache.get("surveys") is not None
+        if has_wcr and has_survey:
             generate_btn.enable()
         else:
             generate_btn.disable()
+        # Promote needs WCR data; a survey is optional (downstream tabs can
+        # still light up partially without one).
+        if has_wcr:
+            promote_btn.enable()
+        else:
+            promote_btn.disable()
+
+    async def promote_to_primary() -> None:
+        from etools.core.casing_review.promote import (
+            normalize_survey_dataframe,
+            well_header_from_wcr,
+        )
+
+        data: WCRPdfData | None = cache.get("wcr_data")
+        if data is None:
+            ui.notify("Parse a WCR PDF first.", type="warning")
+            return
+        try:
+            header = well_header_from_wcr(data)
+        except Exception as exc:
+            log.exception("wcr.promote.header_failed")
+            ui.notify(f"Could not build well header: {exc}", type="negative")
+            return
+        if header.surface_lat is None:
+            ui.notify(
+                "WCR has no surface UTM or PLSS we can geolocate. Upload a "
+                "survey PDF or load the well from the DB.",
+                type="warning",
+                multi_line=True,
+                timeout=8000,
+            )
+            return
+        state.headers = [header]
+        state.primary = header
+        survey_df = cache.get("surveys")
+        if survey_df is not None and not survey_df.empty:
+            citing = header.citing_type or "AsDrilled"
+            state.surveys = {citing: normalize_survey_dataframe(survey_df)}
+            state.selected_citing = citing
+        else:
+            state.surveys = {}
+            state.selected_citing = None
+        state.processed = {}
+        state.clearances = {}
+        if state.post_load is None:
+            ui.notify("Post-load orchestrator not registered.", type="warning")
+            return
+        try:
+            await state.post_load(switch_to_survey=False)
+        except Exception as exc:
+            log.exception("wcr.promote.post_load_failed")
+            ui.notify(f"Promote post-load failed: {exc}", type="negative")
+            return
+        ui.notify(
+            f"Promoted {header.well_name or header.api} — other tabs populated.",
+            type="positive",
+            multi_line=True,
+        )
 
     def generate_from_pdf() -> None:
         pdf_path = cache.get("wcr_pdf_path")
@@ -649,7 +558,55 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
         ui.notify(f"WCR generated: {rel}", type="positive")
 
     def refresh() -> None:
-        # Legacy section options.
+        # ---- Sync WCR data from state into local cache (used by the
+        # generate / promote handlers above and the survey helpers).
+        cache["wcr_data"] = state.wcr_data
+        cache["wcr_pdf_path"] = state.wcr_pdf_path
+        cache["wcr_pdf_name"] = state.wcr_pdf_name
+        if state.wcr_survey_df is not None:
+            cache["surveys"] = state.wcr_survey_df
+            cache["surveys_label"] = state.wcr_survey_label
+            cache["survey_source"] = state.wcr_survey_source
+
+        data = state.wcr_data
+        if data is None:
+            empty_state.visible = True
+            action_bar.visible = False
+            wcr_meta_card.visible = False
+            ddr_card.visible = False
+            results_card.visible = False
+        else:
+            empty_state.visible = False
+            action_bar.visible = True
+            source_label.text = (
+                f"{state.wcr_pdf_name or 'WCR'} · "
+                f"{data.well_name or '(unnamed)'} · API {data.api or '—'}"
+            )
+
+            # Survey status pill + fallback upload row.
+            if cache.get("surveys") is not None and cache.get("surveys_label"):
+                survey_status.text = f"Survey: {cache['surveys_label']}"
+                survey_status.classes(
+                    replace="text-xs px-2 py-1 rounded bg-green-100 text-green-800"
+                )
+                survey_upload_row.visible = False
+            else:
+                survey_status.text = "No survey loaded — upload one below."
+                survey_status.classes(
+                    replace="text-xs px-2 py-1 rounded bg-amber-100 text-amber-800"
+                )
+                survey_upload_row.visible = True
+
+            _refresh_generate_button()
+            _render_wcr_metadata(wcr_meta_card, data)
+            wcr_meta_card.visible = True
+            if data.ddrs:
+                _render_ddr_card(ddr_card, data)
+                ddr_card.visible = True
+            else:
+                ddr_card.visible = False
+
+        # ---- Legacy DB flow ----
         if state.clearances:
             opts = sorted(state.clearances.keys())
             citing_select.options = opts
