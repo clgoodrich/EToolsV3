@@ -13,6 +13,11 @@ from etools.models import SurveyFrame, WellLookup
 from etools.services import ClearanceService, SurveyService, WellService
 from etools.services.well_service import WellNotFoundError
 from etools.ui.state import AppState
+from etools.ui.workspace import (
+    remove_document,
+    switch_document,
+    upsert_active_document,
+)
 from etools.ui.tabs.clearance_tab import render_clearance_tab
 from etools.ui.tabs.load_tab import render_load_tab
 from etools.ui.tabs.survey_tab import render_survey_tab
@@ -282,6 +287,21 @@ def build_app() -> None:
                         # Non-fatal: section UI falls back to plat polygons
                         # and Map & Viz keeps working with raw clearance data.
 
+                # ---- Step 2c: register/update workspace buffer ----
+                # Snapshot the now-complete active well into its document
+                # buffer (keyed by API/lateral) so it shows up in the
+                # header switcher and can be returned to later. Merge
+                # semantics: re-loading the same well updates in place.
+                try:
+                    doc_id = upsert_active_document(state)
+                    log.info(
+                        "post_load.workspace.upsert",
+                        doc_id=doc_id,
+                        documents=len(state.documents),
+                    )
+                except Exception:
+                    log.exception("post_load.workspace.upsert.failed")
+
                 # ---- Step 3: refresh UI ----
                 set_busy("Refreshing UI…")
                 log.info("post_load.refresh.start")
@@ -352,6 +372,10 @@ def build_app() -> None:
             state.casing_frac_gradient_psi_per_ft = None
             state.casing_last_output_path = None
             state.section_definitions = {}
+            # Close every workspace buffer too — Clear All is the nuclear
+            # reset, not just "close the active well".
+            state.documents = {}
+            state.active_doc_id = None
             await fire_refresh()
             ui.notify("All loaded data cleared.", type="info")
 
@@ -376,8 +400,83 @@ def build_app() -> None:
                     on_click=_do_clear,
                 ).props("color=negative")
 
+        # ---- Header well switcher --------------------------------------
+        # Reentrancy guard: switching fires fire_refresh, which rebuilds
+        # the switcher's <select>. Rebuilding sets its value programmatically
+        # (no change event), but guard anyway against overlapping switches.
+        switch_guard = {"busy": False}
+
+        async def _on_doc_switch(new_id: str | None) -> None:
+            if not new_id or new_id == state.active_doc_id or switch_guard["busy"]:
+                return
+            switch_guard["busy"] = True
+            set_busy("Switching well…")
+            busy_dialog.open()
+            changed = False
+            try:
+                changed = switch_document(state, new_id)
+                if changed:
+                    await fire_refresh()
+            except Exception as exc:
+                log.exception("workspace.switch.failed", new_id=new_id)
+                ui.notify(f"Switch failed: {exc}", type="negative")
+            finally:
+                busy_dialog.close()
+                switch_guard["busy"] = False
+            if changed:
+                doc = state.documents.get(new_id)
+                ui.notify(
+                    f"Switched to {doc.label}" if doc else "Switched well",
+                    type="info",
+                )
+
+        async def _close_active_doc() -> None:
+            if state.active_doc_id is None:
+                return
+            closed = state.documents.get(state.active_doc_id)
+            set_busy("Closing well…")
+            busy_dialog.open()
+            try:
+                remove_document(state, state.active_doc_id)
+                await fire_refresh()
+            except Exception as exc:
+                log.exception("workspace.close.failed")
+                ui.notify(f"Close failed: {exc}", type="negative")
+            finally:
+                busy_dialog.close()
+            ui.notify(
+                f"Closed {closed.label}" if closed else "Closed well", type="info"
+            )
+
+        @ui.refreshable
+        def doc_switcher() -> None:
+            docs = state.documents
+            if not docs:
+                return
+            options = {doc_id: d.label for doc_id, d in docs.items()}
+            with ui.row().classes("items-center gap-1"):
+                (
+                    ui.select(
+                        options=options,
+                        value=state.active_doc_id,
+                        on_change=lambda e: _on_doc_switch(e.value),
+                    )
+                    .props("dense outlined dark options-dense")
+                    .classes("min-w-[260px]")
+                    .tooltip("Switch the active well — every tab reloads from it")
+                )
+                ui.button(icon="close", on_click=_close_active_doc).props(
+                    "flat round dense color=white"
+                ).tooltip("Close the active well")
+
+        refresh_callbacks.append(doc_switcher.refresh)
+
         with ui.header().classes("items-center justify-between bg-slate-800 text-white"):
-            ui.label("ETools — DOGM Directional Survey & WCR").classes("text-lg font-medium")
+            with ui.row().classes("items-center gap-4"):
+                ui.label("ETools — DOGM Directional Survey & WCR").classes(
+                    "text-lg font-medium"
+                )
+                doc_switcher()
             with ui.row().classes("items-center gap-3"):
                 ui.button(
                     "Clear all",

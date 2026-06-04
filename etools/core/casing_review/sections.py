@@ -93,6 +93,166 @@ class PLSSKey:
 
 
 # ---------------------------------------------------------------------------
+# Section traversal — the ordered list of PLSS sections the wellbore crosses
+# ---------------------------------------------------------------------------
+@dataclass
+class SectionCrossing:
+    """One PLSS section the wellbore passes through, in MD order.
+
+    ``label`` is the human label used by both the on-screen section
+    sub-tab title and the Excel sheet's logical name. ``apd_name`` is the
+    original APD location-row name when this section matched one (Surface
+    / producing zone / TD), else ``None`` for an auto-detected
+    intermediate crossing.
+    """
+
+    conc: str
+    fnl: float | None = None
+    fsl: float | None = None
+    fel: float | None = None
+    fwl: float | None = None
+    label: str = ""
+    apd_name: str | None = None
+
+    def to_location_row(self):
+        """Build a writer-ready ``APDLocationRow`` from this crossing.
+
+        Lets the Excel generator drive a BHL Section sheet straight from
+        the traversal — same PLSS + footages the section sub-tab shows.
+        """
+        from etools.models import APDLocationRow
+
+        key = PLSSKey.from_conc(self.conc)
+        return APDLocationRow(
+            name=self.apd_name or self.label or f"Section {self.conc}",
+            fnl=self.fnl,
+            fsl=self.fsl,
+            fel=self.fel,
+            fwl=self.fwl,
+            section=str(key.section),
+            township=str(key.township),
+            township_dir="N" if key.township_dir == 1 else "S",
+            range=str(key.range_),
+            range_dir="E" if key.range_dir == 1 else "W",
+            meridian="S" if key.baseline == 1 else "U",
+        )
+
+
+def _coerce_float(v) -> float | None:
+    try:
+        if v is None:
+            return None
+        f = float(v)
+        return None if math.isnan(f) else f
+    except (TypeError, ValueError):
+        return None
+
+
+# APD location-row name → friendly label for the three named sections.
+_APD_SECTION_LABELS = {
+    "location at surface": "Surface (SHL)",
+    "top of uppermost producing zone": "Top of Producing Zone",
+    "at total depth": "Total Depth",
+}
+
+
+def build_section_traversal(locations, clearance_points=None) -> "list[SectionCrossing]":
+    """Ordered PLSS sections the wellbore crosses — one source of truth.
+
+    Shared by the Casing Review SHL/BHL section sub-tabs **and** the Excel
+    generator so the on-screen *BHL Section N* always matches the *BHL
+    Section N* sheet in the output workbook.
+
+    Order of preference:
+
+    1. ``clearance_points`` — the processed-survey DataFrame carrying a
+       ``Conc`` per station (plus FNL/FSL/FEL/FWL). First occurrence of
+       each Conc gives the section-entry footages, in MD order. This is
+       authoritative for a horizontal lateral that crosses several
+       sections.
+    2. Fallback to the APD's ``locations`` rows when no clearance data is
+       available (well not yet promoted / no geometry).
+
+    For any section that *also* has an APD location row (surface,
+    producing zone, TD), the APD footages win — they're the regulator's
+    stated values — and the row keeps its familiar label. Auto-detected
+    intermediate sections are labelled ``"Intermediate — <conc>"``.
+
+    ``locations`` is ``APDPdfData.locations``; ``clearance_points`` is a
+    ``ClearanceResult.points`` DataFrame (or ``None``). Imported lazily by
+    callers to avoid a hard dependency on pandas here.
+    """
+    from etools.core.casing_review.footages import location_footages
+
+    # conc → (apd_row, label) for any section the APD names directly.
+    apd_by_conc: dict[str, tuple[object, str]] = {}
+    for L in locations or []:
+        key = PLSSKey.from_location(L)
+        if key is None:
+            continue
+        label = _APD_SECTION_LABELS.get((L.name or "").lower(), L.name or "")
+        apd_by_conc[key.conc] = (L, label)
+
+    # First-occurrence-per-Conc traversal, in MD order.
+    traversal: list[tuple[str, dict]] = []
+    seen: set[str] = set()
+    if (
+        clearance_points is not None
+        and not clearance_points.empty
+        and "Conc" in clearance_points
+    ):
+        for _, row in clearance_points.iterrows():
+            conc = row.get("Conc")
+            if not isinstance(conc, str) or conc in seen:
+                continue
+            seen.add(conc)
+            traversal.append(
+                (
+                    conc,
+                    {
+                        "fnl": _coerce_float(row.get("FNL")),
+                        "fsl": _coerce_float(row.get("FSL")),
+                        "fel": _coerce_float(row.get("FEL")),
+                        "fwl": _coerce_float(row.get("FWL")),
+                    },
+                )
+            )
+
+    if not traversal:  # fallback: APD location rows
+        for L in locations or []:
+            key = PLSSKey.from_location(L)
+            if key is None or key.conc in seen:
+                continue
+            seen.add(key.conc)
+            fnl, fsl, fel, fwl = location_footages(L)
+            traversal.append(
+                (key.conc, {"fnl": fnl, "fsl": fsl, "fel": fel, "fwl": fwl})
+            )
+
+    crossings: list[SectionCrossing] = []
+    for conc, fps in traversal:
+        if conc in apd_by_conc:
+            L, label = apd_by_conc[conc]
+            fnl, fsl, fel, fwl = location_footages(L)
+            crossings.append(
+                SectionCrossing(
+                    conc=conc,
+                    fnl=fnl,
+                    fsl=fsl,
+                    fel=fel,
+                    fwl=fwl,
+                    label=f"{label} — {conc}" if label else f"Section {conc}",
+                    apd_name=getattr(L, "name", None),
+                )
+            )
+        else:
+            crossings.append(
+                SectionCrossing(conc=conc, label=f"Intermediate — {conc}", **fps)
+            )
+    return crossings
+
+
+# ---------------------------------------------------------------------------
 # Segments
 # ---------------------------------------------------------------------------
 

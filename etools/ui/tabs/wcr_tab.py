@@ -33,6 +33,7 @@ from etools.models import WCRPdfData
 from etools.repositories import SurveyRepository
 from etools.services import WCRService
 from etools.services.wcr_pdf_service import WCRPdfResult, WCRPdfService
+from etools.ui.promote import promote_wcr_to_active
 from etools.ui.state import AppState
 
 log = get_logger(__name__)
@@ -268,55 +269,12 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
             promote_btn.disable()
 
     async def promote_to_primary() -> None:
-        from etools.core.casing_review.promote import (
-            normalize_survey_dataframe,
-            well_header_from_wcr,
-        )
-
-        data: WCRPdfData | None = cache.get("wcr_data")
-        if data is None:
-            ui.notify("Parse a WCR PDF first.", type="warning")
-            return
-        try:
-            header = well_header_from_wcr(data)
-        except Exception as exc:
-            log.exception("wcr.promote.header_failed")
-            ui.notify(f"Could not build well header: {exc}", type="negative")
-            return
-        if header.surface_lat is None:
-            ui.notify(
-                "WCR has no surface UTM or PLSS we can geolocate. Upload a "
-                "survey PDF or load the well from the DB.",
-                type="warning",
-                multi_line=True,
-                timeout=8000,
-            )
-            return
-        state.headers = [header]
-        state.primary = header
-        survey_df = cache.get("surveys")
-        if survey_df is not None and not survey_df.empty:
-            citing = header.citing_type or "AsDrilled"
-            state.surveys = {citing: normalize_survey_dataframe(survey_df)}
-            state.selected_citing = citing
-        else:
-            state.surveys = {}
-            state.selected_citing = None
-        state.processed = {}
-        state.clearances = {}
-        if state.post_load is None:
-            ui.notify("Post-load orchestrator not registered.", type="warning")
-            return
-        try:
-            await state.post_load(switch_to_survey=False)
-        except Exception as exc:
-            log.exception("wcr.promote.post_load_failed")
-            ui.notify(f"Promote post-load failed: {exc}", type="negative")
-            return
-        ui.notify(
-            f"Promoted {header.well_name or header.api} — other tabs populated.",
-            type="positive",
-            multi_line=True,
+        # Manual 'Use as active well'. Shares one implementation with the
+        # Load Well tab's auto-promote. The WCR tab keeps its resolved
+        # survey in ``cache["surveys"]`` (DB lookup or PDF upload made
+        # right here), so pass it through explicitly.
+        await promote_wcr_to_active(
+            state, survey_df=cache.get("surveys"), silent=False
         )
 
     def generate_from_pdf() -> None:

@@ -35,16 +35,13 @@ from etools.core.casing_review.engine import (
     CasingDesignEngine,
     welltrack_from_dataframe,
 )
-from etools.core.casing_review.promote import (
-    normalize_survey_dataframe,
-    well_header_from_apd,
-)
 from etools.core.pdf.apd_parser import parse_apd_pdf
 from etools.core.pdf.parser import parse_survey_pdf
 from etools.logging_setup import get_logger
 from etools.models import APDPdfData
 from etools.repositories import SurveyRepository
 from etools.services import CasingReviewService
+from etools.ui.promote import promote_apd_to_active
 from etools.ui.state import AppState
 
 log = get_logger(__name__)
@@ -399,50 +396,10 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
         _rebuild_design_and_wbd()
 
     async def promote_to_primary() -> None:
-        data = state.apd_data
-        if data is None:
-            ui.notify("Parse an APD PDF first.", type="warning")
-            return
-        try:
-            header = well_header_from_apd(data)
-        except Exception as exc:
-            log.exception("casing_review.promote.header_failed")
-            ui.notify(f"Could not build well header: {exc}", type="negative")
-            return
-        if header.surface_lat is None:
-            ui.notify(
-                "APD has no PLSS section we can geolocate. Upload a survey PDF "
-                "or load the well from the DB.",
-                type="warning",
-                multi_line=True,
-                timeout=8000,
-            )
-            return
-        state.headers = [header]
-        state.primary = header
-        if state.casing_survey_df is not None and not state.casing_survey_df.empty:
-            citing = header.citing_type or "Planned"
-            state.surveys = {citing: normalize_survey_dataframe(state.casing_survey_df)}
-            state.selected_citing = citing
-        else:
-            state.surveys = {}
-            state.selected_citing = None
-        state.processed = {}
-        state.clearances = {}
-        if state.post_load is None:
-            ui.notify("Post-load orchestrator not registered.", type="warning")
-            return
-        try:
-            await state.post_load(switch_to_survey=False)
-        except Exception as exc:
-            log.exception("casing_review.promote.post_load_failed")
-            ui.notify(f"Promote post-load failed: {exc}", type="negative")
-            return
-        ui.notify(
-            f"Promoted {header.well_name or header.api} — other tabs populated.",
-            type="positive",
-            multi_line=True,
-        )
+        # Manual 'Use as active well'. Shares one implementation with the
+        # Load Well tab's auto-promote; ``silent=False`` so the user gets
+        # the "can't geolocate" explanation when it applies.
+        await promote_apd_to_active(state, silent=False)
 
     def generate() -> None:
         data = state.apd_data
@@ -454,11 +411,19 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
         except ValueError:
             ui.notify("Frac gradient must be a number.", type="warning")
             return
+        # Drive the SHL/BHL Section sheets from the exact section traversal
+        # the on-screen sub-tabs show, so every crossing (incl. BHL Section
+        # 2 and any dynamic 4+) is filled — not just the 3 named APD rows.
+        from etools.core.casing_review.sections import build_section_traversal
+
+        crossings = build_section_traversal(data.locations, _clearance_points(state))
+        section_locations = [c.to_location_row() for c in crossings]
         try:
             result = svc.generate(
                 apd_data=data,
                 survey=state.casing_survey_df,
                 frac_gradient_override_psi_per_ft=frac,
+                section_locations=section_locations or None,
             )
         except Exception as exc:
             log.exception("casing_review.generate_failed")
@@ -863,91 +828,37 @@ def _render_sections(card: ui.card, data: APDPdfData, state: AppState) -> None:
                     )
 
 
+def _clearance_points(state: AppState):
+    """The processed-survey points DataFrame from any loaded citing, or None.
+
+    The section list is the same shape across citings, so the first one is
+    representative.
+    """
+    if not state.clearances:
+        return None
+    cr = next(iter(state.clearances.values()))
+    return getattr(cr, "points", None)
+
+
 def _build_section_panels(
     data: APDPdfData, state: AppState
 ) -> list[tuple[str, str, dict, str]]:
     """Return [(sheet_name, conc, location_point, display_label), …] in MD order.
 
-    Pulls the section traversal from ``state.clearances`` if available
-    (one entry per unique Conc in MD order); otherwise falls back to the
-    APD's location rows. ``location_point`` is a dict carrying
-    ``fnl/fsl/fel/fwl`` for whichever direction the source row supplied.
+    Thin adapter over :func:`build_section_traversal` (the single source of
+    truth shared with the Excel generator) into the tuple shape the panel
+    renderer expects. ``location_point`` is a dict carrying
+    ``fnl/fsl/fel/fwl``.
     """
-    # APD-name → display label so SHL/BHL 1/3 keep their familiar names.
-    apd_label_map = {
-        "location at surface": "Surface (SHL)",
-        "top of uppermost producing zone": "Top of Producing Zone",
-        "at total depth": "Total Depth",
-    }
-    # Build a quick lookup of (conc → APD location row) so an auto-detected
-    # section that *does* have an APD row uses the APD's exact footages.
-    apd_by_conc: dict[str, tuple[object, str]] = {}
-    for L in data.locations or []:
-        from etools.core.casing_review.sections import PLSSKey
-        plss = PLSSKey.from_location(L)
-        if plss is None:
-            continue
-        apd_by_conc[plss.conc] = (L, apd_label_map.get(L.name.lower(), L.name))
+    from etools.core.casing_review.sections import build_section_traversal
 
-    # Trajectory section order — first occurrence of each Conc along MD.
-    traversal: list[tuple[str, dict]] = []
-    seen: set[str] = set()
-    if state.clearances:
-        # Pick any citing (the section list is the same shape across citings).
-        cr = next(iter(state.clearances.values()))
-        if cr.points is not None and not cr.points.empty and "Conc" in cr.points:
-            for _, row in cr.points.iterrows():
-                conc = row.get("Conc")
-                if not isinstance(conc, str) or conc in seen:
-                    continue
-                seen.add(conc)
-                traversal.append((conc, {
-                    "fnl": _safe_float(row.get("FNL")),
-                    "fsl": _safe_float(row.get("FSL")),
-                    "fel": _safe_float(row.get("FEL")),
-                    "fwl": _safe_float(row.get("FWL")),
-                }))
-
-    # If no clearance traversal, fall back to APD locations.
-    if not traversal:
-        from etools.core.casing_review.footages import location_footages
-        from etools.core.casing_review.sections import PLSSKey
-        for L in data.locations or []:
-            plss = PLSSKey.from_location(L)
-            if plss is None or plss.conc in seen:
-                continue
-            seen.add(plss.conc)
-            fnl, fsl, fel, fwl = location_footages(L)
-            traversal.append((plss.conc, {
-                "fnl": fnl, "fsl": fsl, "fel": fel, "fwl": fwl,
-            }))
-
+    crossings = build_section_traversal(data.locations, _clearance_points(state))
     panels: list[tuple[str, str, dict, str]] = []
-    for idx, (conc, loc_point) in enumerate(traversal):
+    for idx, c in enumerate(crossings):
         sheet_name = "SHL Section" if idx == 0 else f"BHL Section {idx}"
-        # If an APD row exists for this section, use its footages over the
-        # clearance-derived ones (APD is authoritative for SHL / producing / TD).
-        if conc in apd_by_conc:
-            from etools.core.casing_review.footages import location_footages
-            L, label = apd_by_conc[conc]
-            fnl, fsl, fel, fwl = location_footages(L)
-            loc_point = {"fnl": fnl, "fsl": fsl, "fel": fel, "fwl": fwl}
-            display_label = f"{label} — {conc}"
-        else:
-            display_label = f"Intermediate — {conc}"
-        panels.append((sheet_name, conc, loc_point, display_label))
+        loc_point = {"fnl": c.fnl, "fsl": c.fsl, "fel": c.fel, "fwl": c.fwl}
+        panels.append((sheet_name, c.conc, loc_point, c.label))
     return panels
-
-
-def _safe_float(v) -> float | None:
-    try:
-        if v is None:
-            return None
-        f = float(v)
-        import math as _math
-        return None if _math.isnan(f) else f
-    except (TypeError, ValueError):
-        return None
 
 
 def _render_section_panel(
@@ -1462,6 +1373,9 @@ def _render_plat_svg(container, sd, state: AppState | None = None) -> None:
 
     # ---- uniform segment endpoint dots (17 total — start + 16 ends) ----
     dot_r = max(vb_w, vb_h) * 0.011
+    # SHL/BHL wellpath markers — a touch larger so they read above the
+    # segment-endpoint dots.
+    qc_r = max(vb_w, vb_h) * 0.014
     dot_elems = []
     for x, y in ring_pts:
         dot_elems.append(

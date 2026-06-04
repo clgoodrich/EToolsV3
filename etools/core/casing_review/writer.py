@@ -38,6 +38,7 @@ def write_casing_review(
     producing_interval_location=None,
     td_location=None,
     intermediate_locations: list | None = None,
+    section_locations: list | None = None,
     plat_repo=None,
 ) -> Path:
     """Fill the Casing Review xlsx with both inputs and computed values.
@@ -78,17 +79,101 @@ def write_casing_review(
 
     # SHL + BHL Section sheets. Each section sheet's row-7 input block
     # drives every formula in that sheet via Grid-Numbers DGET lookups.
-    #
-    # Layout: SHL = surface, BHL 1 = top of producing zone, BHL 3 = TD.
-    # ``intermediate_locations`` slots into BHL 2 (first item) and any
-    # additional items create BHL Section 4, 5, 6, ... by duplicating
-    # the BHL Section 3 sheet as a template.
+    if section_locations:
+        _write_section_sheets_from_traversal(
+            wb, design, section_locations, plat_repo=plat_repo
+        )
+    else:
+        _write_section_sheets_legacy(
+            wb,
+            design,
+            surface_location=surface_location,
+            producing_interval_location=producing_interval_location,
+            td_location=td_location,
+            intermediate_locations=intermediate_locations,
+            plat_repo=plat_repo,
+        )
+
+    wb.save(output_path)
+    return output_path
+
+
+# Section sheets the template ships with, in order. Index 0 is the surface
+# section; the rest are the bottom-hole crossings.
+_TEMPLATE_SECTION_SHEETS = (
+    "SHL Section",
+    "BHL Section 1",
+    "BHL Section 2",
+    "BHL Section 3",
+)
+
+
+def _section_sheet_name(idx: int) -> str:
+    """Positional sheet name: 0 → SHL Section, N → BHL Section N."""
+    return "SHL Section" if idx == 0 else f"BHL Section {idx}"
+
+
+def _write_section_sheets_from_traversal(
+    wb, design: CasingDesign, section_locations: list, *, plat_repo=None
+) -> None:
+    """Drive every section sheet straight from the wellbore's section
+    traversal, so the workbook's BHL Section N matches the app's BHL
+    Section N exactly.
+
+    ``section_locations[i]`` is an ``APDLocationRow`` for the i-th section
+    crossed (0 = surface). Sheets past the template's BHL Section 3 are
+    created on the fly by duplicating it. Template section sheets the
+    traversal doesn't reach are stamped header-only (well/API) so they
+    don't show stale inputs from a prior run.
+    """
+    covered: set[str] = set()
+    for idx, loc in enumerate(section_locations):
+        sheet_name = _section_sheet_name(idx)
+        covered.add(sheet_name)
+        if sheet_name not in wb.sheetnames:
+            # Dynamic BHL Section 4+ — copy BHL Section 3's full formula
+            # structure and rename.
+            if "BHL Section 3" not in wb.sheetnames:
+                log.warning("section_sheet.no_template", wanted=sheet_name)
+                continue
+            new_sheet = wb.copy_worksheet(wb["BHL Section 3"])
+            new_sheet.title = sheet_name
+            log.info("section_sheet.created_dynamic", name=sheet_name)
+        _write_section_sheet(
+            wb[sheet_name], design, loc, sheet_label=sheet_name, plat_repo=plat_repo
+        )
+
+    # Any shipped section sheet the traversal didn't fill: blank its inputs
+    # (header only) rather than leave last-run values behind.
+    for sheet_name in _TEMPLATE_SECTION_SHEETS:
+        if sheet_name in wb.sheetnames and sheet_name not in covered:
+            _write_section_sheet(
+                wb[sheet_name], design, None, sheet_label=sheet_name, plat_repo=plat_repo
+            )
+
+
+def _write_section_sheets_legacy(
+    wb,
+    design: CasingDesign,
+    *,
+    surface_location=None,
+    producing_interval_location=None,
+    td_location=None,
+    intermediate_locations: list | None = None,
+    plat_repo=None,
+) -> None:
+    """Original mapping used when no traversal is supplied.
+
+    Layout: SHL = surface, BHL 1 = top of producing zone, BHL 3 = TD.
+    ``intermediate_locations`` slots into BHL 2 (first item); additional
+    items create BHL Section 4, 5, … by duplicating BHL Section 3.
+    """
     intermediate_locations = list(intermediate_locations or [])
     bhl2_loc = intermediate_locations[0] if intermediate_locations else None
     extra_locs = intermediate_locations[1:]
 
     section_sheet_map = [
-        ("SHL Section",   surface_location),
+        ("SHL Section", surface_location),
         ("BHL Section 1", producing_interval_location),
         ("BHL Section 2", bhl2_loc),
         ("BHL Section 3", td_location),
@@ -103,15 +188,12 @@ def write_casing_review(
                 plat_repo=plat_repo,
             )
 
-    # Dynamic BHL Section 4+ for wells that cross more sections than
-    # the template ships with. Copy the BHL Section 3 sheet (which
-    # already has the full formula structure) and rename.
     if extra_locs and "BHL Section 3" in wb.sheetnames:
         template_sheet = wb["BHL Section 3"]
         for i, loc in enumerate(extra_locs, start=4):
             new_name = f"BHL Section {i}"
             if new_name in wb.sheetnames:
-                continue  # don't clobber an existing sheet
+                continue
             new_sheet = wb.copy_worksheet(template_sheet)
             new_sheet.title = new_name
             _write_section_sheet(
@@ -122,9 +204,6 @@ def write_casing_review(
                 plat_repo=plat_repo,
             )
             log.info("section_sheet.created_dynamic", name=new_name)
-
-    wb.save(output_path)
-    return output_path
 
 
 def _write_section_sheet(

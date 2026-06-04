@@ -28,6 +28,7 @@ from etools.core.pdf.wcr_parser import parse_wcr_pdf
 from etools.logging_setup import get_logger
 from etools.models import WellLookup
 from etools.repositories import SurveyRepository
+from etools.ui.promote import promote_apd_to_active, promote_wcr_to_active
 from etools.ui.state import AppState
 
 LoadHandler = Callable[[WellLookup], Union[None, Awaitable[None]]]
@@ -281,16 +282,23 @@ def render_load_tab(
             f"{data.well_name or '(unnamed)'}  API {data.api or '—'}"
         )
         cache["apd_parse_btn"].enable()
-        # Refresh every tab so Casing Review rebuilds its UI from the new
-        # state.apd_data before we route the user there.
-        if state.fire_refresh is not None:
-            try:
-                await state.fire_refresh()
-            except Exception as exc:
-                log.warning("load_tab.apd_fire_refresh.failed", error=str(exc))
-        ui.notify("APD parsed — routing to Casing Review.", type="positive")
+        # Land the user on Casing Review, then auto 'Use as active well':
+        # promote runs the full pipeline (survey → clearance → geometry)
+        # and refreshes every tab. If the well can't be geolocated yet,
+        # promote no-ops quietly and we fall back to a plain refresh so
+        # Casing Review still shows the parsed APD + a manual promote button.
         if on_route_to_casing is not None:
             on_route_to_casing()
+        promoted = await promote_apd_to_active(state, silent=True)
+        if not promoted:
+            if state.fire_refresh is not None:
+                try:
+                    await state.fire_refresh()
+                except Exception as exc:
+                    log.warning("load_tab.apd_fire_refresh.failed", error=str(exc))
+            ui.notify(
+                "APD parsed — review on the Casing Review tab.", type="positive"
+            )
 
     async def _try_db_survey_for_apd() -> None:
         data = state.apd_data
@@ -370,16 +378,20 @@ def render_load_tab(
             f"{data.well_name or '(unnamed)'}  API {data.api or '—'}"
         )
         cache["wcr_parse_btn"].enable()
-        # Refresh every tab so WCR rebuilds its UI from the new
-        # state.wcr_data before we route the user there.
-        if state.fire_refresh is not None:
-            try:
-                await state.fire_refresh()
-            except Exception as exc:
-                log.warning("load_tab.wcr_fire_refresh.failed", error=str(exc))
-        ui.notify("WCR parsed — routing to WCR tab.", type="positive")
+        # Land on the WCR tab, then auto 'Use as active well' (same
+        # degrade-to-refresh fallback as the APD path).
         if on_route_to_wcr is not None:
             on_route_to_wcr()
+        promoted = await promote_wcr_to_active(
+            state, survey_df=state.wcr_survey_df, silent=True
+        )
+        if not promoted:
+            if state.fire_refresh is not None:
+                try:
+                    await state.fire_refresh()
+                except Exception as exc:
+                    log.warning("load_tab.wcr_fire_refresh.failed", error=str(exc))
+            ui.notify("WCR parsed — review on the WCR tab.", type="positive")
 
     async def _try_db_survey_for_wcr() -> None:
         data = state.wcr_data

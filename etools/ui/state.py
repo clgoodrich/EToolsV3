@@ -86,6 +86,19 @@ class AppState:
     wcr_survey_label: str | None = None
     wcr_survey_source: str | None = None  # "db" or "pdf"
 
+    # ---- Multi-document workspace --------------------------------------
+    # Every well loaded this session, keyed by ``API|lateral`` and ordered
+    # by first-load. The data fields ABOVE always mirror the currently
+    # active buffer (``active_doc_id``); switching documents swaps those
+    # fields in place — the AppState object identity never changes, so tab
+    # closures stay valid. Both survive WebSocket reconnects because this
+    # whole state object is module-scope persistent. Managed exclusively
+    # by ``etools.ui.workspace``; NEVER captured into a per-document
+    # snapshot. Typed loosely (``Any`` = ``WellDocument``) to keep this
+    # module import-cycle free.
+    documents: dict[str, Any] = field(default_factory=dict)
+    active_doc_id: str | None = None
+
 
 def empty_state() -> AppState:
     return AppState()
