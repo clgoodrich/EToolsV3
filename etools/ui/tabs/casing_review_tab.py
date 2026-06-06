@@ -414,16 +414,35 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
         # Drive the SHL/BHL Section sheets from the exact section traversal
         # the on-screen sub-tabs show, so every crossing (incl. BHL Section
         # 2 and any dynamic 4+) is filled — not just the 3 named APD rows.
-        from etools.core.casing_review.sections import build_section_traversal
+        # Defensive: any failure here falls back to legacy section fill
+        # (None) rather than aborting the whole generation silently.
+        section_locations = None
+        dx_survey_locations = None
+        try:
+            from etools.core.casing_review.sections import build_section_traversal
 
-        crossings = build_section_traversal(data.locations, _clearance_points(state))
-        section_locations = [c.to_location_row() for c in crossings]
+            crossings = build_section_traversal(
+                data.locations, _clearance_points(state)
+            )
+            section_locations = [c.to_location_row() for c in crossings] or None
+            # Survey path offsets that drive the BHL sheets' native
+            # section-detection — without them the BHL bearing grids stay
+            # blank no matter what section sheets we write.
+            dx_survey_locations = _dx_survey_locations(state)
+        except Exception:
+            log.exception("casing_review.section_traversal_failed")
+            ui.notify(
+                "Could not build section traversal — generating with the "
+                "basic 3-section layout.",
+                type="warning",
+            )
         try:
             result = svc.generate(
                 apd_data=data,
                 survey=state.casing_survey_df,
                 frac_gradient_override_psi_per_ft=frac,
                 section_locations=section_locations or None,
+                dx_survey_locations=dx_survey_locations or None,
             )
         except Exception as exc:
             log.exception("casing_review.generate_failed")
@@ -838,6 +857,28 @@ def _clearance_points(state: AppState):
         return None
     cr = next(iter(state.clearances.values()))
     return getattr(cr, "points", None)
+
+
+def _dx_survey_locations(state: AppState):
+    """KOP / Prod-Interval / Total-Depth path offsets for the DxSurvey block.
+
+    Feeds :func:`dx_survey_path_offsets` the clearance points (which carry
+    ``measured_depth`` / ``n_offset`` / ``e_offset``) plus the KOP / landing
+    MDs detected during survey processing. Returns ``None`` when no survey
+    is loaded so the writer falls back to the template defaults.
+    """
+    from etools.core.casing_review.sections import dx_survey_path_offsets
+
+    points = _clearance_points(state)
+    if points is None:
+        return None
+    kop_md = landing_md = None
+    if state.processed:
+        sr = next(iter(state.processed.values()))
+        kop_md = getattr(getattr(sr, "kop", None), "md", None)
+        landing_md = getattr(sr, "landing_md", None)
+    rows = dx_survey_path_offsets(points, kop_md=kop_md, landing_md=landing_md)
+    return rows or None
 
 
 def _build_section_panels(

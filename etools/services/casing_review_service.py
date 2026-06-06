@@ -58,6 +58,7 @@ class CasingReviewService:
         processed_survey=None,
         intermediate_locations: list | None = None,
         section_locations: list | None = None,
+        dx_survey_locations: list | None = None,
         output_filename: str | None = None,
         frac_gradient_override_psi_per_ft: float | None = None,
     ) -> CasingReviewResult:
@@ -93,6 +94,7 @@ class CasingReviewService:
             td_location=td_loc,
             intermediate_locations=intermediate_locations,
             section_locations=section_locations,
+            dx_survey_locations=dx_survey_locations,
             plat_repo=self._plat_repo,
         )
         log.info(

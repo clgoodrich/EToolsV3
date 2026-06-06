@@ -20,6 +20,8 @@ from etools.core.casing_review.footages import (
     polygon_footages,
 )
 from etools.core.casing_review.generator import CASING_REVIEW_TEMPLATE
+from etools.core.casing_review.grid_corners import derive_section_corners
+from etools.core.casing_review.sections import PLSSKey
 from etools.logging_setup import get_logger
 
 log = get_logger(__name__)
@@ -39,6 +41,7 @@ def write_casing_review(
     td_location=None,
     intermediate_locations: list | None = None,
     section_locations: list | None = None,
+    dx_survey_locations: list | None = None,
     plat_repo=None,
 ) -> Path:
     """Fill the Casing Review xlsx with both inputs and computed values.
@@ -80,6 +83,22 @@ def write_casing_review(
     # SHL + BHL Section sheets. Each section sheet's row-7 input block
     # drives every formula in that sheet via Grid-Numbers DGET lookups.
     if section_locations:
+        # The DGET lookups resolve only for sections present in the
+        # embedded "Grid Numbers" sheet (a curated subset). Backfill any
+        # crossed section missing from it by deriving its 16 quarter-side
+        # rows from the plat polygon — otherwise the sheet's bearings come
+        # up blank for every section the well merely passes through.
+        if plat_repo is not None and "Grid Numbers" in wb.sheetnames:
+            _ensure_grid_numbers_coverage(
+                wb["Grid Numbers"], section_locations, plat_repo
+            )
+        # The BHL Section sheets auto-detect which sections the wellbore
+        # crosses by walking the survey path stored in DxSurvey rows 8-10
+        # (K.O. Point / Prod. Interval / Total Depth). Populate those
+        # offsets so the native detection resolves — without them every
+        # BHL sheet's bearing grid comes up blank or #VALUE!.
+        if dx_survey_locations and "DxSurvey" in wb.sheetnames:
+            _write_dx_survey_locations(wb["DxSurvey"], dx_survey_locations)
         _write_section_sheets_from_traversal(
             wb, design, section_locations, plat_repo=plat_repo
         )
@@ -116,40 +135,71 @@ def _section_sheet_name(idx: int) -> str:
 def _write_section_sheets_from_traversal(
     wb, design: CasingDesign, section_locations: list, *, plat_repo=None
 ) -> None:
-    """Drive every section sheet straight from the wellbore's section
-    traversal, so the workbook's BHL Section N matches the app's BHL
-    Section N exactly.
+    """Fill the section sheets the way the template is designed to be driven.
 
-    ``section_locations[i]`` is an ``APDLocationRow`` for the i-th section
-    crossed (0 = surface). Sheets past the template's BHL Section 3 are
-    created on the fly by duplicating it. Template section sheets the
-    traversal doesn't reach are stamped header-only (well/API) so they
-    don't show stale inputs from a prior run.
+    The template is *formula-driven*: only the ``SHL Section`` sheet takes
+    real PLSS inputs (surface location). Every BHL Section sheet derives
+    N7/I7/K7/P7/R7/S7 by reference to the SHL sheet and **auto-detects its
+    own crossed section** via the ``L38`` neighbour-walk, reading the
+    wellbore path from ``DxSurvey`` rows 8-10. Writing hardcoded inputs
+    into the BHL sheets (an earlier approach) breaks the adjacency
+    arithmetic — ``AS24`` collapses to ``""`` and ``"" + number`` →
+    ``#VALUE!`` cascades into every bearing cell — so we deliberately
+    leave them untouched and let the template compute.
+
+    ``section_locations[0]`` is the surface ``APDLocationRow``; the rest of
+    the list is used only by :func:`_ensure_grid_numbers_coverage` (called
+    upstream) to guarantee every crossed section has bearing data.
     """
-    covered: set[str] = set()
-    for idx, loc in enumerate(section_locations):
-        sheet_name = _section_sheet_name(idx)
-        covered.add(sheet_name)
-        if sheet_name not in wb.sheetnames:
-            # Dynamic BHL Section 4+ — copy BHL Section 3's full formula
-            # structure and rename.
-            if "BHL Section 3" not in wb.sheetnames:
-                log.warning("section_sheet.no_template", wanted=sheet_name)
-                continue
-            new_sheet = wb.copy_worksheet(wb["BHL Section 3"])
-            new_sheet.title = sheet_name
-            log.info("section_sheet.created_dynamic", name=sheet_name)
+    # Well/API header on every shipped section sheet.
+    for sheet_name in _TEMPLATE_SECTION_SHEETS:
+        if sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            ws["C2"] = design.well_name
+            ws["C3"] = design.api
+
+    # Only the SHL sheet gets real inputs; the BHL sheets stay native.
+    if section_locations and "SHL Section" in wb.sheetnames:
         _write_section_sheet(
-            wb[sheet_name], design, loc, sheet_label=sheet_name, plat_repo=plat_repo
+            wb["SHL Section"],
+            design,
+            section_locations[0],
+            sheet_label="SHL Section",
+            plat_repo=plat_repo,
         )
 
-    # Any shipped section sheet the traversal didn't fill: blank its inputs
-    # (header only) rather than leave last-run values behind.
-    for sheet_name in _TEMPLATE_SECTION_SHEETS:
-        if sheet_name in wb.sheetnames and sheet_name not in covered:
-            _write_section_sheet(
-                wb[sheet_name], design, None, sheet_label=sheet_name, plat_repo=plat_repo
-            )
+    # The template natively renders at most 4 section sheets (SHL + BHL
+    # 1-3). A lateral crossing more sections than that can't be expressed
+    # through the native detection chain — surface it rather than silently
+    # truncating.
+    if len(section_locations) > len(_TEMPLATE_SECTION_SHEETS):
+        log.warning(
+            "section_sheet.exceeds_template",
+            crossed=len(section_locations),
+            template_sheets=len(_TEMPLATE_SECTION_SHEETS),
+        )
+
+
+def _write_dx_survey_locations(dxs_ws, dx_survey_locations: list) -> None:
+    """Write the K.O./Prod-Interval/Total-Depth path offsets into DxSurvey.
+
+    ``dx_survey_locations`` is up to three ``(md, n_offset, e_offset)``
+    tuples (feet; N positive / S negative, E positive / W negative) written
+    to rows 8, 9, 10 — columns C (MD), D (N/S), E (E/W). These are the
+    inputs the section sheets' path-detection walks
+    (``E8=ABS(DxSurvey!D8)``), so they must be present for the BHL sheets
+    to resolve which sections the wellbore crosses.
+    """
+    for row, loc in zip((8, 9, 10), dx_survey_locations):
+        if loc is None:
+            continue
+        md, n_off, e_off = loc
+        if md is not None:
+            dxs_ws.cell(row, 3, round(float(md), 2))
+        if n_off is not None:
+            dxs_ws.cell(row, 4, round(float(n_off), 4))
+        if e_off is not None:
+            dxs_ws.cell(row, 5, round(float(e_off), 4))
 
 
 def _write_section_sheets_legacy(
@@ -206,6 +256,78 @@ def _write_section_sheets_legacy(
             log.info("section_sheet.created_dynamic", name=new_name)
 
 
+def _gn_int(v) -> int | None:
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return None
+
+
+def _ensure_grid_numbers_coverage(gn_ws, section_locations, plat_repo) -> None:
+    """Backfill the Grid Numbers sheet for sections it doesn't already have.
+
+    The embedded sheet is a curated subset; any section the well crosses
+    that's absent from it would make the section sheet's DGET bearing
+    lookups return blank. For each such section we derive the 16
+    quarter-side rows from the plat polygon (``PlatRepository``) and append
+    them, so every crossed section resolves. Sections already present —
+    and sections with no plat polygon — are left untouched (the latter
+    logged so a genuinely missing section is visible, not silent).
+    """
+    existing: set[tuple] = set()
+    last_row = 2  # data starts at row 3 (rows 1-2 are headers)
+    for r in range(3, gn_ws.max_row + 1):
+        sec = gn_ws.cell(r, 1).value
+        if sec is None:
+            continue
+        last_row = r
+        existing.add(
+            tuple(_gn_int(gn_ws.cell(r, c).value) for c in range(1, 7))
+        )
+
+    write_row = last_row + 1
+    added: set[tuple] = set()
+    for loc in section_locations:
+        plss = PLSSKey.from_location(loc)
+        if plss is None:
+            continue
+        key = (
+            plss.section, plss.township, plss.township_dir,
+            plss.range_, plss.range_dir, plss.baseline,
+        )
+        if key in existing or key in added:
+            continue
+        try:
+            df = plat_repo._fetch_concs([plss.conc])  # noqa: SLF001
+        except Exception as exc:
+            log.warning("grid_numbers.fetch_failed", conc=plss.conc, error=str(exc))
+            continue
+        if df is None or df.empty:
+            log.info("grid_numbers.no_plat_polygon", conc=plss.conc)
+            continue
+        pts = list(zip(df["Easting"].tolist(), df["Northing"].tolist()))
+        rows = derive_section_corners(
+            section=plss.section, township=plss.township,
+            township_dir=plss.township_dir, range_=plss.range_,
+            range_dir=plss.range_dir, baseline=plss.baseline, polygon_points=pts,
+        )
+        if not rows:
+            continue
+        for gc in rows:
+            for col, val in enumerate(
+                (
+                    gc.section, gc.township, gc.township_dir, gc.range,
+                    gc.range_dir, gc.baseline, gc.side, gc.length_ft,
+                    gc.degrees, gc.minutes, gc.seconds, gc.alignment, gc.north_ref,
+                ),
+                start=1,
+            ):
+                gn_ws.cell(write_row, col, val)
+            write_row += 1
+        added.add(key)
+        log.info("grid_numbers.derived", conc=plss.conc, rows=len(rows))
+
+
 def _write_section_sheet(
     ws,
     design: CasingDesign,
@@ -227,8 +349,17 @@ def _write_section_sheet(
     if location is None:
         return
 
-    # Section / Township / Range / Meridian — integer codes per the
-    # Grid Numbers schema (twp 2=S 1=N, rng 2=W 1=E, mer 2=Uintah 1=SaltLake).
+    # The SHL sheet and the BHL sheets read their PLSS direction inputs
+    # DIFFERENTLY (confirmed against the reference workbook):
+    #   * SHL   criteria are ``=$P$7``            → P7/R7 must be INT codes.
+    #   * BHL   criteria are ``=IF($P$7="S",…)``  → P7/R7 must be the
+    #                                               STRING "S"/"N", "W"/"E".
+    # The original writer wrote int codes on every sheet, which made every
+    # BHL DGET criterion fail (``IF(2="S",…)`` → wrong code) and the
+    # bearing grid came up #VALUE!. Pick the encoding per sheet.
+    is_shl = sheet_label.startswith("SHL")
+
+    # Section / Township / Range / Meridian.
     if location.section:
         try:
             ws["N7"] = int(location.section)
@@ -240,16 +371,29 @@ def _write_section_sheet(
         except ValueError:
             pass
     if location.township_dir:
-        ws["P7"] = 2 if location.township_dir.upper() == "S" else 1
+        d = location.township_dir.upper()
+        ws["P7"] = (2 if d == "S" else 1) if is_shl else ("S" if d == "S" else "N")
     if location.range:
         try:
             ws["Q7"] = int(location.range)
         except ValueError:
             pass
     if location.range_dir:
-        ws["R7"] = 2 if location.range_dir.upper() == "W" else 1
+        d = location.range_dir.upper()
+        ws["R7"] = (2 if d == "W" else 1) if is_shl else ("W" if d == "W" else "E")
     if location.meridian:
         ws["S7"] = 2 if location.meridian.upper() == "U" else 1
+
+    # On BHL sheets the section the bearing-grid DGET targets comes from
+    # ``L38`` (an auto-detection formula), NOT N7. That detection only
+    # sees the SHL + bottom-hole footages, so it can't resolve the
+    # intermediate sections a lateral crosses. Force L38 to THIS section
+    # so every crossed section's bearings resolve.
+    if not is_shl and location.section:
+        try:
+            ws["L38"] = int(location.section)
+        except ValueError:
+            pass
 
     # Compute UTM from the APD's footages + the plat polygon. We also
     # write the four cardinal footages back into I7/K7 — those are

@@ -148,6 +148,32 @@ def _coerce_float(v) -> float | None:
         return None
 
 
+def _nearest_footage_pair(fnl, fsl, fel, fwl) -> dict:
+    """Collapse all-four footages to one N/S + one E/W (the PLSS convention).
+
+    Clearance data carries the distance from *every* section line for each
+    point (FNL and FSL and FEL and FWL all populated), but a PLSS call —
+    and ``footages_to_xy`` — references exactly one north/south line and
+    one east/west line. Pick the nearer of each (smaller distance), which
+    is how a surveyor states the location and keeps the point closest to
+    its reference line for irregular sections.
+    """
+    out = {"fnl": None, "fsl": None, "fel": None, "fwl": None}
+    if fnl is not None and fsl is not None:
+        out["fnl" if fnl <= fsl else "fsl"] = fnl if fnl <= fsl else fsl
+    elif fnl is not None:
+        out["fnl"] = fnl
+    elif fsl is not None:
+        out["fsl"] = fsl
+    if fel is not None and fwl is not None:
+        out["fel" if fel <= fwl else "fwl"] = fel if fel <= fwl else fwl
+    elif fel is not None:
+        out["fel"] = fel
+    elif fwl is not None:
+        out["fwl"] = fwl
+    return out
+
+
 # APD location-row name → friendly label for the three named sections.
 _APD_SECTION_LABELS = {
     "location at surface": "Surface (SHL)",
@@ -185,15 +211,22 @@ def build_section_traversal(locations, clearance_points=None) -> "list[SectionCr
     from etools.core.casing_review.footages import location_footages
 
     # conc → (apd_row, label) for any section the APD names directly.
+    # ``setdefault`` keeps the FIRST row for a section — the APD lists
+    # Surface before Producing/TD, so when several share one section (a
+    # short lateral) the section keeps its Surface identity instead of
+    # being relabelled by a later row.
     apd_by_conc: dict[str, tuple[object, str]] = {}
     for L in locations or []:
         key = PLSSKey.from_location(L)
         if key is None:
             continue
         label = _APD_SECTION_LABELS.get((L.name or "").lower(), L.name or "")
-        apd_by_conc[key.conc] = (L, label)
+        apd_by_conc.setdefault(key.conc, (L, label))
 
-    # First-occurrence-per-Conc traversal, in MD order.
+    # First-occurrence-per-Conc traversal, ordered by the measured depth at
+    # which the wellbore ENTERS each section. Sorting by MD first makes the
+    # order strictly sequential down the hole (surface section first, TD
+    # section last) and immune to however the points DataFrame is ordered.
     traversal: list[tuple[str, dict]] = []
     seen: set[str] = set()
     if (
@@ -201,20 +234,37 @@ def build_section_traversal(locations, clearance_points=None) -> "list[SectionCr
         and not clearance_points.empty
         and "Conc" in clearance_points
     ):
-        for _, row in clearance_points.iterrows():
+        ordered = clearance_points
+        for md_col in ("measured_depth", "MeasuredDepth", "MD", "md"):
+            if md_col in clearance_points:
+                ordered = clearance_points.sort_values(md_col, kind="stable")
+                break
+        for _, row in ordered.iterrows():
             conc = row.get("Conc")
-            if not isinstance(conc, str) or conc in seen:
+            # Skip blanks, dups, and anything that isn't a well-formed
+            # 9-char Conc — a malformed value would later blow up
+            # ``to_location_row`` (PLSSKey.from_conc) and abort generation.
+            if not isinstance(conc, str) or len(conc) < 9 or conc in seen:
+                continue
+            try:
+                PLSSKey.from_conc(conc)
+            except (ValueError, IndexError):
                 continue
             seen.add(conc)
+            # Clearance carries all four footages per point; collapse to the
+            # nearest N/S + E/W so footages_to_xy (which wants exactly one
+            # of each) can place the point. Without this, every
+            # clearance-sourced intermediate section fails UTM and the sheet
+            # comes up empty.
             traversal.append(
                 (
                     conc,
-                    {
-                        "fnl": _coerce_float(row.get("FNL")),
-                        "fsl": _coerce_float(row.get("FSL")),
-                        "fel": _coerce_float(row.get("FEL")),
-                        "fwl": _coerce_float(row.get("FWL")),
-                    },
+                    _nearest_footage_pair(
+                        _coerce_float(row.get("FNL")),
+                        _coerce_float(row.get("FSL")),
+                        _coerce_float(row.get("FEL")),
+                        _coerce_float(row.get("FWL")),
+                    ),
                 )
             )
 
@@ -250,6 +300,48 @@ def build_section_traversal(locations, clearance_points=None) -> "list[SectionCr
                 SectionCrossing(conc=conc, label=f"Intermediate — {conc}", **fps)
             )
     return crossings
+
+
+def dx_survey_path_offsets(
+    points, *, kop_md=None, landing_md=None, td_md=None
+) -> "list[tuple[float | None, float | None, float | None]]":
+    """Return the (md, n_offset, e_offset) rows DxSurvey 8-10 need.
+
+    The Casing Review template walks the wellbore through PLSS sections
+    using three reference stations — K.O. Point, Prod. Interval, Total
+    Depth — stored in ``DxSurvey`` rows 8/9/10. Each is the survey's
+    north/east offset (feet; N+/S-, E+/W-) at that measured depth, which is
+    what the BHL Section sheets' section-detection reads. Without these the
+    detection runs on zeros and the BHL bearing grids come up blank.
+
+    ``points`` is a processed-survey / clearance DataFrame carrying
+    ``measured_depth``, ``n_offset`` and ``e_offset``. ``td_md`` defaults
+    to the deepest station. Any station whose MD is unknown yields ``None``
+    (the writer skips it, leaving the template default).
+    """
+    if points is None or getattr(points, "empty", True):
+        return []
+    md_col = "measured_depth"
+    if md_col not in points or "n_offset" not in points or "e_offset" not in points:
+        return []
+    if td_md is None:
+        td_md = float(points[md_col].iloc[-1])
+
+    def _at(md):
+        if md is None:
+            return None
+        try:
+            idx = (points[md_col] - float(md)).abs().idxmin()
+        except (TypeError, ValueError):
+            return None
+        row = points.loc[idx]
+        return (
+            _coerce_float(row.get(md_col)),
+            _coerce_float(row.get("n_offset")),
+            _coerce_float(row.get("e_offset")),
+        )
+
+    return [_at(kop_md), _at(landing_md), _at(td_md)]
 
 
 # ---------------------------------------------------------------------------
