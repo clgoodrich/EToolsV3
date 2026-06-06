@@ -235,10 +235,17 @@ def build_section_traversal(locations, clearance_points=None) -> "list[SectionCr
         and "Conc" in clearance_points
     ):
         ordered = clearance_points
-        for md_col in ("measured_depth", "MeasuredDepth", "MD", "md"):
-            if md_col in clearance_points:
-                ordered = clearance_points.sort_values(md_col, kind="stable")
+        for cand in ("measured_depth", "MeasuredDepth", "MD", "md"):
+            if cand in clearance_points:
+                ordered = clearance_points.sort_values(cand, kind="stable")
                 break
+
+        # One sheet per UNIQUE section the wellbore passes through, in
+        # first-entry (MD) order — exactly the legacy ``Conc.unique()``
+        # behaviour. Every distinct section gets a sheet (including a
+        # short detour into a neighbouring township-line section, e.g.
+        # 5 -> 32 -> 5 -> 8 yields 5, 32, 8); only *re-entries* of an
+        # already-seen section are skipped, never a new section.
         for _, row in ordered.iterrows():
             conc = row.get("Conc")
             # Skip blanks, dups, and anything that isn't a well-formed

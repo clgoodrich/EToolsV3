@@ -37,6 +37,14 @@ def _loc(name: str, sec: str, **foot) -> APDLocationRow:
     )
 
 
+def _loc31e(name: str, sec: str, **foot) -> APDLocationRow:
+    """A location in T3S R1E U (the Ute Shavanaugh township)."""
+    return APDLocationRow(
+        name=name, section=sec, township="3", township_dir="S",
+        range="1", range_dir="E", meridian="U", **foot,
+    )
+
+
 def _design() -> CasingDesign:
     return CasingDesign(
         company="ACME", well_name="TEST 16-23", api="4301399999",
@@ -45,8 +53,8 @@ def _design() -> CasingDesign:
 
 
 def test_only_shl_sheet_gets_real_inputs(tmp_path) -> None:
-    """SHL sheet is written with real PLSS inputs; BHL sheets are left as
-    native template formulas so the auto-detection chain stays intact."""
+    """Each crossed section gets its full PLSS written to a sequential
+    sheet so the bearing-grid DGET resolves that exact section."""
     locs = [
         _loc("Location at Surface", "23", fnl=660, fel=1980),
         _loc("Top of Uppermost Producing Zone", "26", fnl=300, fel=900),
@@ -68,29 +76,89 @@ def test_only_shl_sheet_gets_real_inputs(tmp_path) -> None:
     )
     wb = openpyxl.load_workbook(out)
 
-    # SHL sheet: real inputs written.
+    # SHL sheet: real inputs; P7/R7 as INT codes (SHL criteria read ints).
     shl = wb["SHL Section"]
     assert shl["N7"].value == 23
     assert shl["O7"].value == 3
     assert shl["P7"].value == 2      # S → int code on the SHL sheet
     assert shl["R7"].value == 2      # W → int code
 
-    # BHL sheets: native formulas preserved (NOT overwritten with literals).
-    for sheet in ("BHL Section 1", "BHL Section 2", "BHL Section 3"):
+    # BHL sheets: full PLSS written. N7 = real section, L38 = real section,
+    # P7/R7 as the "S"/"W" STRINGS (BHL criteria read =IF($P$7="S",…)).
+    # Traversal is 23 (SHL), 24, 26, 35.
+    expected = {"BHL Section 1": 24, "BHL Section 2": 26, "BHL Section 3": 35}
+    for sheet, sec in expected.items():
         ws = wb[sheet]
-        n7 = ws["N7"].value
-        l38 = ws["L38"].value
-        assert isinstance(n7, str) and n7.startswith("="), (
-            f"{sheet} N7 should stay a formula, got {n7!r}"
-        )
-        assert isinstance(l38, str) and l38.startswith("="), (
-            f"{sheet} L38 should stay the auto-detect formula, got {l38!r}"
-        )
+        assert ws["N7"].value == sec, f"{sheet} N7={ws['N7'].value!r}"
+        assert ws["L38"].value == sec, f"{sheet} L38={ws['L38'].value!r}"
+        assert ws["O7"].value == 3
+        assert ws["P7"].value == "S"
+        assert ws["R7"].value == "W"
 
     # Well/API header stamped on every section sheet.
     for sheet in ("SHL Section", "BHL Section 1", "BHL Section 2", "BHL Section 3"):
         assert wb[sheet]["C2"].value == "TEST 16-23"
         assert wb[sheet]["C3"].value == "4301399999"
+
+
+def test_eight_section_sheets_always_present_and_visible(tmp_path) -> None:
+    """SHL + BHL 1-7 are all provisioned and left visible, regardless of how
+    many the wellbore actually uses (none are hidden)."""
+    locs = [
+        _loc("Location at Surface", "23", fnl=660, fel=1980),
+        _loc("At Total Depth", "24", fsl=250, fel=800),
+    ]
+    pts = pd.DataFrame(
+        [
+            {"Conc": "2303S02WU", "FNL": 660, "FSL": None, "FEL": 1980, "FWL": None},
+            {"Conc": "2403S02WU", "FNL": 1320, "FSL": None, "FEL": 50, "FWL": None},
+        ]
+    )
+    section_locations = [c.to_location_row() for c in build_section_traversal(locs, pts)]
+    assert len(section_locations) == 2  # SHL(23) + BHL(24)
+
+    out = tmp_path / "cr.xlsx"
+    write_casing_review(
+        _design(), out, section_locations=section_locations, plat_repo=None
+    )
+    wb = openpyxl.load_workbook(out)
+    expected_sheets = ["SHL Section"] + [f"BHL Section {i}" for i in range(1, 8)]
+    for name in expected_sheets:
+        assert name in wb.sheetnames, f"missing {name}"
+        assert wb[name].sheet_state == "visible", f"{name} should be visible"
+    # The crossed sections are written; unused sheets stay in template state.
+    assert wb["BHL Section 1"]["L38"].value == 24
+
+
+def test_cross_township_disables_continuation(tmp_path) -> None:
+    """When the wellbore threads a section in a different township than the
+    surface, the cross-section continuation is peeled off the BHL sheets so
+    each section shows its own bearings (no #VALUE! from the broken walk)."""
+    # SHL in T3S R1E sec 5; detour into T2S R1E sec 32; back into sec 8.
+    locs = [_loc31e("Location at Surface", "5"), _loc31e("At Total Depth", "8")]
+    pts = pd.DataFrame(
+        [
+            {"Conc": "0503S01EU", "measured_depth": 0.0, "FNL": 100, "FEL": 100},
+            {"Conc": "3202S01EU", "measured_depth": 6000.0, "FNL": 50, "FEL": 50},
+            {"Conc": "0803S01EU", "measured_depth": 14000.0, "FSL": 250, "FEL": 800},
+        ]
+    )
+    section_locations = [c.to_location_row() for c in build_section_traversal(locs, pts)]
+    assert [l.section for l in section_locations] == ["5", "32", "8"]
+
+    out = tmp_path / "cr.xlsx"
+    write_casing_review(
+        _design(), out, section_locations=section_locations, plat_repo=None
+    )
+    wb = openpyxl.load_workbook(out)
+    # Continuation (an IF referencing 'SHL Section'!$BE$) must be gone from
+    # the BHL sheets — peeled down to each section's own value.
+    for sheet in ("BHL Section 1", "BHL Section 2"):
+        for coord in ("E17", "K17", "B30", "W38"):
+            v = wb[sheet][coord].value
+            assert not (isinstance(v, str) and "'SHL Section'!$BE$" in v), (
+                f"{sheet}!{coord} still has continuation: {v!r}"
+            )
 
 
 def test_dx_survey_offsets_are_written(tmp_path) -> None:

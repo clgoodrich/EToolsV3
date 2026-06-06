@@ -40,6 +40,30 @@ def _apd_three() -> list[APDLocationRow]:
     ]
 
 
+def test_every_unique_section_kept_including_excursions() -> None:
+    """Every DISTINCT section the wellbore enters gets a crossing, in
+    first-entry order — including a detour into a neighbouring township-line
+    section. Only *re-entries* of an already-seen section are skipped.
+
+    Path: 5 -> 32 (T2S excursion) -> back to 5 -> 8 to TD. The unique
+    sections by first entry are 5, 32, 8 — the re-entry of 5 is dropped,
+    but 32 is NOT (the legacy ``Conc.unique()`` behaviour)."""
+    pts = pd.DataFrame(
+        [
+            {"Conc": "0503S01EU", "measured_depth": 0.0, "FNL": 100, "FEL": 100},
+            {"Conc": "0503S01EU", "measured_depth": 5000.0, "FNL": 200, "FEL": 200},
+            {"Conc": "3202S01EU", "measured_depth": 6000.0, "FNL": 50, "FEL": 50},
+            {"Conc": "3202S01EU", "measured_depth": 8000.0, "FNL": 60, "FEL": 60},
+            {"Conc": "0503S01EU", "measured_depth": 10000.0, "FNL": 300, "FEL": 300},
+            {"Conc": "0803S01EU", "measured_depth": 14000.0, "FSL": 250, "FEL": 800},
+        ]
+    )
+    crossings = build_section_traversal([], pts)
+    assert [c.conc for c in crossings] == [
+        "0503S01EU", "3202S01EU", "0803S01EU"
+    ]
+
+
 def test_clearance_traversal_orders_sheets_by_md_and_fills_intermediate() -> None:
     """A lateral crossing an un-named section still yields a BHL sheet."""
     pts = pd.DataFrame(

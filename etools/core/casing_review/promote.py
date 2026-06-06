@@ -148,12 +148,20 @@ def well_header_from_wcr(wcr: WCRPdfData, *, lateral: str = "0000") -> WellHeade
 
 
 def _derive_surface_coords(surface) -> tuple[float | None, float | None, float | None, float | None]:
-    """Estimate surface (lat, lon, easting, northing) from the section centroid.
+    """Derive surface (lat, lon, easting, northing) from the APD footages.
 
-    Returns ``(None, None, None, None)`` if the plat DB doesn't contain
-    the section or the surface location is missing PLSS components. The
-    estimate is precise to ~half a mile; the user can override by
-    uploading a survey PDF that carries the real SHL coordinates.
+    Places the surface at the precise FNL/FSL + FEL/FWL footage point inside
+    the section's plat polygon (the same ``footages_to_xy`` the section
+    sheets use). This matters: a section-centroid estimate is off by up to
+    ~half a mile, which shifts the *entire* survey trajectory and makes the
+    clearance step assign stations to the wrong PLSS sections — so the
+    Casing Review section list comes out wrong. When the footages are
+    missing we fall back to the section centroid (≈half-mile estimate);
+    the user can still override by uploading a survey PDF with real SHL
+    coordinates.
+
+    Returns ``(None, None, None, None)`` if the plat DB doesn't contain the
+    section or the surface PLSS components are missing.
     """
     if surface is None or not surface.section or not surface.township:
         return None, None, None, None
@@ -164,6 +172,7 @@ def _derive_surface_coords(surface) -> tuple[float | None, float | None, float |
     if conc is None:
         return None, None, None, None
     try:
+        from etools.core.casing_review.footages import footages_to_xy
         from etools.core.coordinates import utm_to_latlon
         from etools.repositories import PlatRepository
 
@@ -176,12 +185,36 @@ def _derive_surface_coords(surface) -> tuple[float | None, float | None, float |
         if gdf.empty:
             return None, None, None, None
         row = gdf.iloc[0]
-        cx, cy = float(row["centroid_x"]), float(row["centroid_y"])
+
+        # Prefer the exact footage point; fall back to the centroid.
+        fnl = _coerce(getattr(surface, "fnl", None))
+        fsl = _coerce(getattr(surface, "fsl", None))
+        fel = _coerce(getattr(surface, "fel", None))
+        fwl = _coerce(getattr(surface, "fwl", None))
+        x = y = None
+        if (fnl is not None or fsl is not None) and (fel is not None or fwl is not None):
+            try:
+                x, y = footages_to_xy(row.geometry, fnl=fnl, fsl=fsl, fel=fel, fwl=fwl)
+            except Exception:
+                x = y = None
+        if x is None or y is None:
+            x, y = float(row["centroid_x"]), float(row["centroid_y"])
+
         # Plat DB is UTM zone 12N (Utah).
-        lat, lon = utm_to_latlon(cx, cy, 12, "N")
-        return lat, lon, cx, cy
+        lat, lon = utm_to_latlon(x, y, 12, "N")
+        return lat, lon, x, y
     except Exception:
         return None, None, None, None
+
+
+def _coerce(v) -> float | None:
+    try:
+        if v is None:
+            return None
+        f = float(v)
+        return None if f != f else f  # drop NaN
+    except (TypeError, ValueError):
+        return None
 
 
 def _build_conc(surface) -> str | None:

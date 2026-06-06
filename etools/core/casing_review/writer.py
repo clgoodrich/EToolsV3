@@ -117,67 +117,193 @@ def write_casing_review(
     return output_path
 
 
-# Section sheets the template ships with, in order. Index 0 is the surface
-# section; the rest are the bottom-hole crossings.
+# Section sheets, in order. Index 0 is the surface section; the rest are
+# the bottom-hole crossings. The template ships SHL + BHL 1-3; we ensure
+# BHL 1-7 always exist (8 sheets) so any wellbore's full section list fits.
 _TEMPLATE_SECTION_SHEETS = (
     "SHL Section",
     "BHL Section 1",
     "BHL Section 2",
     "BHL Section 3",
 )
+_MAX_BHL_SHEETS = 7  # SHL + BHL 1-7 = 8 section slots
 
 
 def _section_sheet_name(idx: int) -> str:
-    """Positional sheet name: 0 → SHL Section, N → BHL Section N."""
+    """0 -> 'SHL Section'; N -> 'BHL Section N'."""
     return "SHL Section" if idx == 0 else f"BHL Section {idx}"
+
+
+def _all_section_sheet_names() -> list[str]:
+    return ["SHL Section"] + [f"BHL Section {i}" for i in range(1, _MAX_BHL_SHEETS + 1)]
+
+
+def _split_top_args(s: str) -> list[str]:
+    """Split a formula-body on top-level commas, respecting parens/quotes."""
+    args: list[str] = []
+    depth = 0
+    in_q = False
+    cur = ""
+    for ch in s:
+        if ch == "'":
+            in_q = not in_q
+        if not in_q:
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+            elif ch == "," and depth == 0:
+                args.append(cur)
+                cur = ""
+                continue
+        cur += ch
+    if cur:
+        args.append(cur)
+    return args
+
+
+def _peel_continuation(formula: str) -> str:
+    """Reduce a cross-section *continuation* formula to its own-section value.
+
+    The Casing Review section sheets wrap each bearing cell in up to three
+    ``IF(AND($L$38='SHL Section'!$BE$nn, MAX(<prev sheet>!$BF$..)=k), <prev
+    sheet value>, …)`` layers that try to inherit the matching boundary
+    bearing from the *previous* crossed section. That cross-sheet walk
+    breaks when the previous section sits in a different township (its
+    ``$BE$``/``$BF$`` helpers resolve to ``#VALUE!``/``#N/A``), and the
+    error lands in the visible grid. Peeling those adjacency layers off
+    leaves the cell's own-section fallback (its own DGET / own computation),
+    which is exactly the bearing for *this* section.
+    """
+    f = formula[1:] if formula.startswith("=") else formula
+    while f.startswith("IF(") and f.endswith(")"):
+        args = _split_top_args(f[3:-1])
+        if len(args) != 3 or "$BE$" not in args[0]:
+            break
+        f = args[2].strip()
+    return "=" + f
+
+
+def _disable_continuation(ws) -> int:
+    """Strip cross-section continuation from every bearing cell on a sheet.
+
+    Used for wells that thread a section in a different township from the
+    surface, where the template's continuation walk would otherwise leave
+    ``#VALUE!`` in the visible grid. Each affected section then displays its
+    own bearings. Returns the number of cells rewritten.
+    """
+    n = 0
+    for row in ws.iter_rows():
+        for cell in row:
+            v = cell.value
+            if isinstance(v, str) and v.startswith("=") and "'SHL Section'!$BE$" in v:
+                cell.value = _peel_continuation(v)
+                n += 1
+    return n
+
+
+def _is_cross_township(loc, shl) -> bool:
+    """True if ``loc`` sits in a different township/range/meridian than SHL."""
+    def key(x):
+        return (
+            str(getattr(x, "township", "") or "").upper(),
+            str(getattr(x, "township_dir", "") or "").upper(),
+            str(getattr(x, "range", "") or "").upper(),
+            str(getattr(x, "range_dir", "") or "").upper(),
+            str(getattr(x, "meridian", "") or "").upper(),
+        )
+    return key(loc) != key(shl)
+
+
+def _ensure_section_sheets(wb) -> None:
+    """Make sure SHL + BHL 1-7 all exist, copying BHL Section 3 as needed.
+
+    The template only ships BHL 1-3; we provision up to BHL 7 so a wellbore
+    that threads many sections always has a sheet per section. Copies keep
+    BHL Section 3's full formula structure; the section each one shows is
+    driven by its own ``L38`` (set per-section by the writer), not by the
+    copied adjacency references.
+    """
+    if "BHL Section 3" not in wb.sheetnames:
+        return
+    for idx in range(4, _MAX_BHL_SHEETS + 1):
+        name = f"BHL Section {idx}"
+        if name not in wb.sheetnames:
+            new_sheet = wb.copy_worksheet(wb["BHL Section 3"])
+            new_sheet.title = name
+            log.info("section_sheet.created", name=name)
 
 
 def _write_section_sheets_from_traversal(
     wb, design: CasingDesign, section_locations: list, *, plat_repo=None
 ) -> None:
-    """Fill the section sheets the way the template is designed to be driven.
+    """Fill one section sheet per UNIQUE section the wellbore passes through.
 
-    The template is *formula-driven*: only the ``SHL Section`` sheet takes
-    real PLSS inputs (surface location). Every BHL Section sheet derives
-    N7/I7/K7/P7/R7/S7 by reference to the SHL sheet and **auto-detects its
-    own crossed section** via the ``L38`` neighbour-walk, reading the
-    wellbore path from ``DxSurvey`` rows 8-10. Writing hardcoded inputs
-    into the BHL sheets (an earlier approach) breaks the adjacency
-    arithmetic — ``AS24`` collapses to ``""`` and ``"" + number`` →
-    ``#VALUE!`` cascades into every bearing cell — so we deliberately
-    leave them untouched and let the template compute.
+    The wellbore's section traversal (:func:`build_section_traversal`) lists
+    every distinct PLSS section in first-entry order — surface first, then
+    each new section as the bore threads them (a detour into a neighbouring
+    township-line section gets its own entry; only re-entries of an
+    already-seen section are skipped). We write each one to the next
+    sequential sheet (SHL, BHL 1, BHL 2, …), filling its full PLSS identity
+    (section / township / range / meridian) so the bearing-grid DGET
+    resolves that section — even when it sits in a different township from
+    the surface.
 
-    ``section_locations[0]`` is the surface ``APDLocationRow``; the rest of
-    the list is used only by :func:`_ensure_grid_numbers_coverage` (called
-    upstream) to guarantee every crossed section has bearing data.
+    This deliberately does NOT rely on the template's built-in section
+    auto-detection, which is unreliable (it misses the deepest section and
+    can invent neighbouring sections the bore never enters). The
+    ``#VALUE!`` that the native adjacency walk leaves in off-screen helper
+    columns doesn't reach the visible bearing grid, which is driven purely
+    by the per-section DGET.
+
+    All eight section sheets (SHL + BHL 1-7) stay present and visible
+    regardless of how many the wellbore actually uses — unused sheets are
+    left in their template state, not hidden.
+
+    ``section_locations[i]`` is the ``APDLocationRow`` for the i-th crossed
+    section (0 = surface).
     """
-    # Well/API header on every shipped section sheet.
-    for sheet_name in _TEMPLATE_SECTION_SHEETS:
-        if sheet_name in wb.sheetnames:
-            ws = wb[sheet_name]
+    _ensure_section_sheets(wb)
+    all_names = _all_section_sheet_names()
+
+    crossed = list(section_locations or [])
+    if len(crossed) > len(all_names):
+        log.warning(
+            "section_sheet.exceeds_capacity",
+            crossed=len(crossed),
+            capacity=len(all_names),
+        )
+        crossed = crossed[: len(all_names)]
+
+    # Header on every section sheet; keep them all visible.
+    for name in all_names:
+        if name in wb.sheetnames:
+            ws = wb[name]
             ws["C2"] = design.well_name
             ws["C3"] = design.api
+            ws.sheet_state = "visible"
 
-    # Only the SHL sheet gets real inputs; the BHL sheets stay native.
-    if section_locations and "SHL Section" in wb.sheetnames:
-        _write_section_sheet(
-            wb["SHL Section"],
-            design,
-            section_locations[0],
-            sheet_label="SHL Section",
-            plat_repo=plat_repo,
-        )
+    # Write each crossed section's full PLSS into its sequential sheet.
+    for idx, loc in enumerate(crossed):
+        name = _section_sheet_name(idx)
+        if name in wb.sheetnames:
+            _write_section_sheet(
+                wb[name], design, loc, sheet_label=name, plat_repo=plat_repo
+            )
 
-    # The template natively renders at most 4 section sheets (SHL + BHL
-    # 1-3). A lateral crossing more sections than that can't be expressed
-    # through the native detection chain — surface it rather than silently
-    # truncating.
-    if len(section_locations) > len(_TEMPLATE_SECTION_SHEETS):
-        log.warning(
-            "section_sheet.exceeds_template",
-            crossed=len(section_locations),
-            template_sheets=len(_TEMPLATE_SECTION_SHEETS),
-        )
+    # If the wellbore threads any section in a different township than the
+    # surface, the template's cross-section continuation walk can't follow
+    # it and leaves #VALUE! in the visible grid of the *following* sheet.
+    # Disable the continuation on every BHL sheet so each section shows its
+    # own bearings. Wells that stay in one township keep the native
+    # continuation untouched.
+    shl = crossed[0] if crossed else None
+    if shl is not None and any(_is_cross_township(loc, shl) for loc in crossed[1:]):
+        peeled = 0
+        for name in all_names[1:]:  # BHL sheets only
+            if name in wb.sheetnames:
+                peeled += _disable_continuation(wb[name])
+        log.info("section_sheet.continuation_disabled", cells=peeled)
 
 
 def _write_dx_survey_locations(dxs_ws, dx_survey_locations: list) -> None:
