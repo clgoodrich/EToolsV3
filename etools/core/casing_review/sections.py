@@ -148,6 +148,65 @@ def _coerce_float(v) -> float | None:
         return None
 
 
+def quarter_quarter(fnl, fsl, fel, fwl) -> "str | None":
+    """The PLSS quarter-quarter call (e.g. ``"SESW"``) for a point given its
+    distances to all four section lines.
+
+    A section is a 4×4 grid of quarter-quarters. The call is
+    ``<inner><outer>`` — the finer 1/16 cell first, then the 1/4 it sits in
+    (e.g. ``"SESW"`` = the SE quarter-quarter of the SW quarter). We need all
+    four footages to know the section's extent (height = FNL+FSL, width =
+    FEL+FWL); returns ``None`` if any axis is incomplete.
+    """
+    if None in (fnl, fsl, fel, fwl):
+        return None
+    height = float(fnl) + float(fsl)
+    width = float(fel) + float(fwl)
+    if height <= 0 or width <= 0:
+        return None
+    half_h, half_w = height / 2.0, width / 2.0
+    # Outer quarter: which half of the whole section (N/S from the top, E/W
+    # from the east since FEL is distance from the east line).
+    outer_ns = "N" if fnl < half_h else "S"
+    outer_ew = "E" if fel < half_w else "W"
+    # Inner quarter-quarter: which half *within* that quarter.
+    inner_ns = "N" if (float(fnl) % half_h) < (half_h / 2.0) else "S"
+    inner_ew = "E" if (float(fel) % half_w) < (half_w / 2.0) else "W"
+    return f"{inner_ns}{inner_ew}{outer_ns}{outer_ew}"
+
+
+def survey_kop_footages(points, kop_md) -> "tuple[str, dict] | None":
+    """Computed-KOP contingency: the K.O. Point footages taken straight from
+    the survey path when the APD doesn't print a "Location At Kickoff Point".
+
+    The clearance points carry a ``Conc`` and all four section-line footages
+    per station, so we read the station nearest ``kop_md`` and return the same
+    ``(conc, {fnl,fsl,fel,fwl,qq})`` shape :func:`apd_summary_footages`
+    produces. Returns ``None`` when there's no usable survey/MD.
+    """
+    if points is None or getattr(points, "empty", True) or kop_md is None:
+        return None
+    if "measured_depth" not in points or "Conc" not in points:
+        return None
+    try:
+        idx = (points["measured_depth"] - float(kop_md)).abs().idxmin()
+    except (TypeError, ValueError):
+        return None
+    row = points.loc[idx]
+    conc = row.get("Conc")
+    if not isinstance(conc, str) or len(conc) < 9:
+        return None
+    fnl = _coerce_float(row.get("FNL"))
+    fsl = _coerce_float(row.get("FSL"))
+    fel = _coerce_float(row.get("FEL"))
+    fwl = _coerce_float(row.get("FWL"))
+    pair = _nearest_footage_pair(fnl, fsl, fel, fwl)
+    if all(v is None for v in pair.values()):
+        return None
+    pair["qq"] = quarter_quarter(fnl, fsl, fel, fwl)
+    return (conc, pair)
+
+
 def _nearest_footage_pair(fnl, fsl, fel, fwl) -> dict:
     """Collapse all-four footages to one N/S + one E/W (the PLSS convention).
 
@@ -349,6 +408,65 @@ def dx_survey_path_offsets(
         )
 
     return [_at(kop_md), _at(landing_md), _at(td_md)]
+
+
+def apd_summary_footages(locations) -> "list[tuple[str, dict] | None]":
+    """Return ``(conc, {fnl,fsl,fel,fwl})`` for the KOP / Prod-Interval / TD rows.
+
+    The section sheets' "Section Line Footages" (I/K columns of the
+    KOP/Prod-Interval/Total-Depth rows) are natively computed by a survey-path
+    walk against the PLSS boundaries — the SAME unreliable detection that
+    blanks out the **final (Total Depth) footages** on cross-township wells.
+
+    The legacy Casing Reviews instead show the regulator's STATED footages
+    straight off the APD (Form 3, Section 20): the producing-zone row carries
+    "Top of Uppermost Producing Zone" and the Total-Depth row carries "At
+    Total Depth". Those are authoritative (the well was permitted to them) and
+    don't drift with whichever survey revision is on hand, so the final
+    footages match the originals. We return them keyed by ``conc`` so the
+    writer can place each on the matching section sheet (and the SHL summary).
+
+    KOP has no APD-stated footage, so it stays ``None`` (template default).
+    Returns ``[]`` when no usable APD locations are present.
+    """
+    from etools.core.casing_review.footages import location_footages
+
+    by_name: dict[str, object] = {}
+    for L in locations or []:
+        by_name.setdefault((getattr(L, "name", "") or "").lower(), L)
+    if not by_name:
+        return []
+
+    def _mk(name: str):
+        L = by_name.get(name)
+        if L is None:
+            return None
+        key = PLSSKey.from_location(L)
+        if key is None:
+            return None
+        fnl, fsl, fel, fwl = location_footages(L)
+        if (fnl is None and fsl is None) and (fel is None and fwl is None):
+            return None
+        return (
+            key.conc,
+            {
+                "fnl": fnl,
+                "fsl": fsl,
+                "fel": fel,
+                "fwl": fwl,
+                # The APD prints the quarter-quarter directly — authoritative.
+                "qq": getattr(L, "qtr_qtr", None),
+            },
+        )
+
+    return [
+        # KOP — the APD prints a "Location At Kickoff Point" row (with its own
+        # footages) on directional permits; older forms omit it, leaving the
+        # template default.
+        _mk("location at kickoff point"),
+        _mk("top of uppermost producing zone"),
+        _mk("at total depth"),
+    ]
 
 
 # ---------------------------------------------------------------------------

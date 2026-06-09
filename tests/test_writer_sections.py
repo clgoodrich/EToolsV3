@@ -130,6 +130,50 @@ def test_eight_section_sheets_always_present_and_visible(tmp_path) -> None:
     assert wb["BHL Section 1"]["L38"].value == 24
 
 
+def test_unused_section_sheets_are_blanked_but_visible(tmp_path) -> None:
+    """Sheets the wellbore never reaches stay present and visible, but their
+    bearing-grid formulas are cleared so they don't show a #VALUE! grid."""
+    locs = [
+        _loc("Location at Surface", "23", fnl=660, fel=1980),
+        _loc("At Total Depth", "24", fsl=250, fel=800),
+    ]
+    pts = pd.DataFrame(
+        [
+            {"Conc": "2303S02WU", "FNL": 660, "FSL": None, "FEL": 1980, "FWL": None},
+            {"Conc": "2403S02WU", "FNL": 1320, "FSL": None, "FEL": 50, "FWL": None},
+        ]
+    )
+    section_locations = [c.to_location_row() for c in build_section_traversal(locs, pts)]
+    assert len(section_locations) == 2  # SHL(23) + BHL 1(24); BHL 2-7 unused
+
+    out = tmp_path / "cr.xlsx"
+    write_casing_review(
+        _design(), out, section_locations=section_locations, plat_repo=None
+    )
+    wb = openpyxl.load_workbook(out)
+
+    # Used sheets keep their bearing-grid formulas.
+    used = wb["BHL Section 1"]
+    assert any(
+        isinstance(c.value, str) and c.value.startswith("=")
+        for row in used.iter_rows(min_row=15, max_row=63, max_col=13)
+        for c in row
+    )
+
+    # Unused sheets: visible, header intact, but no grid formulas remain.
+    for name in ("BHL Section 2", "BHL Section 7"):
+        ws = wb[name]
+        assert ws.sheet_state == "visible", f"{name} should stay visible"
+        assert ws["C2"].value == "TEST 16-23"  # header preserved
+        leftover = [
+            c.coordinate
+            for row in ws.iter_rows(min_row=15, max_row=63, max_col=13)
+            for c in row
+            if isinstance(c.value, str) and c.value.startswith("=")
+        ]
+        assert not leftover, f"{name} still has grid formulas: {leftover[:5]}"
+
+
 def test_cross_township_disables_continuation(tmp_path) -> None:
     """When the wellbore threads a section in a different township than the
     surface, the cross-section continuation is peeled off the BHL sheets so

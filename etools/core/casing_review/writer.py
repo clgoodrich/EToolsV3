@@ -13,6 +13,7 @@ from pathlib import Path
 
 import openpyxl
 
+from etools.core.casing_review.bope import build_bope_review
 from etools.core.casing_review.domain import CasingDesign, CasingStringDesign
 from etools.core.casing_review.footages import (
     footages_to_xy,
@@ -42,7 +43,9 @@ def write_casing_review(
     intermediate_locations: list | None = None,
     section_locations: list | None = None,
     dx_survey_locations: list | None = None,
+    dx_survey_footages: list | None = None,
     plat_repo=None,
+    bope_system_psi: float | None = None,
 ) -> Path:
     """Fill the Casing Review xlsx with both inputs and computed values.
 
@@ -76,6 +79,23 @@ def write_casing_review(
     for idx, s in enumerate(design.strings[:4]):
         _write_block(cr, block_tops[idx], s, is_surface=idx == 0)
 
+    # Footer block per string (Next Set Depth / Next MW / Next BHP / Fracture
+    # Initiation Pressure / Max anticipated pressure at shoe). The template
+    # leaves these as formulas, but openpyxl writes formulas with NO cached
+    # value, so any viewer that doesn't recalc on open shows them blank.
+    # Pre-fill them as values (like the rest of the computed cells) so they
+    # always display, and blank the footers of any unused string slot.
+    _write_footer_values(cr, design)
+
+    # BOPE sheet: fill its three hand-entered inputs (previous-shoe depth,
+
+    # BOPE sheet: fill its three hand-entered inputs (previous-shoe depth,
+    # proposed BOPE rating per string, operator's max anticipated pressure).
+    # The rest of the sheet is formula-driven off Casing Review and now
+    # resolves once the per-string TVDs are written above.
+    if "BOPE" in wb.sheetnames:
+        _write_bope(wb["BOPE"], design, bope_system_psi=bope_system_psi)
+
     # DataPrint panel mirrors per-string outputs into a normalized form.
     if "DataPrint" in wb.sheetnames:
         _write_dataprint(wb["DataPrint"], design)
@@ -102,6 +122,13 @@ def write_casing_review(
         _write_section_sheets_from_traversal(
             wb, design, section_locations, plat_repo=plat_repo
         )
+        # The native survey-path walk that fills the KOP/Landing/Total-Depth
+        # "Section Line Footages" (I/K columns) is unreliable and blanks out
+        # the FINAL (TD) footages on cross-township/excursion wells. Write
+        # them directly from the clearance data so the summary always shows
+        # the bottom-hole footages.
+        if dx_survey_footages:
+            _write_path_footages(wb, section_locations, dx_survey_footages)
     else:
         _write_section_sheets_legacy(
             wb,
@@ -202,6 +229,37 @@ def _disable_continuation(ws) -> int:
     return n
 
 
+# The visible bearing grid the user reads (and what the sheet's print area
+# captures). Unused section sheets are blanked over this range so they stay
+# present/visible but don't show a #VALUE! grid.
+_GRID_MIN_ROW = 15
+_GRID_MAX_ROW = 63
+_GRID_MAX_COL = 13  # column M
+
+
+def _blank_unused_section_sheet(ws) -> int:
+    """Clear the bearing-grid formulas on a section sheet the bore never uses.
+
+    An unused BHL sheet has no real section assigned (its ``L38``/``N7`` stay
+    at the copied template default), so every DGET-driven bearing cell
+    resolves to ``#VALUE!``. The user wants all eight sheets present and
+    visible (never hidden), but a screen of ``#VALUE!`` is noise — so we drop
+    the formula cells across the visible grid, leaving a clean, empty sheet.
+    The well/API header (rows 2-3) and the four reference-point rows (7-10,
+    which resolve fine off DxSurvey/SHL) are left intact. Returns the number
+    of cells cleared.
+    """
+    n = 0
+    for row in ws.iter_rows(
+        min_row=_GRID_MIN_ROW, max_row=_GRID_MAX_ROW, max_col=_GRID_MAX_COL
+    ):
+        for cell in row:
+            if isinstance(cell.value, str) and cell.value.startswith("="):
+                cell.value = None
+                n += 1
+    return n
+
+
 def _is_cross_township(loc, shl) -> bool:
     """True if ``loc`` sits in a different township/range/meridian than SHL."""
     def key(x):
@@ -291,6 +349,20 @@ def _write_section_sheets_from_traversal(
                 wb[name], design, loc, sheet_label=name, plat_repo=plat_repo
             )
 
+    # Sheets beyond the crossed count have no real section — blank their
+    # bearing grids so they stay visible but clean (no #VALUE! noise).
+    blanked = 0
+    for idx in range(len(crossed), len(all_names)):
+        name = _section_sheet_name(idx)
+        if name in wb.sheetnames:
+            blanked += _blank_unused_section_sheet(wb[name])
+    if blanked:
+        log.info(
+            "section_sheet.unused_blanked",
+            sheets=len(all_names) - len(crossed),
+            cells=blanked,
+        )
+
     # If the wellbore threads any section in a different township than the
     # surface, the template's cross-section continuation walk can't follow
     # it and leaves #VALUE! in the visible grid of the *following* sheet.
@@ -326,6 +398,71 @@ def _write_dx_survey_locations(dxs_ws, dx_survey_locations: list) -> None:
             dxs_ws.cell(row, 4, round(float(n_off), 4))
         if e_off is not None:
             dxs_ws.cell(row, 5, round(float(e_off), 4))
+
+
+def _write_path_footages(wb, section_locations, dx_survey_footages) -> None:
+    """Write KOP/Landing/TD section-line footages straight into the sheets.
+
+    ``dx_survey_footages`` is ``[(conc, {fnl,fsl,fel,fwl}) | None]`` for the
+    KOP / Landing / Total-Depth stations (rows 8 / 9 / 10). Each footage is
+    relative to the section that station sits in, so it's written to:
+      * the ``SHL Section`` summary (which natively aggregates these), and
+      * the section sheet whose section matches the station's ``conc``
+        (its own row, where the template would otherwise show it).
+    Convention matches the surface row: I = N/S footage, J = 1(FNL)/2(FSL);
+    K = E/W footage, L = 1(FEL)/2(FWL).
+    """
+    if "SHL Section" not in wb.sheetnames:
+        return
+    shl = wb["SHL Section"]
+
+    # Map a section number -> the sheet that carries it (from the traversal).
+    sheet_by_section: dict[int, object] = {}
+    for idx, loc in enumerate(section_locations or []):
+        name = _section_sheet_name(idx)
+        if name not in wb.sheetnames:
+            continue
+        try:
+            sheet_by_section.setdefault(int(loc.section), wb[name])
+        except (TypeError, ValueError):
+            continue
+
+    def _put(ws, row: int, fp: dict) -> None:
+        fnl, fsl = fp.get("fnl"), fp.get("fsl")
+        fel, fwl = fp.get("fel"), fp.get("fwl")
+        if fnl is not None:
+            ws.cell(row, 9, round(fnl, 2))
+            ws.cell(row, 10, 1)
+        elif fsl is not None:
+            ws.cell(row, 9, round(fsl, 2))
+            ws.cell(row, 10, 2)
+        if fel is not None:
+            ws.cell(row, 11, round(fel, 2))
+            ws.cell(row, 12, 1)
+        elif fwl is not None:
+            ws.cell(row, 11, round(fwl, 2))
+            ws.cell(row, 12, 2)
+        # Qtr-Qtr label (col M) — authoritative from the APD, else computed
+        # from the survey position. Normalise "SE-SW"/"sesw" → "SESW".
+        qq = fp.get("qq")
+        if qq:
+            ws.cell(row, 13, str(qq).replace("-", "").replace(" ", "").upper())
+
+    for row, item in zip((8, 9, 10), dx_survey_footages):
+        if not item:
+            continue
+        conc, fp = item
+        if not fp or all(v is None for v in fp.values()):
+            continue
+        _put(shl, row, fp)  # summary sheet
+        try:
+            sec = PLSSKey.from_conc(conc).section
+        except (ValueError, IndexError, AttributeError):
+            sec = None
+        own = sheet_by_section.get(sec)
+        if own is not None and own is not shl:
+            _put(own, row, fp)
+    log.info("section_sheet.path_footages_written")
 
 
 def _write_section_sheets_legacy(
@@ -390,39 +527,50 @@ def _gn_int(v) -> int | None:
 
 
 def _ensure_grid_numbers_coverage(gn_ws, section_locations, plat_repo) -> None:
-    """Backfill the Grid Numbers sheet for sections it doesn't already have.
+    """Refresh the Grid Numbers sheet's geometry for every crossed section.
 
-    The embedded sheet is a curated subset; any section the well crosses
-    that's absent from it would make the section sheet's DGET bearing
-    lookups return blank. For each such section we derive the 16
-    quarter-side rows from the plat polygon (``PlatRepository``) and append
-    them, so every crossed section resolves. Sections already present —
-    and sections with no plat polygon — are left untouched (the latter
-    logged so a genuinely missing section is visible, not silent).
+    Each section sheet draws its section outline — and places the well dot —
+    from 16 "quarter-side" rows in this sheet (one per boundary segment),
+    looked up by DGET on the section's PLSS key + side label. The embedded
+    sheet ships a CURATED subset that is, in practice, badly incomplete:
+    almost every section has only *some* of its 16 sides populated and the
+    rest at zero length. A section with missing sides draws a collapsed
+    outline, which is why the intermediate / producing-zone section sheets
+    show no dot.
+
+    So for every crossed section that has a plat polygon, we derive all 16
+    quarter-sides from the polygon (``PlatRepository``) and write them in —
+    OVERWRITING the section's existing rows in place (matched by PLSS key +
+    side) and appending any side the sheet lacks. This makes each crossed
+    section's outline complete and plat-exact. Sections with no plat polygon
+    are left untouched (logged so a genuinely missing one is visible).
     """
-    existing: set[tuple] = set()
+    # Index existing rows by (6-int PLSS key, side label) so we can overwrite
+    # the right row rather than appending duplicates the DGET would ignore.
+    row_by_keyside: dict[tuple, int] = {}
     last_row = 2  # data starts at row 3 (rows 1-2 are headers)
     for r in range(3, gn_ws.max_row + 1):
         sec = gn_ws.cell(r, 1).value
         if sec is None:
             continue
         last_row = r
-        existing.add(
-            tuple(_gn_int(gn_ws.cell(r, c).value) for c in range(1, 7))
-        )
+        key6 = tuple(_gn_int(gn_ws.cell(r, c).value) for c in range(1, 7))
+        side = gn_ws.cell(r, 7).value
+        row_by_keyside[(key6, side)] = r
 
     write_row = last_row + 1
-    added: set[tuple] = set()
+    done: set[tuple] = set()
     for loc in section_locations:
         plss = PLSSKey.from_location(loc)
         if plss is None:
             continue
-        key = (
+        key6 = (
             plss.section, plss.township, plss.township_dir,
             plss.range_, plss.range_dir, plss.baseline,
         )
-        if key in existing or key in added:
+        if key6 in done:
             continue
+        done.add(key6)
         try:
             df = plat_repo._fetch_concs([plss.conc])  # noqa: SLF001
         except Exception as exc:
@@ -439,7 +587,16 @@ def _ensure_grid_numbers_coverage(gn_ws, section_locations, plat_repo) -> None:
         )
         if not rows:
             continue
+        refreshed = appended = 0
         for gc in rows:
+            target = row_by_keyside.get((key6, gc.side))
+            if target is None:
+                target = write_row
+                row_by_keyside[(key6, gc.side)] = target
+                write_row += 1
+                appended += 1
+            else:
+                refreshed += 1
             for col, val in enumerate(
                 (
                     gc.section, gc.township, gc.township_dir, gc.range,
@@ -448,10 +605,11 @@ def _ensure_grid_numbers_coverage(gn_ws, section_locations, plat_repo) -> None:
                 ),
                 start=1,
             ):
-                gn_ws.cell(write_row, col, val)
-            write_row += 1
-        added.add(key)
-        log.info("grid_numbers.derived", conc=plss.conc, rows=len(rows))
+                gn_ws.cell(target, col, val)
+        log.info(
+            "grid_numbers.section_refreshed",
+            conc=plss.conc, refreshed=refreshed, appended=appended,
+        )
 
 
 def _write_section_sheet(
@@ -620,6 +778,14 @@ def _write_block(ws, top: int, s: CasingStringDesign, *, is_surface: bool) -> No
     # Engineering knobs
     put("B", top + 7, "y" if s.buoyed else "n")
     put("B", top + 8, s.mud_weight_ppg)
+    # TVD (B19/B34/B49/B64). The template computes this via an exact-match
+    # VLOOKUP of the set-depth MD into the DxSurvey survey table — but that
+    # table still holds the template's *sample* survey (we populate the path
+    # only at rows 8-10), so the lookup returns #N/A for every real well and
+    # the error cascades into the per-string MASP/burst, the "Next" footer
+    # rows (24/39/54/69) and the entire BOPE sheet. We already interpolate
+    # the true TVD in Python, so write it directly and overwrite the formula.
+    put("B", top + 9, s.set_depth_tvd_ft)
     put("B", top + 10, s.hole_washout_pct)
     put("B", top + 11, s.internal_gradient_psi_per_ft)
     put("B", top + 12, s.backup_mud_ppg)
@@ -643,6 +809,101 @@ def _write_block(ws, top: int, s: CasingStringDesign, *, is_surface: bool) -> No
     put("AC", data_row, s.tension_air_klbs)
     put("AD", data_row, s.tension_buoyed_klbs)
     put("AE", data_row, s.id_in)
+
+
+def _write_footer_values(cr, design: CasingDesign) -> None:
+    """Pre-fill each string's footer block (rows 24/39/54/69) with computed
+    values, mirroring the template formulas, so they display even in viewers
+    that don't recalc on open. Blank the footers of unused string slots.
+
+    Per footer (for string ``i`` with next string ``n``), using the same
+    0.05194806 psi/ft/ppg constant as the sheet:
+        Next Set Depth (B)  = next string's setting TVD
+        Next MW (D)         = next string's mud weight
+        Next BHP (F)        = next MW * next TVD * 0.05194806
+        Frac Init Press (I) = frac gradient * this string's TVD
+        Max anticipated     = next BHP - (next TVD - this TVD) * next int.grad,
+        pressure @ shoe (L)   or, for the last string, this TVD * MW * const.
+    """
+    K = 0.05194806
+    footer_rows = (24, 39, 54, 69)
+    frac = design.frac_gradient_psi_per_ft or 1.0
+    n = len(design.strings)
+
+    def put(row, col, val):
+        cr.cell(row, col).value = None if val is None else round(val, 1)
+
+    for idx in range(4):
+        fr = footer_rows[idx]
+        if idx >= n:  # unused slot — clear stale template constants
+            for col in (2, 4, 6, 9, 12):
+                cr.cell(fr, col).value = None
+            continue
+        cur = design.strings[idx]
+        nxt = design.strings[idx + 1] if idx + 1 < n else None
+        tvd = cur.set_depth_tvd_ft
+
+        if tvd is not None:
+            put(fr, 9, frac * tvd)  # I — fracture initiation pressure
+            if nxt is not None and nxt.set_depth_tvd_ft is not None:
+                n_bhp = nxt.mud_weight_ppg * nxt.set_depth_tvd_ft * K
+                ig = nxt.internal_gradient_psi_per_ft or 0.0
+                put(fr, 12, n_bhp - (nxt.set_depth_tvd_ft - tvd) * ig)  # L
+            else:
+                put(fr, 12, tvd * cur.mud_weight_ppg * K)  # L — BHP at shoe
+
+        # Rows 24/39/54 carry Next Set Depth/MW/BHP; row 69 is a TOL row with
+        # a different layout, so leave its B/D/F alone.
+        if idx < 3:
+            if nxt is not None and nxt.set_depth_tvd_ft is not None:
+                put(fr, 2, nxt.set_depth_tvd_ft)                       # B
+                cr.cell(fr, 4).value = nxt.mud_weight_ppg             # D
+                put(fr, 6, nxt.mud_weight_ppg * nxt.set_depth_tvd_ft * K)  # F
+            else:
+                for col in (2, 4, 6):
+                    cr.cell(fr, col).value = None
+
+
+def _write_bope(ws, design: CasingDesign, *, bope_system_psi: float | None = None) -> None:
+    """Fill the BOPE sheet's three hand-entered inputs.
+
+    Everything else on the sheet is a formula off Casing Review (setting
+    depth, MW, internal yield) that resolves once the per-string TVDs are
+    written. The template ships these three as stale constants from whatever
+    well it was built on; replace them with this well's values.
+
+    Column layout: C=surface, D=intermediate, E=production, F=4th string.
+    """
+    from openpyxl.styles import Font
+
+    review = build_bope_review(design, bope_system_psi=bope_system_psi)
+
+    # Row 7 — Previous Shoe Setting Depth (TVD). D7/E7/F7 are formulas that
+    # chain to the prior string's setting depth; only C7 (surface, no prior
+    # casing) is a constant. Surface string has no previous shoe → 0.
+    ws["C7"] = 0
+
+    # Row 9 — BOPE Proposed (psi), per string. Permit-stated ratings are
+    # written plain; inferred ratings are flagged in bold red.
+    cols = ("C", "D", "E", "F")
+    for idx, r in enumerate(review.strings[:4]):
+        if r.bope_proposed_psi is not None:
+            cell = ws[f"{cols[idx]}9"]
+            cell.value = r.bope_proposed_psi
+            if not r.bope_proposed_from_pdf:
+                cell.font = Font(bold=True, color="FFCC0000")
+
+    # Row 11 — Operator's Max Anticipated Pressure (psi). F11 converts it to
+    # an equivalent mud weight via its own formula, so only C11 is an input.
+    if review.operators_max_anticipated_pressure_psi is not None:
+        ws["C11"] = round(review.operators_max_anticipated_pressure_psi, 1)
+
+    # The F-column is the overflow slot for a 4th string. With no 4th string
+    # its internal-yield ref ('Casing Review'!W57) is a DGET over empty inputs
+    # = #VALUE!, which cascades into M15 and C50. Zero the input so the unused
+    # slot stays clean instead of showing errors.
+    if len(design.strings) < 4:
+        ws["F10"] = 0
 
 
 def _write_dataprint(ws, design: CasingDesign) -> None:

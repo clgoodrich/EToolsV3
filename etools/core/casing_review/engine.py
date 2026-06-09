@@ -166,12 +166,24 @@ def welltrack_from_processed_survey(processed) -> list[WelltrackPoint]:
 def welltrack_from_dataframe(df: pd.DataFrame) -> list[WelltrackPoint]:
     """Best-effort conversion from an arbitrary survey DataFrame.
 
-    Looks for columns named ``md`` / ``tvd`` (case-insensitive). For
-    full-precision min-curvature interpolation use the processed survey.
+    Matches MD / TVD columns by common names (case-, space- and
+    underscore-insensitive), including the database survey's
+    ``MeasuredDepth`` / ``TrueVerticalDepth``. For full-precision
+    min-curvature interpolation use the processed survey.
     """
-    cols = {c.lower(): c for c in df.columns}
-    md_col = cols.get("md") or cols.get("md_ft")
-    tvd_col = cols.get("tvd") or cols.get("tvd_ft")
+    # Normalise column names so "TrueVerticalDepth", "true_vertical_depth"
+    # and "TVD" all collapse to the same key.
+    norm = {c.lower().replace("_", "").replace(" ", ""): c for c in df.columns}
+    md_col = next(
+        (norm[a] for a in ("md", "mdft", "measureddepth", "measureddepthft")
+         if a in norm),
+        None,
+    )
+    tvd_col = next(
+        (norm[a] for a in ("tvd", "tvdft", "trueverticaldepth", "trueverticaldepthft")
+         if a in norm),
+        None,
+    )
     if not md_col or not tvd_col:
         return []
     return [

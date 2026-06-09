@@ -74,6 +74,7 @@ def parse_apd_pdf(
         _extract_casing_table(text, data)
         _extract_formations(text, data)
         _extract_frac_gradient(text, data)
+        _extract_bope(text, data)
 
     # LLM layer — only fills empty fields when mode == 'rules+llm',
     # overwrites everything when mode == 'llm'.
@@ -230,8 +231,16 @@ def _extract_header(text: str, data: APDPdfData) -> None:
 
 _LOCATION_NAMES = (
     "Location At Surface",
+    "Location At Kickoff Point",
     "Top of Uppermost Producing Zone",
     "At Total Depth",
+)
+
+# Document-stated kickoff: "KOP: 7965' MD, 7865' TVD" (TVD optional). The
+# directional-plan tables also print "KOP, Build 2 DLS" etc., so anchor on the
+# "MD" token to avoid those.
+_KOP_MD_RE = re.compile(
+    r"KOP[:\s]+([\d,]+)\s*'?\s*MD(?:\s*,\s*([\d,]+)\s*'?\s*TVD)?", re.I
 )
 
 
@@ -274,6 +283,45 @@ def _extract_locations(text: str, data: APDPdfData) -> None:
         )
         if not any(p.name == row.name for p in data.locations):
             data.locations.append(row)
+
+    _extract_kop_md(text, data)
+
+
+# "A 5,000 psi BOP system or better will be used", "5000 psi BOP",
+# or "...Preventer - rated to 5,000 psi".
+_BOPE_PSI_RES = (
+    re.compile(r"([\d,]{3,6})\s*psi\s+BOP\b", re.I),
+    re.compile(r"\bBOP\b[^.\n]{0,40}?rated to\s*([\d,]{3,6})\s*psi", re.I),
+    re.compile(r"\bpreventer\b[^.\n]{0,40}?rated to\s*([\d,]{3,6})\s*psi", re.I),
+)
+
+
+def _extract_bope(text: str, data: APDPdfData) -> None:
+    """Pull the permit-stated BOP working pressure (psi) from the
+    "Minimum Specifications for Pressure Control" section, if present."""
+    for rx in _BOPE_PSI_RES:
+        m = rx.search(text)
+        if m:
+            val = _to_float(m.group(1).replace(",", ""))
+            if val and val >= 1000:  # plausible BOP rating, not a stray number
+                data.bope_system_psi = val
+                return
+
+
+def _extract_kop_md(text: str, data: APDPdfData) -> None:
+    """Pull the document-stated kickoff MD/TVD and attach it to the
+    kickoff location row (the row carries the footages; this adds the depth)."""
+    m = _KOP_MD_RE.search(text)
+    if not m:
+        return
+    data.kop_md_ft = float(m.group(1).replace(",", ""))
+    if m.group(2):
+        data.kop_tvd_ft = float(m.group(2).replace(",", ""))
+    for loc in data.locations:
+        if "kickoff" in (loc.name or "").lower():
+            loc.measured_depth = data.kop_md_ft
+            loc.tvd_ft = data.kop_tvd_ft
+            break
 
 
 # ---------------------------------------------------------------------------

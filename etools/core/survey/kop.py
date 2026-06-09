@@ -180,6 +180,109 @@ def detect_kop_simple(
     return float(md[anchor_idx])
 
 
+def detect_kop_backprojection(
+    survey: pd.DataFrame,
+    *,
+    md_col: str = "measured_depth",
+    inc_col: str = "inclination",
+    vertical_threshold_deg: float = 3.0,
+    sustained_inc_deg: float = 10.0,
+    sustained_count: int = 5,
+    build_fit_max_deg: float = 40.0,
+    min_fit_points: int = 3,
+) -> KOPResult | None:
+    """Geometric KOP via build-arc back-projection.
+
+    The kick-off point is, by definition, where the wellbore leaves vertical
+    and the build arc begins — i.e. where inclination is still zero at the
+    start of the build. This estimator reconstructs that point directly:
+
+        1. Anchor on the last station still vertical
+           (``inc <= vertical_threshold_deg``) that is immediately followed by
+           a sustained build (the next ``sustained_count`` stations reach
+           ``sustained_inc_deg``).
+        2. Fit a straight line to the *early*, near-linear part of the build
+           (stations from the anchor up to ``build_fit_max_deg``).
+        3. Solve that line for ``inclination = 0`` — the MD where the build,
+           extrapolated back, leaves vertical.
+
+    Unlike :func:`detect_kop` (which detects where the build is already
+    *obvious* and so lands 100-300 ft deep), this is the textbook
+    source-independent definition: it returns the same geometric KOP whether
+    the data is the planned trajectory or the as-drilled survey, because both
+    share the build geometry.
+
+    Returns ``None`` when there is no clean vertical→build transition to fit
+    (too few stations, no anchor, flat/negative build, or a back-projection
+    that falls outside the plausible band) — the caller should then fall back
+    to :func:`detect_kop`.
+    """
+    if survey is None or getattr(survey, "empty", True):
+        return None
+    if md_col not in survey or inc_col not in survey:
+        return None
+    df = survey.sort_values(md_col).reset_index(drop=True)
+    inc = df[inc_col].to_numpy(dtype=float)
+    md = df[md_col].to_numpy(dtype=float)
+    n = len(inc)
+    if n < sustained_count + 1:
+        return None
+
+    # Anchor: the LAST vertical station that kicks into a sustained build.
+    anchor: int | None = None
+    for i in range(n - sustained_count):
+        if inc[i] <= vertical_threshold_deg:
+            if float(inc[i + 1 : i + 1 + sustained_count].max()) >= sustained_inc_deg:
+                anchor = i
+    if anchor is None:
+        return None
+
+    # Collect the early build window (near-linear part of the arc).
+    xs: list[float] = []
+    ys: list[float] = []
+    for j in range(anchor, n):
+        if inc[j] > build_fit_max_deg:
+            break
+        xs.append(float(md[j]))
+        ys.append(float(inc[j]))
+
+    if len(xs) >= min_fit_points:
+        fit = linregress(xs, ys)
+        slope, intercept, r = fit.slope, fit.intercept, fit.rvalue
+        if slope <= 0:
+            return None
+        kop_md = -intercept / slope
+        confidence = float(min(1.0, max(0.0, r * r)))
+        method = "build_backprojection"
+    else:
+        # Too few early-build stations to regress — interpolate the single
+        # segment straddling the anchor instead (still a back-projection to
+        # the geometric start, just two-point).
+        lo_i, hi_i = anchor, min(anchor + 1, n - 1)
+        if hi_i == lo_i or inc[hi_i] == inc[lo_i]:
+            return None
+        slope = (inc[hi_i] - inc[lo_i]) / (md[hi_i] - md[lo_i])
+        if slope <= 0:
+            return None
+        kop_md = md[lo_i] - inc[lo_i] / slope
+        confidence = 0.4
+        method = "build_backprojection_2pt"
+
+    # Plausibility: the KOP must sit between the surface and where the build
+    # has clearly started (a little past the anchor). Reject otherwise so the
+    # caller falls back to the statistical detector.
+    upper = float(md[min(anchor + sustained_count, n - 1)])
+    if not (float(md[0]) - 1.0 <= kop_md <= upper + 1.0):
+        return None
+
+    return KOPResult(
+        md=float(kop_md),
+        confidence=confidence,
+        method=method,
+        candidates={method: float(kop_md)},
+    )
+
+
 def detect_landing_point(
     survey: pd.DataFrame,
     kop_md: float | None = None,

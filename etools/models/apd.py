@@ -47,6 +47,10 @@ class APDLocationRow(BaseModel):
     fsl: Optional[float] = None
     fel: Optional[float] = None
     fwl: Optional[float] = None
+    # Measured / true-vertical depth of this location, when the APD prints it
+    # (e.g. the "KOP: 7965' MD, 7865' TVD" line for the kickoff row).
+    measured_depth: Optional[float] = None
+    tvd_ft: Optional[float] = None
     qtr_qtr: Optional[str] = None
     section: Optional[str] = None
     township: Optional[str] = None
@@ -68,10 +72,19 @@ class APDPdfData(BaseModel):
     slant: Optional[str] = None
     proposed_md_ft: Optional[float] = None
     proposed_tvd_ft: Optional[float] = None
+    # Document-stated kickoff point, when the APD prints "KOP: <md>' MD,
+    # <tvd>' TVD". Authoritative — preferred over survey-based KOP detection.
+    kop_md_ft: Optional[float] = None
+    kop_tvd_ft: Optional[float] = None
     ground_elev_ft: Optional[float] = None
     # Frac gradient at the production-string shoe (psi/ft). From the
     # page-2 Safety Factors table when the parser can find it.
     frac_gradient_psi_per_ft: Optional[float] = None
+    # BOP working-pressure rating stated in the permit's "Minimum
+    # Specifications for Pressure Control" section (e.g. "A 5,000 psi BOP
+    # system or better will be used"). Authoritative when present — the
+    # BOPE review shows it as-is rather than inferring a rating.
+    bope_system_psi: Optional[float] = None
 
     locations: list[APDLocationRow] = Field(default_factory=list)
     casing: list[APDCasingString] = Field(default_factory=list)

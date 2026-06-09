@@ -9,7 +9,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from etools.core.survey import detect_kop, detect_landing_point, process_survey
+from etools.core.survey import (
+    detect_kop,
+    detect_kop_backprojection,
+    detect_landing_point,
+    process_survey,
+)
 from etools.core.survey.kop import KOPResult
 from etools.logging_setup import get_logger
 from etools.models import ProcessedSurvey, SurveyFrame, WellHeader
@@ -56,7 +61,13 @@ class SurveyService:
                 lateral=header.lateral,
                 grid_scale_factor=header.grid_scale_factor,
             )
-            kop = detect_kop(frames[SurveyFrame.TRUE].points)
+            # Geometric build-arc back-projection is the source-independent
+            # KOP (matches the start of the build arc); fall back to the
+            # statistical consensus when there's no clean build to fit.
+            kop = (
+                detect_kop_backprojection(frames[SurveyFrame.TRUE].points)
+                or detect_kop(frames[SurveyFrame.TRUE].points)
+            )
             landing = detect_landing_point(frames[SurveyFrame.TRUE].points, kop_md=kop.md)
             out[citing_type] = SurveyResult(
                 citing_type=citing_type,

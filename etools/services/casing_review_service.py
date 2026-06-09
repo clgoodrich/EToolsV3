@@ -59,6 +59,7 @@ class CasingReviewService:
         intermediate_locations: list | None = None,
         section_locations: list | None = None,
         dx_survey_locations: list | None = None,
+        dx_survey_footages: list | None = None,
         output_filename: str | None = None,
         frac_gradient_override_psi_per_ft: float | None = None,
     ) -> CasingReviewResult:
@@ -95,7 +96,9 @@ class CasingReviewService:
             intermediate_locations=intermediate_locations,
             section_locations=section_locations,
             dx_survey_locations=dx_survey_locations,
+            dx_survey_footages=dx_survey_footages,
             plat_repo=self._plat_repo,
+            bope_system_psi=apd_data.bope_system_psi,
         )
         log.info(
             "casing_review.generated",

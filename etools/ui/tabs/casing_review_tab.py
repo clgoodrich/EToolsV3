@@ -30,6 +30,7 @@ from typing import Callable
 from nicegui import app, events, ui
 
 from etools.config import settings
+from etools.core.casing_review.bope import build_bope_review
 from etools.core.casing_review.domain import CasingDesign
 from etools.core.casing_review.engine import (
     CasingDesignEngine,
@@ -148,9 +149,35 @@ _PLAT_RUNTIME_JS = r"""
     });
   };
 
+  window.etoolsWireWellTips = function() {
+    var tip = document.getElementById('etools-welltip');
+    if (!tip) {
+      tip = document.createElement('div');
+      tip.id = 'etools-welltip';
+      document.body.appendChild(tip);
+    }
+    document.querySelectorAll('circle.well-marker').forEach(function(el){
+      if (el.__tipWired) return;
+      el.__tipWired = true;
+      var label = el.getAttribute('data-welltip') || '';
+      function move(e){
+        tip.style.left = (e.clientX + 14) + 'px';
+        tip.style.top  = (e.clientY + 14) + 'px';
+      }
+      el.addEventListener('mouseenter', function(e){
+        tip.textContent = label;
+        tip.style.display = 'block';
+        move(e);
+      });
+      el.addEventListener('mousemove', move);
+      el.addEventListener('mouseleave', function(){ tip.style.display = 'none'; });
+    });
+  };
+
   window.__etoolsWireAll = function(){
     window.etoolsWireSegHover();
     window.etoolsWirePlatPanZoom();
+    window.etoolsWireWellTips();
   };
 
   // Catch-all: any future DOM insertion also gets wired automatically.
@@ -188,6 +215,55 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
           .seg-cell { transition: box-shadow .08s; }
           svg.plat-svg { cursor: grab; touch-action: none; }
           svg.plat-svg:active { cursor: grabbing; }
+          #etools-welltip { position: fixed; z-index: 99999;
+                            pointer-events: none; display: none;
+                            background: #0f172a; color: #fff;
+                            padding: 2px 8px; border-radius: 4px;
+                            font-size: 12px; font-weight: 600;
+                            white-space: nowrap;
+                            box-shadow: 0 2px 6px rgba(0,0,0,.35); }
+          /* BOPE tab — ui.html() strips inline <style>, so the BOPE review's
+             styling lives here in the page head. */
+          .bope-wrap { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+            font-size: 12.5px; color: #1e293b; }
+          .bope-title { font-weight: 800; font-size: 16px; letter-spacing: .03em;
+            color: #0f172a; margin-bottom: 6px; }
+          table.bope { border-collapse: separate; border-spacing: 0; width: auto;
+            border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;
+            box-shadow: 0 1px 2px rgba(15,23,42,.05); margin-bottom: 2px; }
+          table.bope th, table.bope td { padding: 1px 8px; text-align: right;
+            white-space: nowrap; border-bottom: 1px solid #eef2f7; line-height: 1.45; }
+          table.bope tr:last-child td { border-bottom: none; }
+          table.bope th { background: #0f172a; color: #fff; font-weight: 600;
+            text-align: center; }
+          table.bope th.h-item, table.bope th.h-f { text-align: left; }
+          table.bope td.corner { background: #0f172a; }
+          table.bope td.lbl { text-align: left; font-weight: 700; color: #0f172a;
+            background: #f8fafc; }
+          table.bope tr:nth-child(even) td { background: #fbfcfe; }
+          table.bope tr:nth-child(even) td.lbl { background: #eef2f7; }
+          table.bope td.f { text-align: left; color: #94a3b8; font-size: 11px;
+            font-style: italic; }
+          table.bope td.v { font-weight: 600; font-variant-numeric: tabular-nums; }
+          table.bope td.chk { text-align: center; }
+          .bope-red { color: #dc2626; font-weight: 800; }
+          .opmax { display: inline-block; margin: 6px 0 2px; padding: 5px 11px;
+            background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px;
+            color: #1e3a8a; font-weight: 500; }
+          .calc { width: fit-content; margin-top: 8px; border: 1px solid #e2e8f0;
+            border-radius: 9px; overflow: hidden;
+            box-shadow: 0 1px 3px rgba(15,23,42,.06); }
+          .calchdr { background: linear-gradient(90deg,#1e293b,#334155); color: #fff;
+            font-weight: 700; padding: 4px 12px; display: flex;
+            justify-content: space-between; align-items: center; }
+          .calcsz { font-weight: 500; font-size: 11.5px; color: #cbd5e1; }
+          .calc table.bope { border: none; border-radius: 0; box-shadow: none; margin: 0; }
+          .calcnote { font-size: 10.5px; color: #94a3b8; padding: 3px 12px;
+            background: #f8fafc; }
+          .pill { display: inline-block; padding: 1px 10px; border-radius: 999px;
+            font-weight: 700; font-size: 11px; }
+          .pill.yes { background: #dcfce7; color: #15803d; }
+          .pill.no { background: #fee2e2; color: #b91c1c; }
         </style>
         """
     )
@@ -197,6 +273,7 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
     cache: dict = {
         "meta_card": None,
         "inputs_card": None,
+        "bope_card": None,
         "design_card": None,
         "design_table": None,
         "wbd_card": None,
@@ -303,6 +380,7 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
             with ui.tabs().classes("w-full") as cr_tabs:
                 cache["meta_tab"] = ui.tab("Parsed APD", icon="description")
                 cache["inputs_tab"] = ui.tab("Casing inputs", icon="edit_note")
+                cache["bope_tab"] = ui.tab("BOPE", icon="gpp_maybe")
                 cache["design_tab"] = ui.tab("Computed design", icon="calculate")
                 cache["sections_tab"] = ui.tab("Sections", icon="grid_on")
                 cache["wbd_tab"] = ui.tab("WBD", icon="view_in_ar")
@@ -312,6 +390,8 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
                     cache["meta_card"] = p
                 with ui.tab_panel(cache["inputs_tab"]) as p:
                     cache["inputs_card"] = p
+                with ui.tab_panel(cache["bope_tab"]) as p:
+                    cache["bope_card"] = p
                 with ui.tab_panel(cache["design_tab"]) as p:
                     cache["design_card"] = p
                 with ui.tab_panel(cache["sections_tab"]) as p:
@@ -321,7 +401,7 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
                 with ui.tab_panel(cache["result_tab"]) as p:
                     cache["result_card"] = p
         # Each tab button is hidden until its content has been rendered.
-        for k in ("meta_tab", "inputs_tab", "design_tab",
+        for k in ("meta_tab", "inputs_tab", "bope_tab", "design_tab",
                   "sections_tab", "wbd_tab", "result_tab"):
             cache[k].visible = False
 
@@ -401,7 +481,7 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
         # the "can't geolocate" explanation when it applies.
         await promote_apd_to_active(state, silent=False)
 
-    def generate() -> None:
+    async def generate() -> None:
         data = state.apd_data
         if data is None:
             ui.notify("Parse an APD PDF first.", type="warning")
@@ -418,8 +498,13 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
         # (None) rather than aborting the whole generation silently.
         section_locations = None
         dx_survey_locations = None
+        dx_survey_footages = None
         try:
-            from etools.core.casing_review.sections import build_section_traversal
+            from etools.core.casing_review.sections import (
+                apd_summary_footages,
+                build_section_traversal,
+                survey_kop_footages,
+            )
 
             crossings = build_section_traversal(
                 data.locations, _clearance_points(state)
@@ -429,6 +514,23 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
             # section-detection — without them the BHL bearing grids stay
             # blank no matter what section sheets we write.
             dx_survey_locations = _dx_survey_locations(state)
+            # The native walk that fills the Prod-Interval / Total-Depth
+            # "Section Line Footages" is unreliable (blanks the FINAL footages
+            # on cross-township wells). Write the APD-stated footages directly
+            # so the bottom-hole footages always show and match the permit.
+            footages = list(apd_summary_footages(data.locations) or [None, None, None])
+            # Contingency: when the APD prints no "Location At Kickoff Point",
+            # the KOP slot is empty — compute the K.O. Point footages from the
+            # survey station at the (back-projected) kickoff MD instead.
+            if footages and footages[0] is None:
+                cp = _clearance_points(state)
+                kop_md = None
+                if state.processed:
+                    sr = next(iter(state.processed.values()))
+                    kop_md = getattr(getattr(sr, "kop", None), "md", None)
+                if cp is not None and kop_md is not None:
+                    footages[0] = survey_kop_footages(cp, kop_md)
+            dx_survey_footages = footages if any(footages) else None
         except Exception:
             log.exception("casing_review.section_traversal_failed")
             ui.notify(
@@ -436,18 +538,28 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
                 "basic 3-section layout.",
                 type="warning",
             )
+        # The Excel write (openpyxl serialising this large template) takes
+        # ~20s. Run it off the UI thread so the app stays responsive and
+        # show a spinner — otherwise the whole page freezes and looks broken.
+        cache["gen_btn"].props("loading")
+        cache["gen_status"].text = "Generating Casing Review… (saving the workbook takes ~20s)"
         try:
-            result = svc.generate(
+            result = await asyncio.to_thread(
+                svc.generate,
                 apd_data=data,
                 survey=state.casing_survey_df,
                 frac_gradient_override_psi_per_ft=frac,
                 section_locations=section_locations or None,
                 dx_survey_locations=dx_survey_locations or None,
+                dx_survey_footages=dx_survey_footages or None,
             )
         except Exception as exc:
             log.exception("casing_review.generate_failed")
             ui.notify(f"Generation failed: {exc}", type="negative")
+            cache["gen_status"].text = "Generation failed — see logs."
             return
+        finally:
+            cache["gen_btn"].props(remove="loading")
         state.casing_last_output_path = result.output_path
         out = result.output_path
         cache["gen_status"].text = f"Saved {out.name}"
@@ -461,7 +573,7 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
     def _hide_dynamic_cards() -> None:
         if cache.get("tabs_wrap") is not None:
             cache["tabs_wrap"].visible = False
-        for k in ("meta_tab", "inputs_tab", "design_tab",
+        for k in ("meta_tab", "inputs_tab", "bope_tab", "design_tab",
                   "sections_tab", "wbd_tab", "result_tab"):
             t = cache.get(k)
             if t is not None:
@@ -541,12 +653,25 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
             return
         frac = state.casing_frac_gradient_psi_per_ft or 1.0
         data.frac_gradient_psi_per_ft = frac
-        welltrack = (
-            welltrack_from_dataframe(state.casing_survey_df)
-            if state.casing_survey_df is not None
-            else None
-        )
-        design = engine.build(data, welltrack=welltrack)
+        try:
+            welltrack = (
+                welltrack_from_dataframe(state.casing_survey_df)
+                if state.casing_survey_df is not None
+                else None
+            )
+            design = engine.build(data, welltrack=welltrack)
+        except Exception as exc:
+            log.exception("casing_review.design_build_failed", error=str(exc))
+            card = cache.get("design_card")
+            if card is not None:
+                card.clear()
+                with card:
+                    ui.label(
+                        f"Couldn't build the casing design: {type(exc).__name__}: {exc}"
+                    ).classes("text-xs text-red-700 bg-red-50 p-2 rounded")
+                if cache.get("design_tab") is not None:
+                    cache["design_tab"].visible = True
+            return
         _apply_string_overrides(design, state.casing_overrides)
 
         # Inputs card is rendered once per full rebuild. Edits cascade
@@ -564,23 +689,39 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
             )
             new_design = engine.build(d, welltrack=wt)
             _apply_string_overrides(new_design, state.casing_overrides)
+            _render_bope(cache["bope_card"], new_design, d)
             _render_design(cache["design_card"], new_design)
             _render_wbd(cache["wbd_card"], new_design, d)
 
-        _render_inputs(
-            cache["inputs_card"], data, state,
-            on_change=_recompute_downstream,
-        )
-        cache["inputs_tab"].visible = True
+        # Render each card in isolation: a failure in one (bad survey data,
+        # a template edge case, …) must not blank the whole tab. The failing
+        # card shows its error inline and the others still populate.
+        def _safe(card_key: str, tab_key: str, render):
+            card = cache.get(card_key)
+            if card is None:
+                return
+            try:
+                render(card)
+            except Exception as exc:  # pragma: no cover - defensive UI guard
+                log.exception("casing_review.render_failed", card=card_key, error=str(exc))
+                try:
+                    card.clear()
+                    with card:
+                        ui.label(
+                            f"Couldn't render this section: {type(exc).__name__}: {exc}"
+                        ).classes("text-xs text-red-700 bg-red-50 p-2 rounded")
+                except Exception:
+                    pass
+            tab = cache.get(tab_key)
+            if tab is not None:
+                tab.visible = True
 
-        _render_design(cache["design_card"], design)
-        cache["design_tab"].visible = True
-
-        _render_sections(cache["sections_card"], data, state)
-        cache["sections_tab"].visible = True
-
-        _render_wbd(cache["wbd_card"], design, data)
-        cache["wbd_tab"].visible = True
+        _safe("inputs_card", "inputs_tab",
+              lambda c: _render_inputs(c, data, state, on_change=_recompute_downstream))
+        _safe("bope_card", "bope_tab", lambda c: _render_bope(c, design, data))
+        _safe("design_card", "design_tab", lambda c: _render_design(c, design))
+        _safe("sections_card", "sections_tab", lambda c: _render_sections(c, data, state))
+        _safe("wbd_card", "wbd_tab", lambda c: _render_wbd(c, design, data))
 
     def _lazy_design_render() -> None:
         """Used to defer the heavy design rebuild via ui.timer to keep the
@@ -791,6 +932,117 @@ def _design_rows(design: CasingDesign) -> list[dict]:
     return rows
 
 
+_BOPE_INPUT_ROWS = (
+    ("Casing Size (\")", "od_in", 3),
+    ("Setting Depth (TVD)", "setting_depth_tvd_ft", 0),
+    ("Previous Shoe Setting Depth (TVD)", "prev_shoe_tvd_ft", 0),
+    ("Max Mud Weight (ppg)", "mud_weight_ppg", 1),
+    ("Casing Internal Yield (psi)", "internal_yield_psi", 0),
+)
+
+
+def _bope_num(v, nd: int) -> str:
+    if v is None:
+        return ""
+    try:
+        return f"{float(v):,.{nd}f}"
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def _yesno(flag) -> str:
+    if flag is None:
+        return ""
+    return '<span class="pill yes">YES</span>' if flag else '<span class="pill no">NO</span>'
+
+
+def _bope_html(review) -> str:
+    rows = review.strings
+    th = "".join(f"<th>{r.label}</th>" for r in rows)
+
+    # ---- Header input block (one column per string) ----
+    body = [f"<tr><td class=corner></td>{th}</tr>"]
+    for label, attr, nd in _BOPE_INPUT_ROWS:
+        cells = "".join(f"<td class=v>{_bope_num(getattr(r, attr), nd)}</td>" for r in rows)
+        body.append(f"<tr><td class=lbl>{label}</td>{cells}</tr>")
+    # BOPE Proposed — inferred values shown bold red, permit-stated plain.
+    prop_cells = []
+    for r in rows:
+        txt = _bope_num(r.bope_proposed_psi, 0)
+        if txt and not r.bope_proposed_from_pdf:
+            txt = f'<span class="bope-red">{txt}</span>'
+        prop_cells.append(f"<td class=v>{txt}</td>")
+    body.append(f"<tr><td class=lbl>BOPE Proposed (psi)</td>{''.join(prop_cells)}</tr>")
+    hdr_table = f"<table class=bope>{''.join(body)}</table>"
+
+    op = review.operators_max_anticipated_pressure_psi
+    eq = review.equivalent_mud_weight_ppg
+    op_line = ""
+    if op is not None:
+        eq_txt = f" &nbsp;·&nbsp; = {eq:,.1f} ppg equivalent" if eq is not None else ""
+        op_line = (
+            f"<div class=opmax>Operators Max Anticipated Pressure&nbsp;&nbsp;"
+            f"<b>{op:,.0f} psi</b>{eq_txt}</div>"
+        )
+
+    # ---- Per-string Calculations blocks ----
+    calcs = []
+    for r in rows:
+        sz = _bope_num(r.od_in, 3)
+        crows = [
+            f'<tr><td class=lbl>Max BHP [psi]</td><td class=f>.052 · Setting Depth · MW</td>'
+            f'<td class=v>{_bope_num(r.max_bhp_psi, 0)}</td><td class=chk></td></tr>',
+            f'<tr><td class=lbl>MASP (Gas) [psi]</td><td class=f>Max BHP − 0.12 · Setting Depth</td>'
+            f'<td class=v>{_bope_num(r.masp_gas_psi, 0)}</td><td class=chk>{_yesno(r.adequate_gas)}</td></tr>',
+            f'<tr><td class=lbl>MASP (Gas/Mud) [psi]</td><td class=f>Max BHP − 0.22 · Setting Depth</td>'
+            f'<td class=v>{_bope_num(r.masp_gas_mud_psi, 0)}</td><td class=chk>{_yesno(r.adequate_gas_mud)}</td></tr>',
+            f'<tr><td class=lbl>Pressure At Previous Shoe</td>'
+            f'<td class=f>Max BHP − 0.22 · (Setting Depth − Prev Shoe)</td>'
+            f'<td class=v>{_bope_num(r.pressure_at_prev_shoe_psi, 0)}</td>'
+            f'<td class=chk>{_yesno(r.hold_full_at_prev_shoe)}</td></tr>',
+            f'<tr><td class=lbl>Required Casing/BOPE Test Pressure</td><td class=f>psi</td>'
+            f'<td class=v>{_bope_num(r.required_test_pressure_psi, 0)}</td><td class=chk></td></tr>',
+            f'<tr><td class=lbl>*Max Pressure Allowed @ Previous Casing Shoe</td>'
+            f'<td class=f>psi · assumes 1 psi/ft frac gradient</td>'
+            f'<td class=v>{_bope_num(r.max_pressure_allowed_prev_shoe_psi, 0)}</td><td class=chk></td></tr>',
+        ]
+        calcs.append(
+            f"<div class=calc><div class=calchdr>{r.label}"
+            f'<span class=calcsz>{sz}" casing</span></div>'
+            f'<table class=bope>'
+            f'<tr><th class=h-item>Calculation</th><th class=h-f>Formula</th>'
+            f'<th class=h-v>Value</th><th class=h-chk>Check</th></tr>'
+            f"{''.join(crows)}</table>"
+            f'<div class=calcnote>Check column: "Adequate for drilling &amp; setting '
+            f'casing at depth?" (MASP rows) and "Can full expected pressure be held '
+            f'at previous shoe?" (Pressure At Previous Shoe).</div></div>'
+        )
+
+    # NOTE: the CSS for these classes lives in the page <head> (added via
+    # ui.add_head_html in render_casing_review_tab) because ui.html() strips
+    # inline <style> blocks. Don't add a <style> here — it won't render.
+    return (
+        f'<div class=bope-wrap><div class=bope-title>BOPE REVIEW</div>'
+        f'{hdr_table}{op_line}{"".join(calcs)}</div>'
+    )
+
+
+def _render_bope(card: ui.card, design: CasingDesign, data: APDPdfData | None = None) -> None:
+    card.clear()
+    psi = getattr(data, "bope_system_psi", None) if data is not None else None
+    review = build_bope_review(design, bope_system_psi=psi)
+    with card:
+        ui.html(_bope_html(review)).classes("w-full")
+        legend = (
+            "BOPE Proposed shown in <b>bold red</b> is inferred (smallest "
+            "standard 2M/3M/5M/10M/15M rating above the gas MASP); plain "
+            "values come straight from the permit."
+        )
+        if psi is not None:
+            legend += f" Permit states a {psi:,.0f} psi BOP system."
+        ui.html(f'<div style="font-size:11px;color:#64748b;margin-top:6px">{legend}</div>')
+
+
 def _render_design(card: ui.card, design: CasingDesign) -> None:
     card.clear()
     with card:
@@ -877,6 +1129,12 @@ def _dx_survey_locations(state: AppState):
         sr = next(iter(state.processed.values()))
         kop_md = getattr(getattr(sr, "kop", None), "md", None)
         landing_md = getattr(sr, "landing_md", None)
+    # The APD's stated kickoff (when the permit prints "KOP: <md>' MD") is
+    # authoritative — prefer it over the survey-detected KOP so the K.O. Point
+    # row reflects the document, not a statistical estimate.
+    doc_kop = getattr(state.apd_data, "kop_md_ft", None)
+    if doc_kop is not None:
+        kop_md = doc_kop
     rows = dx_survey_path_offsets(points, kop_md=kop_md, landing_md=landing_md)
     return rows or None
 
@@ -1413,9 +1671,9 @@ def _render_plat_svg(container, sd, state: AppState | None = None) -> None:
         )
 
     # ---- uniform segment endpoint dots (17 total — start + 16 ends) ----
-    dot_r = max(vb_w, vb_h) * 0.011
-    # SHL/BHL wellpath markers — a touch larger so they read above the
-    # segment-endpoint dots.
+    dot_r = max(vb_w, vb_h) * 0.006
+    # SHL/KOP/Landing/BHL wellpath markers — larger so they read clearly
+    # above the small segment-endpoint dots.
     qc_r = max(vb_w, vb_h) * 0.014
     dot_elems = []
     for x, y in ring_pts:
@@ -1442,18 +1700,31 @@ def _render_plat_svg(container, sd, state: AppState | None = None) -> None:
         wp = " ".join(f"{x:.2f},{_flip(y):.2f}" for x, y in well_xy)
         sx, sy = well_xy[0]
         ex, ey = well_xy[-1]
+        # Intermediate reference markers (KOP / Landing) along the path, each
+        # with a hover <title> tooltip naming it. SHL/BHL are the endpoints.
+        # ``data-welltip`` drives an instant JS tooltip (the native SVG
+        # <title> has an un-tunable hover delay), wired by etoolsWireWellTips.
+        marker_circles = ""
+        for mx, my, label in _wellpath_markers(state):
+            marker_circles += (
+                f'<circle class="well-marker" cx="{mx:.2f}" cy="{_flip(my):.2f}" '
+                f'r="{qc_r:.3f}" fill="#2563eb" stroke="white" stroke-width="0.5" '
+                f'data-welltip="{label}" '
+                f'style="vector-effect:non-scaling-stroke; cursor:pointer;"></circle>'
+            )
         well_elem = (
             f'<polyline points="{wp}" fill="none" stroke="#16a34a" '
             f'stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" '
-            f'style="vector-effect:non-scaling-stroke;"/>'
-            f'<circle cx="{sx:.2f}" cy="{_flip(sy):.2f}" r="{qc_r:.3f}" '
-            f'fill="#16a34a" stroke="white" stroke-width="0.5" '
-            f'style="vector-effect:non-scaling-stroke;">'
-            f'<title>SHL</title></circle>'
-            f'<circle cx="{ex:.2f}" cy="{_flip(ey):.2f}" r="{qc_r:.3f}" '
-            f'fill="#dc2626" stroke="white" stroke-width="0.5" '
-            f'style="vector-effect:non-scaling-stroke;">'
-            f'<title>BHL</title></circle>'
+            f'style="vector-effect:non-scaling-stroke; pointer-events:none;"/>'
+            f'<circle class="well-marker" cx="{sx:.2f}" cy="{_flip(sy):.2f}" '
+            f'r="{qc_r:.3f}" fill="#16a34a" stroke="white" stroke-width="0.5" '
+            f'data-welltip="SHL (Surface)" '
+            f'style="vector-effect:non-scaling-stroke; cursor:pointer;"></circle>'
+            f'{marker_circles}'
+            f'<circle class="well-marker" cx="{ex:.2f}" cy="{_flip(ey):.2f}" '
+            f'r="{qc_r:.3f}" fill="#dc2626" stroke="white" stroke-width="0.5" '
+            f'data-welltip="BHL (Total Depth)" '
+            f'style="vector-effect:non-scaling-stroke; cursor:pointer;"></circle>'
         )
 
     # ---- compass labels ----
@@ -1473,8 +1744,8 @@ def _render_plat_svg(container, sd, state: AppState | None = None) -> None:
       {''.join(seg_elems)}
       {closure_elem}
       {''.join(dot_elems)}
-      {well_elem}
       {''.join(hit_elems)}
+      {well_elem}
       <text x="{(vb_x + vb_w / 2):.2f}" y="{n_y:.2f}"
             text-anchor="middle" font-size="{cf:.2f}"
             fill="#1e293b" font-weight="700">N</text>
@@ -1505,6 +1776,52 @@ def _render_plat_svg(container, sd, state: AppState | None = None) -> None:
         # Defer wiring to after the DOM is updated. The setTimeout(...,0)
         # gives Vue one tick to insert the SVG before we query for it.
         ui.run_javascript(_PLAT_RUNTIME_JS + "setTimeout(__etoolsWireAll, 0);")
+
+
+def _wellpath_markers(state) -> list[tuple[float, float, str]]:
+    """(easting, northing, label) for the named wellpath reference points to
+    mark + label on the section graphic: K.O. Point and Prod. Interval
+    (Landing). SHL and BHL are the trajectory endpoints, marked separately.
+
+    Positions are interpolated from the processed survey at the KOP / landing
+    MDs (preferring the APD's stated kickoff, to match the rest of the tool).
+    Returns ``[]`` when there's no processed survey.
+    """
+    if state is None or not getattr(state, "processed", None):
+        return []
+    try:
+        from etools.models import SurveyFrame
+
+        result = (
+            state.processed.get("AsDrilled")
+            or state.processed.get("Planned")
+            or next(iter(state.processed.values()))
+        )
+        if result is None:
+            return []
+        proc = (
+            result.frames.get(SurveyFrame.TRUE)
+            or next(iter(result.frames.values()))
+        )
+        df = proc.points
+        if not {"easting", "northing", "measured_depth"} <= set(df.columns):
+            return []
+        kop_md = getattr(getattr(result, "kop", None), "md", None)
+        doc_kop = getattr(getattr(state, "apd_data", None), "kop_md_ft", None)
+        if doc_kop is not None:
+            kop_md = doc_kop
+        landing_md = getattr(result, "landing_md", None)
+        out: list[tuple[float, float, str]] = []
+        for md, label in ((kop_md, "K.O. Point"), (landing_md, "Prod. Interval")):
+            if md is None:
+                continue
+            idx = (df["measured_depth"] - float(md)).abs().idxmin()
+            row = df.loc[idx]
+            out.append((float(row["easting"]), float(row["northing"]), label))
+        return out
+    except Exception as exc:
+        log.warning("section_panel.markers.failed", error=str(exc))
+        return []
 
 
 def _wellpath_xy_for_section(sd, state) -> list[tuple[float, float]]:
