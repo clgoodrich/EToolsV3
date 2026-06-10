@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Callable
 
 from etools.config import settings
 from etools.logging_setup import get_logger
@@ -40,6 +41,8 @@ def parse_wcr_pdf(
     max_pages: int | None = None,
     skip_docling: bool = False,
     mine_ddr_events: bool = False,
+    parse_operations: bool = False,
+    progress: Callable[[str, float | None], None] | None = None,
 ) -> WCRPdfData:
     """Run the layered pipeline and return a populated WCRPdfData.
 
@@ -62,9 +65,27 @@ def parse_wcr_pdf(
         If set, only the first ``max_pages`` pages of the PDF are passed
         to Docling and the regex layer. Useful for skipping the
         Operation Summary appendix (Form 8 itself fits in 2-3 pages).
+    parse_operations : bool
+        Opt into the LLM operations pass: a short per-job summary plus a
+        day-by-day plain-English narrative of the entire DDR time log.
+        Off by default because it's slow (minutes per DDR on CPU Ollama).
+        The structural DDR parse (entries + rules-tagged key events)
+        always runs regardless.
+    progress : callable | None
+        ``progress(text, fraction)`` called from the worker thread as the
+        pipeline advances; ``fraction`` is 0-1 or None for indeterminate
+        stages. Callbacks must be cheap and exception-safe for the caller.
     """
     path = Path(path)
     log.info("wcr_pdf.parse.start", path=str(path), mode=mode, max_pages=max_pages)
+
+    def _p(text: str, frac: float | None = None) -> None:
+        if progress is None:
+            return
+        try:
+            progress(text, frac)
+        except Exception:  # never let a UI callback kill the parse
+            log.debug("wcr_pdf.progress_cb_failed", text=text)
 
     if mode not in ("rules", "llm", "rules+llm"):
         raise ValueError(f"Unknown mode {mode!r}; expected rules, llm, or rules+llm")
@@ -80,12 +101,14 @@ def parse_wcr_pdf(
             work_path = path
 
     # ---- Layer 1 + 1b: extract text ----
+    _p("Extracting text…")
     pymupdf_text = _extract_text(work_path)
     docling_markdown = ""
     if not skip_docling:
         try:
             from etools.core.pdf.docling_extractor import pdf_to_markdown
 
+            _p("Docling layout extraction (~30 s)…")
             docling_markdown, _meta = pdf_to_markdown(work_path, with_ocr=False)
         except Exception as exc:
             log.warning("wcr_pdf.docling.failed", error=str(exc))
@@ -112,6 +135,7 @@ def parse_wcr_pdf(
 
     # ---- Layer 2: rules (skipped in 'llm' mode) ----
     if mode != "llm":
+        _p("Extracting form fields (rules)…")
         _extract_header(combined, data)
         _extract_positions(combined, data)
         _extract_casing(combined, data)
@@ -131,6 +155,7 @@ def parse_wcr_pdf(
         from etools.core.pdf.ddr_events import extract_events
         from etools.core.pdf.ddr_parser import parse_ddrs_from_text
 
+        _p("Parsing Operations appendix…")
         # Re-extract from the full PDF if we sliced for the rules layer.
         if work_path != path:
             full_text = _extract_text(path)
@@ -164,6 +189,7 @@ def parse_wcr_pdf(
 
             client = OllamaClient()
             if client.health() and client.has_model():
+                _p("LLM backfill of missing form fields…")
                 llm_result = llm_wcr_extract(combined, client=client)
                 _merge_llm(data, llm_result)
                 layers_used.append("llm-text")
@@ -173,22 +199,36 @@ def parse_wcr_pdf(
             log.warning("wcr_pdf.llm.failed", error=str(exc))
             data.warnings.append(f"LLM extraction failed: {exc}")
 
-    # ---- DDR LLM augmentation ----
-    # Always runs the summary call (small prompt, ~5 min/DDR on CPU).
-    # The event-mining call is gated on ``mine_ddr_events`` because it's
-    # another 5 min/DDR and the rules layer usually catches the structured
-    # events already.
-    if use_llm and data.ddrs:
+    # ---- DDR LLM augmentation (opt-in via ``parse_operations``) ----
+    # Slow on CPU Ollama: the summary call alone is minutes per DDR and
+    # the full narrative is one call per ~30 log entries, so none of it
+    # runs unless the user explicitly asked for the operations parse.
+    # The event-mining call is additionally gated on ``mine_ddr_events``
+    # because the rules layer usually catches the structured events.
+    if use_llm and parse_operations and data.ddrs:
         try:
             from etools.core.llm import OllamaClient
             from etools.core.pdf.ddr_llm import augment_ddr_with_llm
 
             client = OllamaClient()
             if client.health() and client.has_model():
-                for ddr in data.ddrs:
+                n_jobs = len(data.ddrs)
+                for di, ddr in enumerate(data.ddrs):
+                    job = ddr.job_category or "DDR"
+
+                    def _ddr_p(text: str, frac: float | None, _di=di, _job=job) -> None:
+                        # Scale this job's 0-1 fraction into the overall bar.
+                        overall = (_di + (frac if frac is not None else 0.0)) / n_jobs
+                        _p(f"Operations · {_job} ({_di + 1}/{n_jobs}): {text}", overall)
+
                     augment_ddr_with_llm(
-                        ddr, client=client, do_events=mine_ddr_events
+                        ddr,
+                        client=client,
+                        do_events=mine_ddr_events,
+                        do_narrative=True,
+                        progress=_ddr_p,
                     )
+                _p("Operations parse done.", 1.0)
                 layers_used.append("ddr-llm")
         except Exception as exc:
             log.warning("wcr_pdf.ddr_llm.failed", error=str(exc))

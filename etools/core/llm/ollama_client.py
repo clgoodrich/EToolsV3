@@ -97,6 +97,25 @@ class OllamaClient:
         except (httpx.HTTPError, KeyError):
             return False
 
+    def warm(self, model: str | None = None) -> bool:
+        """Block until ``model`` is loaded into memory.
+
+        An empty-prompt ``/api/generate`` is Ollama's documented load-only
+        call. Doing this up front keeps the cold-start (disk read + VRAM
+        upload, tens of seconds) out of the first real request, which
+        otherwise risks eating into its read timeout.
+        """
+        try:
+            r = httpx.post(
+                f"{self.base_url}/api/generate",
+                json={"model": model or self.model, "prompt": "", "stream": False},
+                timeout=self.timeout_s,
+            )
+            return r.status_code == 200
+        except httpx.HTTPError as exc:
+            log.warning("llm.warm.failed", model=model or self.model, error=str(exc))
+            return False
+
     # ------------------------------------------------------------------
     # Inference
     # ------------------------------------------------------------------
@@ -111,6 +130,7 @@ class OllamaClient:
         model: str | None = None,
         temperature: float | None = None,
         thinking: bool = False,
+        num_ctx: int | None = None,
     ) -> str:
         """Call ``/api/chat`` with structured output. Returns the raw JSON string.
 
@@ -141,8 +161,10 @@ class OllamaClient:
                 # 4k+ JSON tokens takes 10+ minutes.
                 "num_predict": 2048,
                 # Default num_ctx is 2048 on most models. Bump so a 16 KB
-                # trimmed markdown actually fits.
-                "num_ctx": 16384,
+                # trimmed markdown actually fits. Callers with small prompts
+                # can pass a tighter num_ctx — a smaller KV cache is faster
+                # on CPU and lets the server batch more requests at once.
+                "num_ctx": num_ctx or 16384,
             },
             # Disable thinking by default — we want fast structured output, not chain-of-thought.
             "think": thinking,
@@ -191,6 +213,8 @@ def extract_with_schema(
     client: OllamaClient | None = None,
     system: str | None = None,
     images: list[bytes] | None = None,
+    model: str | None = None,
+    num_ctx: int | None = None,
 ) -> T:
     """One-shot: send prompt, validate response against ``schema_model``.
 
@@ -212,6 +236,8 @@ def extract_with_schema(
         schema=schema,
         system=system,
         images=images,
+        model=model,
+        num_ctx=num_ctx,
     )
     cleaned = _strip_code_fences(raw).strip()
     try:

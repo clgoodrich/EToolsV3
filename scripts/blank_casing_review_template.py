@@ -7,7 +7,7 @@ Casing Strengths lookup, defined names, and reference sheets are left
 intact.
 
 Usage:
-    .venv/Scripts/python tools/blank_casing_review_template.py
+    .venv/Scripts/python scripts/blank_casing_review_template.py
 """
 
 from __future__ import annotations

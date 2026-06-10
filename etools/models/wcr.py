@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
 from typing import Literal
 
 import pandas as pd
@@ -172,6 +171,20 @@ class DDRTimeLogEntry(BaseModel):
     start_depth_ftkb: float | None = None
     end_depth_ftkb: float | None = None
     comment: str | None = None
+    plain_english: str | None = Field(
+        None,
+        description=(
+            "Telegram-terse plain-English translation of the comment "
+            "(LLM-generated; only set by the opt-in operations parse)."
+        ),
+    )
+    trouble: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Rules-flagged problem categories found in this entry "
+            "(stuck pipe, fishing, equipment failure, …). Empty = clean."
+        ),
+    )
 
 
 KeyEventType = Literal[
@@ -226,6 +239,15 @@ class DDRRecord(BaseModel):
     key_events: list[DDRKeyEvent] = Field(default_factory=list)
     summary: str | None = Field(
         None, description="Free-text overview of the well's drilling + completion history"
+    )
+    narrative: str | None = Field(
+        None,
+        description=(
+            "Detailed plain-English walkthrough of the entire time log, "
+            "day by day, with the driller's abbreviations translated. "
+            "LLM-generated; only populated when the user opts into the "
+            "(slow) operations parse."
+        ),
     )
 
     # Convenience lookups.

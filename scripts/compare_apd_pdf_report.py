@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 import openpyxl
 
-from scripts.compare_apd_batch import find_pairs, recalc, run_one
+from scripts.compare_apd_batch import find_pairs, run_one
 
 # A couple of clean/representative wells + the known-aberrant ones.
 GOOD = ["4301353749", "4301353764"]          # <=5 ft both axes — clean match
@@ -174,10 +174,8 @@ def main():
             except Exception as exc:
                 log(f"  !! pipeline failed: {exc}")
                 continue
-            gen_rc = Path("output/_cmp_recalc/gen") / (Path(pairs[api][1]).stem + ".xlsx")
-            # gen file has a different stem than orig; recompute its name from result.
-            # Simpler: recalc filenames = input stem. Generated stem differs from orig.
-            # Find the only xlsx in gen dir for this run by matching api.
+            # Generated stem differs from the original's, so find the gen-dir
+            # xlsx for this run by matching the API instead.
             gen_dir = Path("output/_cmp_recalc/gen")
             gen_files = sorted(gen_dir.glob(f"*{api}*.xlsx"))
             orig_rc = Path("output/_cmp_recalc/orig") / (Path(xls_path).stem + ".xlsx")

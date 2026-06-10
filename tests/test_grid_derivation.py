@@ -9,7 +9,6 @@ section sheet depends on.
 
 from __future__ import annotations
 
-import math
 
 from etools.core.casing_review.grid_corners import (
     _bearing_to_dms_alignment,

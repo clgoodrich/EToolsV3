@@ -1,7 +1,7 @@
 """Run parse_wcr_pdf across every WCR PDF in tests/ and report metrics.
 
 Usage:
-    .venv/Scripts/python tools/eval_wcr_corpus.py [--mode rules|rules+llm] [--all-pages]
+    .venv/Scripts/python scripts/eval_wcr_corpus.py [--mode rules|rules+llm] [--all-pages]
 
 Output:
     A CSV (corpus_eval.csv) with one row per PDF, plus a stdout summary
@@ -14,7 +14,6 @@ import argparse
 import csv
 import sys
 import time
-import traceback
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -87,12 +86,12 @@ def main() -> None:
         action="store_true",
         help="Skip Docling (PyMuPDF text only). Much faster, slightly less accurate.",
     )
-    ap.add_argument("--out", default="corpus_eval.csv", help="Output CSV")
+    ap.add_argument("--out", default=str(REPO / "output" / "corpus_eval.csv"), help="Output CSV")
     args = ap.parse_args()
     max_pages = None if args.all_pages else 5
 
-    tests_dir = REPO / "tests"
-    pdfs = sorted(p for p in tests_dir.glob("*.pdf") if p.name.lower().startswith("wcr"))
+    wcr_dir = REPO / "tests" / "fixtures" / "wcr"
+    pdfs = sorted(p for p in wcr_dir.glob("*.pdf") if p.name.lower().startswith("wcr"))
     print(f"Evaluating {len(pdfs)} PDFs (mode={args.mode}, max_pages={max_pages or 'all'})…")
 
     rows: list[dict] = []

@@ -26,7 +26,7 @@ def render_clearance_tab(state: AppState) -> Callable[[], None]:
                 .props("dense outlined")
                 .classes("w-44")
             )
-            run_btn = ui.button(
+            ui.button(
                 "Calculate Clearances", icon="straighten", on_click=lambda: run()
             ).props("color=primary")
             status = ui.label("").classes("text-sm text-gray-500 ml-2")

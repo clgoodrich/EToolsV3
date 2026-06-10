@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from etools.core.casing_review.bope import (
     STANDARD_BOPE_RATINGS_PSI,
+    BOPEOverrides,
     build_bope_review,
     proposed_bope_psi,
 )
@@ -84,3 +85,66 @@ def test_derived_rows_present():
     for s in r.strings:
         assert s.required_test_pressure_psi is not None
         assert s.max_pressure_allowed_prev_shoe_psi is not None
+
+
+def test_prev_shoe_override_cascades():
+    base = build_bope_review(_design())
+    ov = BOPEOverrides(prev_shoe_tvd_ft={1: 3000.0})
+    r = build_bope_review(_design(), overrides=ov)
+    inter = r.strings[1]
+    assert inter.prev_shoe_tvd_ft == 3000 and inter.prev_shoe_overridden
+    # Pressure-at-previous-shoe recomputes from the edited depth:
+    # shallower→deeper shoe raises it by 0.22 psi/ft of difference.
+    expected = base.strings[1].pressure_at_prev_shoe_psi + 0.22 * (3000 - 2500)
+    assert abs(inter.pressure_at_prev_shoe_psi - expected) < 1e-6
+    # Other strings keep their computed chain.
+    assert r.strings[0].prev_shoe_tvd_ft == 0 and not r.strings[0].prev_shoe_overridden
+    assert r.strings[2].prev_shoe_tvd_ft == 8330
+
+
+def test_proposed_override_cascades():
+    ov = BOPEOverrides(bope_proposed_psi={2: 3000.0})
+    r = build_bope_review(_design(), bope_system_psi=5000, overrides=ov)
+    prod = r.strings[2]
+    # Override wins over the permit-stated 5000 and recomputes the checks —
+    # 3000 psi is below the production gas MASP, so adequacy flips to NO.
+    assert prod.bope_proposed_psi == 3000 and prod.bope_proposed_overridden
+    assert prod.bope_proposed_from_pdf is False
+    assert prod.adequate_gas is False
+    # Cross-string cascade: the intermediate's required test pressure caps
+    # at the NEXT string's (now overridden) rating.
+    inter = r.strings[1]
+    assert inter.required_test_pressure_psi <= 3000
+
+
+def test_op_max_override_cascades():
+    ov = BOPEOverrides(op_max_pressure_psi=6500.0)
+    r = build_bope_review(_design(), overrides=ov)
+    assert r.operators_max_anticipated_pressure_psi == 6500
+    assert r.op_max_overridden
+    # Equivalent mud weight recomputes from the override: psi/(0.052·max TVD).
+    assert abs(r.equivalent_mud_weight_ppg - 6500 / (0.052 * 8330)) < 1e-6
+
+
+def test_blank_overrides_match_computed():
+    assert build_bope_review(_design(), overrides=BOPEOverrides()) == build_bope_review(_design())
+
+
+def test_writer_applies_bope_overrides(tmp_path):
+    from openpyxl import load_workbook
+
+    from etools.core.casing_review.writer import write_casing_review
+
+    out = tmp_path / "cr.xlsx"
+    ov = BOPEOverrides(
+        prev_shoe_tvd_ft={1: 3000.0},
+        bope_proposed_psi={2: 3000.0},
+        op_max_pressure_psi=6500.0,
+    )
+    write_casing_review(_design(), out, plat_repo=None, bope_overrides=ov)
+    ws = load_workbook(out)["BOPE"]
+    # Overridden prev-shoe replaces the template's D7 chain formula with the
+    # literal; the others keep their formulas / computed inputs.
+    assert ws["D7"].value == 3000
+    assert ws["E9"].value == 3000
+    assert ws["C11"].value == 6500

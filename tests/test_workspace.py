@@ -119,6 +119,33 @@ def test_remove_active_falls_back_then_empties() -> None:
     assert s.casing_overrides == {}
 
 
+def test_document_source_tagging() -> None:
+    """The switcher badge tracks where the well came from (DB/APD/WCR)."""
+    s = AppState()
+    s.primary = _hdr("4301354722", name="A")
+    s.headers = [s.primary]
+    id_a = w.upsert_active_document(s)
+    assert s.documents[id_a].source == "DB"
+
+    s.apd_data = "APD"
+    w.upsert_active_document(s)
+    assert s.documents[id_a].source == "APD"
+
+    s.wcr_data = "WCR"
+    w.upsert_active_document(s)
+    assert s.documents[id_a].source == "APD+WCR"
+
+    # Switching away refreshes the outgoing buffer's source too.
+    s.primary = _hdr("4301399999", name="B")
+    s.headers = [s.primary]
+    s.apd_data = None
+    s.wcr_data = "WCR_B"
+    id_b = w.upsert_active_document(s)
+    assert s.documents[id_b].source == "WCR"
+    w.switch_document(s, id_a)
+    assert s.documents[id_b].source == "WCR"
+
+
 def test_upsert_without_primary_is_noop() -> None:
     s = AppState()
     assert w.upsert_active_document(s) is None

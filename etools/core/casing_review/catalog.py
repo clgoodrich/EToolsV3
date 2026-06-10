@@ -39,7 +39,7 @@ class CasingCatalog:
         if not self._path.exists():
             raise FileNotFoundError(
                 f"Casing catalog DB not found at {self._path}. "
-                "Build it with `python tools/build_casing_catalog.py`."
+                "Build it with `python scripts/build_casing_catalog.py`."
             )
         # check_same_thread=False so we can pass the connection across
         # the NiceGUI / asyncio executor boundaries.

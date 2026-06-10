@@ -19,7 +19,7 @@ Schema (etools/data/casing_catalog.sqlite, table casing_strength):
     drift_sd_in      REAL    Special-drift diameter (in, may be NULL)
 
 Usage:
-    .venv/Scripts/python tools/build_casing_catalog.py [path/to/source.xlsx]
+    .venv/Scripts/python scripts/build_casing_catalog.py [path/to/source.xlsx]
 """
 
 from __future__ import annotations
@@ -31,7 +31,9 @@ from pathlib import Path
 import openpyxl
 
 REPO = Path(__file__).resolve().parents[1]
-DEFAULT_SRC = REPO / "tests" / "Casing Review_43013537270000_Myton City UT 16-23 3-2-25-36-7H.xlsx"
+DEFAULT_SRC = (
+    REPO / "tests" / "fixtures" / "reference" / "Casing Review_43013537270000_Myton City UT 16-23 3-2-25-36-7H.xlsx"
+)
 DEST = REPO / "etools" / "data" / "casing_catalog.sqlite"
 
 

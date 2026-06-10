@@ -26,8 +26,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Literal
 
-import numpy as np
-from shapely.geometry import LineString, Polygon
+from shapely.geometry import LineString, Point, Polygon
 
 Side = Literal["N", "S", "E", "W"]
 
@@ -94,16 +93,7 @@ def perpendicular_distance(point_x: float, point_y: float, line: LineString) -> 
     """Shortest distance from a point to a line, in the line's CRS units (meters here)."""
     if line is None:
         return float("nan")
-    return float(line.distance(_as_point(point_x, point_y)))
-
-
-# Light helper to avoid an extra Point allocation per call when calculator
-# needs many distances.
-from shapely.geometry import Point as _ShPoint
-
-
-def _as_point(x: float, y: float) -> _ShPoint:
-    return _ShPoint(x, y)
+    return float(line.distance(Point(point_x, point_y)))
 
 
 # Convenience for the calculator: produce all four distances at once.

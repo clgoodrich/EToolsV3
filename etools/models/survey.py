@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Literal
 
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field

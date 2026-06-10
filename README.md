@@ -85,25 +85,37 @@ EToolsV3/
 │   │   ├── survey/                 # min-curvature, KOP, magnetic field
 │   │   ├── plat/                   # spatial-join points → sections
 │   │   ├── clearance/              # FNL/FSL/FEL/FWL footages
-│   │   ├── wcr/                    # Excel generator
-│   │   ├── pdf/                    # Docling + LLM-backed PDF parser
+│   │   ├── wcr/                    # WCR Excel generator
+│   │   ├── casing_review/          # Casing Review generator + template
+│   │   ├── pdf/                    # Docling + LLM-backed PDF parsers
 │   │   └── llm/                    # Ollama JSON-schema client
-│   ├── data/db/                    # SQLAlchemy engine factories
+│   ├── db/                         # SQLAlchemy engine factories
 │   ├── models/                     # Pydantic DTOs
 │   ├── repositories/               # parameterized SQL access
 │   ├── services/                   # workflow orchestration
 │   └── ui/                         # NiceGUI tabs + state
 │
 ├── data/                           # SQLite reference DBs (PLSS, casing)
-├── output/                         # generated WCR .xlsx files
-├── tests/                          # pytest, current package only
+├── output/                         # generated .xlsx files + eval CSVs
 ├── logs/
+│
+├── tests/                          # pytest suite
+│   ├── test_*.py / conftest.py
+│   ├── fixtures/
+│   │   ├── wcr/                    # WCR Form 8 PDFs (regression corpus)
+│   │   ├── apd/                    # drilling-permit PDFs (gitignored)
+│   │   ├── plat/                   # plat-page OCR artifacts
+│   │   └── reference/              # hand-made reference workbooks (gitignored)
+│   └── APD/                        # bulk Casing Review corpus (~800 MB, gitignored)
+│
+├── scripts/                        # dev utilities (catalog builders, eval,
+│                                   # batch compare, plat OCR diagnostics)
 │
 ├── archive/                        # deprecated code, kept for reference only
 │   ├── legacy_pyqt/                # original PyQt5 stack (~14k LOC)
 │   ├── legacy_refactor/            # half-done rewrite's package directories
 │   ├── docs/                       # superseded README / DEPLOYMENT
-│   └── misc/                       # screenshots, old WCRs, legacy requirements
+│   └── misc/                       # screenshots, old WCR template, legacy requirements
 │
 ├── pyproject.toml                  # build + deps
 ├── .env.example
@@ -112,9 +124,7 @@ EToolsV3/
 ├── Launch ETools.bat               # ← double-click launchers
 ├── Launch ETools (Silent).vbs
 ├── Stop ETools.bat
-├── Install Desktop Shortcut.ps1
-├── WCR_Empty.xlsm                  # legacy WCR template (referenced by code)
-└── application_*.pdf               # operator drilling-permit PDFs (gitignored)
+└── Install Desktop Shortcut.ps1
 ```
 
 ## Workflow at a glance
@@ -167,5 +177,6 @@ ETOOLS_LOG_LEVEL=INFO
 pytest tests/ -v
 ```
 
-The new test suite is intentionally small. Legacy tests for the old refactor
-live under `archive/legacy_refactor/tests/` and are not maintained.
+Test fixtures (WCR PDFs, reference workbooks, plat OCR artifacts) live under
+`tests/fixtures/`. Legacy tests for the old refactor live under
+`archive/legacy_refactor/tests/` and are not maintained.

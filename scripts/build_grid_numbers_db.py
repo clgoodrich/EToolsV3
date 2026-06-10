@@ -20,7 +20,7 @@ Schema (etools/data/grid_numbers.sqlite, table grid_corner):
     north_ref        TEXT      "G" (Grid) or "T" (True)
 
 Usage:
-    .venv/Scripts/python tools/build_grid_numbers_db.py [path/to/source.xlsx]
+    .venv/Scripts/python scripts/build_grid_numbers_db.py [path/to/source.xlsx]
 """
 
 from __future__ import annotations
@@ -32,7 +32,9 @@ from pathlib import Path
 import openpyxl
 
 REPO = Path(__file__).resolve().parents[1]
-DEFAULT_SRC = REPO / "tests" / "Casing Review_43013537270000_Myton City UT 16-23 3-2-25-36-7H.xlsx"
+DEFAULT_SRC = (
+    REPO / "tests" / "fixtures" / "reference" / "Casing Review_43013537270000_Myton City UT 16-23 3-2-25-36-7H.xlsx"
+)
 DEST = REPO / "etools" / "data" / "grid_numbers.sqlite"
 
 

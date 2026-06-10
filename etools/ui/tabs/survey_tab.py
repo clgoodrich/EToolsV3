@@ -54,7 +54,7 @@ def render_survey_tab(state: AppState) -> Callable[[], None]:
                 value=SurveyFrame.TRUE.value,
                 on_change=_on_frame_change,
             ).props("dense")
-            process_btn = ui.button(
+            ui.button(
                 "Process Survey", icon="memory", on_click=lambda: process()
             ).props("color=primary")
             point_count = ui.label("").classes("text-sm text-gray-500 ml-4")

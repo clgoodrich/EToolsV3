@@ -51,7 +51,7 @@ class GridCornerCatalog:
         if not self._path.exists():
             raise FileNotFoundError(
                 f"Grid Numbers DB not found at {self._path}. Build with "
-                "`python tools/build_grid_numbers_db.py`."
+                "`python scripts/build_grid_numbers_db.py`."
             )
         self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
@@ -208,18 +208,3 @@ def derive_section_corners(
                 )
             )
     return out
-
-
-# Helpers for converting "N"/"S"/"E"/"W" and baseline names into the
-# integer codes the schema stores.
-def encode_township_dir(d: str | None) -> int:
-    return 2 if (d or "").upper() == "S" else 1
-
-
-def encode_range_dir(d: str | None) -> int:
-    return 2 if (d or "").upper() == "W" else 1
-
-
-def encode_baseline(m: str | None) -> int:
-    """Meridian letter → baseline code. U = Uintah → 2, S = Salt Lake → 1."""
-    return 2 if (m or "").upper() == "U" else 1

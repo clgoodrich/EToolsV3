@@ -18,9 +18,9 @@ from pathlib import Path
 import pytest
 from openpyxl import load_workbook
 
-REPO = Path(__file__).resolve().parents[1]
-REF_XLSX = REPO / "tests" / "South_Moon_5-31-32-C4-3H_4301353996_WCR.xlsx"
-PDF = REPO / "tests" / "WCR 43013539960000.pdf"
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+REF_XLSX = FIXTURES / "reference" / "South_Moon_5-31-32-C4-3H_4301353996_WCR.xlsx"
+PDF = FIXTURES / "wcr" / "WCR 43013539960000.pdf"
 API = "4301353996"
 
 

@@ -172,18 +172,28 @@ def render_load_tab(
                             .props("dense outlined")
                             .classes("w-56")
                         )
-                        cache["wcr_pages"] = (
+                        cache["wcr_scope"] = (
                             ui.select(
                                 options={
-                                    "5": "First 5 pages (Form 8)",
-                                    "10": "First 10 pages",
-                                    "all": "All pages (incl. DDR)",
+                                    "5": "First 5 pages (Form 8 fields)",
+                                    "all": "Whole PDF",
+                                    "ops": "Whole PDF + Parse Operations (slow)",
                                 },
                                 value="5",
-                                label="Pages",
+                                label="Scope",
                             )
                             .props("dense outlined")
-                            .classes("w-56")
+                            .classes("w-72")
+                            .tooltip(
+                                "First 5 pages: fastest — Form 8 fields are "
+                                "always up front. Whole PDF: run the field "
+                                "extraction over every page. + Parse "
+                                "Operations: also have Ollama write the "
+                                "plain-English ops summary + per-entry "
+                                "translations (minutes per job). The ops log "
+                                "as written shows on the WCR tab with every "
+                                "scope — it's read from the full PDF for free."
+                            )
                         )
                         cache["wcr_parse_btn"] = ui.button(
                             "Parse WCR",
@@ -194,6 +204,12 @@ def render_load_tab(
                     cache["wcr_status"] = ui.label("No WCR uploaded.").classes(
                         "text-xs text-slate-600"
                     )
+                    cache["wcr_progress"] = (
+                        ui.linear_progress(value=0.0, show_value=False)
+                        .props("instant-feedback color=primary")
+                        .classes("w-full")
+                    )
+                    cache["wcr_progress"].visible = False
 
         ui.separator()
 
@@ -352,10 +368,38 @@ def render_load_tab(
             ui.notify("Upload a WCR PDF first.", type="warning")
             return
         mode = cache["wcr_mode"].value or "rules+llm"
-        pages_val = cache["wcr_pages"].value or "5"
-        max_pages = None if pages_val == "all" else int(pages_val)
+        scope = cache["wcr_scope"].value or "5"
+        max_pages = 5 if scope == "5" else None
+        parse_ops = scope == "ops"
         cache["wcr_parse_btn"].disable()
-        cache["wcr_status"].text = f"Parsing {state.wcr_pdf_name} (mode={mode})…"
+        base_status = f"Parsing {state.wcr_pdf_name} (mode={mode})…"
+        cache["wcr_status"].text = base_status
+
+        # Progress reporting: the parse runs in a worker thread, so its
+        # callback only writes into this dict (thread-safe); a UI timer on
+        # the event loop pushes changes into the widgets.
+        prog = {"text": None, "frac": None, "dirty": False}
+
+        def _on_progress(text: str, frac: float | None) -> None:
+            prog["text"], prog["frac"], prog["dirty"] = text, frac, True
+
+        def _push_progress() -> None:
+            if not prog["dirty"]:
+                return
+            prog["dirty"] = False
+            cache["wcr_status"].text = f"{base_status} {prog['text']}"
+            bar = cache["wcr_progress"]
+            if prog["frac"] is None:
+                bar.props("indeterminate")
+            else:
+                bar.props(remove="indeterminate")
+                bar.value = round(float(prog["frac"]), 3)
+
+        bar = cache["wcr_progress"]
+        bar.value = 0.0
+        bar.props("indeterminate")
+        bar.visible = True
+        timer = ui.timer(0.3, _push_progress)
         try:
             data = await asyncio.to_thread(
                 parse_wcr_pdf,
@@ -364,6 +408,8 @@ def render_load_tab(
                 mode=mode,
                 max_pages=max_pages,
                 mine_ddr_events=False,
+                parse_operations=parse_ops,
+                progress=_on_progress,
             )
         except Exception as exc:
             log.exception("load_tab.wcr_parse_failed")
@@ -371,6 +417,9 @@ def render_load_tab(
             cache["wcr_status"].text = "Parse failed."
             cache["wcr_parse_btn"].enable()
             return
+        finally:
+            timer.cancel()
+            bar.visible = False
         state.wcr_data = data
         await _try_db_survey_for_wcr()
         cache["wcr_status"].text = (

@@ -23,9 +23,14 @@ log = get_logger(__name__)
 
 
 def extract_events(record: DDRRecord) -> list[DDRKeyEvent]:
-    """Walk the record's entries and produce typed key events."""
+    """Walk the record's entries and produce typed key events.
+
+    Also stamps ``entry.trouble`` on every entry as a side effect, so
+    problem flags are available wherever the record travels (UI, exports).
+    """
     events: list[DDRKeyEvent] = []
     for entry in record.entries:
+        entry.trouble = detect_trouble(entry)
         for ev in _events_from_entry(entry):
             events.append(ev)
     # De-duplicate. For events with an MD, dedup on (type, md). For events
@@ -50,6 +55,109 @@ def extract_events(record: DDRRecord) -> list[DDRKeyEvent]:
         events=len(unique),
     )
     return unique
+
+
+# ---------------------------------------------------------------------------
+# Trouble detection — "what went wrong" flags
+# ---------------------------------------------------------------------------
+#
+# Rules-based scan of the comment text for operational problems. Unlike
+# the typed extractors below, this works on every appendix layout —
+# daily-block and report-row DDRs have no PT/NPT column or code2 tags,
+# so the comment text is the only signal.
+
+_TROUBLE_PATTERNS: dict[str, re.Pattern[str]] = {
+    "stuck pipe": re.compile(
+        r"\bstuck\b|\bdifferential(?:ly)?\s+st[iu]ck|\bwork(?:ing|ed)?\s+(?:pipe|string|tools?)\s+free"
+        r"|\bjarring\b|\bjar(?:red)?\s+(?:on|free|loose)\b",
+        re.I,
+    ),
+    "fishing": re.compile(
+        r"\bfish(?:ing)?\b|\bovershot\b|\bjunk\s+basket\b|\bleft\s+in\s+hole\b",
+        re.I,
+    ),
+    "twist-off / parted": re.compile(
+        r"\btwist(?:ed)?\s*off\b|\bparted\b|\bback(?:ed)?\s*off\b",
+        re.I,
+    ),
+    "bit problem": re.compile(
+        r"\blost\s+(?:a\s+)?cone\b|\bbit\s+fail(?:ed|ure)?\b|\bbroke(?:n)?\s+bit\b"
+        r"|\bbit\s+balled\b|\br[iu]ng(?:ed)?\s*out\b|\bdull(?:ed)?\s+bit\b",
+        re.I,
+    ),
+    "equipment failure": re.compile(
+        r"\bfail(?:ed|ure)\b|\bbroke(?:n)?\b(?!\s*down\s+(?:pressure|of))|\brepair(?:ed|ing|s)?\b"
+        r"|\bmalfunction\w*\b|\blos(?:ing|t)\s+torque\b|\bdid\s+not\s+(?:stroke|set|fire|test)\b"
+        r"|\bwould\s+not\b|\bnot\s+functioning\b|\bre-?set\s+(?:the\s+)?plug\b",
+        re.I,
+    ),
+    "leak": re.compile(r"\bleak(?:s|ed|ing)?\b", re.I),
+    "washout": re.compile(r"\bwash(?:ed)?\s*out\b", re.I),
+    # NB: a bare "LCM" mention is routine (preventive sweeps/pills every N
+    # strokes) — only actual loss events flag.
+    "lost circulation": re.compile(
+        r"\b(?:lost|losing)\s+(?:\d{1,3}%\s+)?(?:full\s+|partial\s+|total\s+)?"
+        r"(?:circulation|returns)\b"
+        r"|\bloss(?:es)?\s+of\s+returns\b|\bmud\s+loss(?:es)?\b|\btaking\s+losses\b",
+        re.I,
+    ),
+    "well control": re.compile(
+        r"\b(?:took|taking)\s+a\s+kick\b|\bgas\s+kick\b|\bwell\s+control\b"
+        r"|\bflow\s+check\s+positive\b|\bsurging\b|\bkill\s+(?:plug|well|fluid)\b"
+        r"|\bkilled\s+(?:the\s+)?well\b|\bh2s\s+(?:detected|present|alarm)\b",
+        re.I,
+    ),
+    "screen-out": re.compile(r"\bscreen(?:ed)?[-\s]?out\b|\bsand(?:ed)?\s+off\b", re.I),
+    "waiting": re.compile(
+        r"\bwait(?:ing)?\s+on\s+(?:weather|orders|parts|repairs?|equipment|daylight)\b|\bwow\b",
+        re.I,
+    ),
+}
+
+# A match doesn't count when it's negated just before ("no leaks",
+# "none detected", "without losses").
+_NEGATION_RE = re.compile(r"\b(?:no|none|without|w/o|never)\b[^.;:!\n]{0,16}$", re.I)
+
+
+def detect_trouble(entry: DDRTimeLogEntry) -> list[str]:
+    """Return the problem categories present in this entry (rules-only)."""
+    text = " ".join(
+        x for x in (entry.phase, entry.code1, entry.comment) if x
+    )
+    flags: list[str] = []
+    if entry.ops_category == "NPT":
+        flags.append("NPT")
+    if not text:
+        return flags
+    for label, pat in _TROUBLE_PATTERNS.items():
+        for m in pat.finditer(text):
+            if _NEGATION_RE.search(text[: m.start()]):
+                continue  # negated — keep looking for a real one
+            flags.append(label)
+            break
+    return flags
+
+
+def trouble_excerpt(entry: DDRTimeLogEntry, width: int = 90) -> str:
+    """A short comment excerpt around the first trouble match, for display."""
+    text = entry.comment or entry.phase or ""
+    first: int | None = None
+    for label in entry.trouble:
+        pat = _TROUBLE_PATTERNS.get(label)
+        if pat is None:
+            continue
+        for m in pat.finditer(text):
+            if _NEGATION_RE.search(text[: m.start()]):
+                continue
+            if first is None or m.start() < first:
+                first = m.start()
+            break
+    if first is None:
+        return text[: width * 2].strip()
+    lo = max(0, first - width)
+    hi = min(len(text), first + width)
+    snippet = text[lo:hi].replace("\n", " ").strip()
+    return ("…" if lo > 0 else "") + snippet + ("…" if hi < len(text) else "")
 
 
 # ---------------------------------------------------------------------------

@@ -1,7 +1,6 @@
 """Find plat/survey pages in an APD PDF using a local Ollama vision model."""
 import argparse
 import base64
-import io
 import json
 import sys
 import time

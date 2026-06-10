@@ -1,10 +1,10 @@
 """Diagnostic: generate one well, recalc, dump TVDs / Next rows / BOPE sheet."""
 from __future__ import annotations
-import sys, glob, os, subprocess
+import sys
 from pathlib import Path
 import openpyxl
 
-from scripts.compare_apd_batch import find_pairs, recalc, RECALC_DIR
+from scripts.compare_apd_batch import find_pairs, recalc
 from etools.core.pdf.apd_parser import parse_apd_pdf
 from etools.core.casing_review.promote import normalize_survey_dataframe, well_header_from_apd
 from etools.core.casing_review.sections import (
@@ -55,10 +55,11 @@ def main():
     print(f"WELL {api}\n PDF {pdf}")
     out, apd = gen(api, pdf)
     print(f" GEN {out}")
-    print(f" apd.kop_md_ft={apd.kop_md_ft} locations={[l.name for l in apd.locations]}")
+    print(f" apd.kop_md_ft={apd.kop_md_ft} locations={[loc.name for loc in apd.locations]}")
     rc = recalc(Path(out), "diag")
     if rc is None:
-        print(" recalc FAILED"); return
+        print(" recalc FAILED")
+        return
     wb = openpyxl.load_workbook(rc, data_only=True)
     cr = wb["Casing Review"]
     print("\n== Casing Review per-string TVD (B19/B34/B49/B64) & MD set depth ==")

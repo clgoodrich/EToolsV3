@@ -8,8 +8,6 @@ this schema. We use ``DirectionalSurveyHeader`` as the source of truth for
 
 from __future__ import annotations
 
-from typing import Sequence
-
 import pandas as pd
 from sqlalchemy import text
 
@@ -72,32 +70,3 @@ class WellRepository:
             df = pd.read_sql_query(sql, cn, params={"api": api, "lateral": lateral})
         log.info("well.headers", api=api, lateral=lateral, rows=len(df))
         return [_row_to_header(r) for _, r in df.iterrows()]
-
-    def search_by_api_prefix(self, api_prefix: str, limit: int = 25) -> list[WellHeader]:
-        """Type-ahead helper for the UI."""
-        sql = text(
-            f"SELECT TOP (:limit) {_HEADER_COLUMNS} "
-            "FROM DirectionalSurveyHeader "
-            "WHERE APINumber LIKE :pat "
-            "ORDER BY APINumber, LateralName"
-        )
-        with self.engine.connect() as cn:
-            df = pd.read_sql_query(sql, cn, params={"pat": f"{api_prefix}%", "limit": limit})
-        return [_row_to_header(r) for _, r in df.iterrows()]
-
-    def laterals_for_api(self, api: str) -> Sequence[str]:
-        """Distinct laterals known for an API (lets the UI populate a dropdown)."""
-        sql = text(
-            "SELECT DISTINCT LateralName FROM DirectionalSurveyHeader "
-            "WHERE APINumber = :api ORDER BY LateralName"
-        )
-        with self.engine.connect() as cn:
-            return [r[0] for r in cn.execute(sql, {"api": api})]
-
-    def well_exists(self, api: str, lateral: str = "0000") -> bool:
-        sql = text(
-            "SELECT TOP 1 1 FROM DirectionalSurveyHeader "
-            "WHERE APINumber = :api AND LateralName = :lateral"
-        )
-        with self.engine.connect() as cn:
-            return cn.execute(sql, {"api": api, "lateral": lateral}).first() is not None

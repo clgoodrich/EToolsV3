@@ -30,13 +30,12 @@ from typing import Callable
 from nicegui import app, events, ui
 
 from etools.config import settings
-from etools.core.casing_review.bope import build_bope_review
+from etools.core.casing_review.bope import BOPEOverrides, build_bope_review
 from etools.core.casing_review.domain import CasingDesign
 from etools.core.casing_review.engine import (
     CasingDesignEngine,
     welltrack_from_dataframe,
 )
-from etools.core.pdf.apd_parser import parse_apd_pdf
 from etools.core.pdf.parser import parse_survey_pdf
 from etools.logging_setup import get_logger
 from etools.models import APDPdfData
@@ -247,6 +246,7 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
           table.bope td.v { font-weight: 600; font-variant-numeric: tabular-nums; }
           table.bope td.chk { text-align: center; }
           .bope-red { color: #dc2626; font-weight: 800; }
+          .bope-ovr { color: #b45309; font-weight: 800; }
           .opmax { display: inline-block; margin: 6px 0 2px; padding: 5px 11px;
             background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px;
             color: #1e3a8a; font-weight: 500; }
@@ -552,6 +552,7 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
                 section_locations=section_locations or None,
                 dx_survey_locations=dx_survey_locations or None,
                 dx_survey_footages=dx_survey_footages or None,
+                bope_overrides=_bope_overrides_from_state(state),
             )
         except Exception as exc:
             log.exception("casing_review.generate_failed")
@@ -689,7 +690,7 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
             )
             new_design = engine.build(d, welltrack=wt)
             _apply_string_overrides(new_design, state.casing_overrides)
-            _render_bope(cache["bope_card"], new_design, d)
+            _render_bope(cache["bope_card"], new_design, d, state)
             _render_design(cache["design_card"], new_design)
             _render_wbd(cache["wbd_card"], new_design, d)
 
@@ -718,7 +719,7 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
 
         _safe("inputs_card", "inputs_tab",
               lambda c: _render_inputs(c, data, state, on_change=_recompute_downstream))
-        _safe("bope_card", "bope_tab", lambda c: _render_bope(c, design, data))
+        _safe("bope_card", "bope_tab", lambda c: _render_bope(c, design, data, state))
         _safe("design_card", "design_tab", lambda c: _render_design(c, design))
         _safe("sections_card", "sections_tab", lambda c: _render_sections(c, data, state))
         _safe("wbd_card", "wbd_tab", lambda c: _render_wbd(c, design, data))
@@ -963,13 +964,22 @@ def _bope_html(review) -> str:
     # ---- Header input block (one column per string) ----
     body = [f"<tr><td class=corner></td>{th}</tr>"]
     for label, attr, nd in _BOPE_INPUT_ROWS:
-        cells = "".join(f"<td class=v>{_bope_num(getattr(r, attr), nd)}</td>" for r in rows)
-        body.append(f"<tr><td class=lbl>{label}</td>{cells}</tr>")
-    # BOPE Proposed — inferred values shown bold red, permit-stated plain.
+        cells = []
+        for r in rows:
+            txt = _bope_num(getattr(r, attr), nd)
+            # User-edited previous-shoe depths get the override style.
+            if attr == "prev_shoe_tvd_ft" and r.prev_shoe_overridden and txt:
+                txt = f'<span class="bope-ovr">{txt} ✎</span>'
+            cells.append(f"<td class=v>{txt}</td>")
+        body.append(f"<tr><td class=lbl>{label}</td>{''.join(cells)}</tr>")
+    # BOPE Proposed — user-edited values marked ✎, inferred shown bold red,
+    # permit-stated plain.
     prop_cells = []
     for r in rows:
         txt = _bope_num(r.bope_proposed_psi, 0)
-        if txt and not r.bope_proposed_from_pdf:
+        if txt and r.bope_proposed_overridden:
+            txt = f'<span class="bope-ovr">{txt} ✎</span>'
+        elif txt and not r.bope_proposed_from_pdf:
             txt = f'<span class="bope-red">{txt}</span>'
         prop_cells.append(f"<td class=v>{txt}</td>")
     body.append(f"<tr><td class=lbl>BOPE Proposed (psi)</td>{''.join(prop_cells)}</tr>")
@@ -980,9 +990,10 @@ def _bope_html(review) -> str:
     op_line = ""
     if op is not None:
         eq_txt = f" &nbsp;·&nbsp; = {eq:,.1f} ppg equivalent" if eq is not None else ""
+        ovr_txt = ' <span class="bope-ovr">✎</span>' if review.op_max_overridden else ""
         op_line = (
             f"<div class=opmax>Operators Max Anticipated Pressure&nbsp;&nbsp;"
-            f"<b>{op:,.0f} psi</b>{eq_txt}</div>"
+            f"<b>{op:,.0f} psi</b>{ovr_txt}{eq_txt}</div>"
         )
 
     # ---- Per-string Calculations blocks ----
@@ -1027,20 +1038,125 @@ def _bope_html(review) -> str:
     )
 
 
-def _render_bope(card: ui.card, design: CasingDesign, data: APDPdfData | None = None) -> None:
+def _bope_overrides_from_state(state: AppState | None) -> BOPEOverrides:
+    """Build a ``BOPEOverrides`` from the loosely-typed dict on AppState."""
+    raw = (getattr(state, "bope_overrides", None) or {}) if state is not None else {}
+    return BOPEOverrides(
+        prev_shoe_tvd_ft=dict(raw.get("prev_shoe", {})),
+        bope_proposed_psi=dict(raw.get("proposed", {})),
+        op_max_pressure_psi=raw.get("op_max"),
+    )
+
+
+def _render_bope(
+    card: ui.card,
+    design: CasingDesign,
+    data: APDPdfData | None = None,
+    state: AppState | None = None,
+) -> None:
     card.clear()
     psi = getattr(data, "bope_system_psi", None) if data is not None else None
-    review = build_bope_review(design, bope_system_psi=psi)
+    # Defaults with NO overrides applied — these are the placeholder values
+    # the editor shows so the user always sees what "blank" falls back to.
+    base = build_bope_review(design, bope_system_psi=psi)
+
     with card:
-        ui.html(_bope_html(review)).classes("w-full")
-        legend = (
-            "BOPE Proposed shown in <b>bold red</b> is inferred (smallest "
-            "standard 2M/3M/5M/10M/15M rating above the gas MASP); plain "
-            "values come straight from the permit."
+        # ---- Editable inputs (rendered once — edits only redraw the
+        # results box below, so the input firing the event survives). ----
+        if state is not None:
+            _render_bope_editor(state, base, on_change=lambda: _redraw())
+
+        results_box = ui.column().classes("w-full gap-0")
+
+        def _redraw() -> None:
+            review = build_bope_review(
+                design,
+                bope_system_psi=psi,
+                overrides=_bope_overrides_from_state(state),
+            )
+            results_box.clear()
+            with results_box:
+                ui.html(_bope_html(review)).classes("w-full")
+                legend = (
+                    "BOPE Proposed shown in <b>bold red</b> is inferred (smallest "
+                    "standard 2M/3M/5M/10M/15M rating above the gas MASP); plain "
+                    "values come straight from the permit; "
+                    '<span class="bope-ovr">✎</span> marks your edits.'
+                )
+                if psi is not None:
+                    legend += f" Permit states a {psi:,.0f} psi BOP system."
+                ui.html(
+                    f'<div style="font-size:11px;color:#64748b;margin-top:6px">{legend}</div>'
+                )
+
+        _redraw()
+
+
+def _render_bope_editor(state: AppState, base, *, on_change) -> None:
+    """Per-string Previous-Shoe / BOPE-Proposed inputs + the Operators Max
+    Anticipated Pressure input. Blank = use the computed value (shown as the
+    placeholder). Edits land in ``state.bope_overrides`` and cascade through
+    every recomputed BOPE number here and in the generated workbook."""
+    ov = state.bope_overrides
+
+    def _on_edit(group: str, idx: int | None = None):
+        def handler(e) -> None:
+            val = _parse_optional(e.sender.value, cast=float)
+            if group == "op_max":
+                if val is None:
+                    ov.pop("op_max", None)
+                else:
+                    ov["op_max"] = val
+            else:
+                d = ov.setdefault(group, {})
+                if val is None:
+                    d.pop(idx, None)
+                else:
+                    d[idx] = val
+                if not d:
+                    ov.pop(group, None)
+            on_change()
+        return handler
+
+    def _num_input(value, placeholder, handler, width: str = "w-28"):
+        inp = (
+            ui.input(value="" if value is None else f"{value:g}")
+            .props(f'dense outlined placeholder="{placeholder}"')
+            .classes(width)
         )
-        if psi is not None:
-            legend += f" Permit states a {psi:,.0f} psi BOP system."
-        ui.html(f'<div style="font-size:11px;color:#64748b;margin-top:6px">{legend}</div>')
+        inp.on("blur", handler)
+        inp.on("keydown.enter", handler)
+
+    ui.label("BOPE inputs (editable)").classes("text-sm font-semibold")
+    ui.label(
+        "Type to override the computed value; blank a box to revert. Every "
+        "BOPE calculation below — and the BOPE sheet of the generated "
+        "workbook — recomputes from what you enter."
+    ).classes("text-xs text-gray-600 mb-1")
+
+    for idx, r in enumerate(base.strings):
+        with ui.row().classes("items-center gap-1 flex-wrap p-2 rounded bg-slate-50"):
+            ui.label(r.label).classes("font-semibold w-24 text-xs")
+            ui.label("prev shoe TVD (ft)").classes("text-xs text-gray-500")
+            _num_input(
+                ov.get("prev_shoe", {}).get(idx),
+                _bope_num(r.prev_shoe_tvd_ft, 0),
+                _on_edit("prev_shoe", idx),
+            )
+            ui.label("BOPE proposed (psi)").classes("text-xs text-gray-500")
+            _num_input(
+                ov.get("proposed", {}).get(idx),
+                _bope_num(r.bope_proposed_psi, 0),
+                _on_edit("proposed", idx),
+            )
+    with ui.row().classes("items-center gap-1 flex-wrap p-2 rounded bg-slate-50"):
+        ui.label("Operators Max").classes("font-semibold w-24 text-xs")
+        ui.label("anticipated pressure (psi)").classes("text-xs text-gray-500")
+        _num_input(
+            ov.get("op_max"),
+            _bope_num(base.operators_max_anticipated_pressure_psi, 0),
+            _on_edit("op_max"),
+        )
 
 
 def _render_design(card: ui.card, design: CasingDesign) -> None:

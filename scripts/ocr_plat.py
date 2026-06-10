@@ -10,13 +10,12 @@ Also writes an annotated PNG and a JSON dump for inspection.
 import argparse
 import json
 import re
-import sys
 import time
 from pathlib import Path
 
 import fitz
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
 # Bearing: N 89°42'15" E  (or with d/deg, ', ", spaces optional)
 BEARING_RE = re.compile(
@@ -86,7 +85,7 @@ def main() -> int:
     ap.add_argument("--dpi", type=int, default=300)
     ap.add_argument("--gpu", action="store_true", default=True)
     ap.add_argument("--no-gpu", dest="gpu", action="store_false")
-    ap.add_argument("--out-dir", type=Path, default=Path("tests"))
+    ap.add_argument("--out-dir", type=Path, default=Path("tests/fixtures/plat"))
     args = ap.parse_args()
 
     print(f"Rendering {args.pdf.name} page {args.page} @ {args.dpi} dpi...")

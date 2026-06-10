@@ -67,6 +67,3 @@ class WellService:
             total_points=sum(len(df) for df in surveys.values()),
         )
         return WellBundle(headers=headers, primary=primary, surveys=surveys)
-
-    def laterals_for(self, api: str) -> list[str]:
-        return list(self.well_repo.laterals_for_api(api))

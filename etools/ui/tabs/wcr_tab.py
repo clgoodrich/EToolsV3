@@ -22,12 +22,10 @@ import traceback
 from pathlib import Path
 from typing import Callable
 
-import pandas as pd
 from nicegui import app, events, ui
 
 from etools.config import settings
 from etools.core.pdf.parser import parse_survey_pdf
-from etools.core.pdf.wcr_parser import parse_wcr_pdf
 from etools.logging_setup import get_logger
 from etools.models import WCRPdfData
 from etools.repositories import SurveyRepository
@@ -147,7 +145,7 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
                     .props("dense outlined")
                     .classes("w-44")
                 )
-                legacy_generate_btn = ui.button(
+                ui.button(
                     "Generate from DB", icon="description", on_click=lambda: generate_legacy()
                 ).props("color=primary")
                 legacy_status = ui.label("").classes("text-sm text-gray-500 ml-2")
@@ -345,7 +343,6 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
                 # Only treat a cell as an "override" when the user actually
                 # changed it (within ±0.5 ft of the original = no change,
                 # because the input display is rounded to whole feet).
-                md_changed = md_val is not None and not _close(md_val, w.get("orig_md"), 0.5)
                 e_changed = e_val is not None and not _close(e_val, w.get("orig_easting"), 0.5)
                 n_changed = n_val is not None and not _close(n_val, w.get("orig_northing"), 0.5)
                 edit = {"name": row.name}
@@ -558,11 +555,10 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
             _refresh_generate_button()
             _render_wcr_metadata(wcr_meta_card, data)
             wcr_meta_card.visible = True
-            if data.ddrs:
-                _render_ddr_card(ddr_card, data)
-                ddr_card.visible = True
-            else:
-                ddr_card.visible = False
+            # Always render — the card itself says when the PDF has no
+            # Operation Summary appendix at all.
+            _render_ddr_card(ddr_card, data)
+            ddr_card.visible = True
 
         # ---- Legacy DB flow ----
         if state.clearances:
@@ -647,7 +643,21 @@ def _render_ddr_card(card: ui.card, data: WCRPdfData) -> None:
     card.clear()
     with card:
         ui.label("Operation Summary Reports (DDR)").classes("text-sm font-semibold")
+        if not data.ddrs:
+            ui.label(
+                "No Operation Summary Report found in this PDF — it only "
+                "contains the Form 8 (no well-operations appendix)."
+            ).classes("text-xs p-2 rounded bg-slate-100 text-slate-700")
+            return
         for ddr in data.ddrs:
+            # Rules-flagged problems (stuck pipe, equipment failure, …)
+            # surfaced first — no LLM involved.
+            _render_trouble(ddr)
+            # The ops log exactly as the operator wrote it — no LLM
+            # involved, available on every parse scope. Rows are filled
+            # on first open so a 300-entry drilling log doesn't weigh
+            # down the tab render.
+            _render_raw_log(ddr)
             # LLM-generated summary surfaced above the events expansion so
             # the user sees the narrative without having to expand.
             if ddr.summary:
@@ -657,8 +667,28 @@ def _render_ddr_card(card: ui.card, data: WCRPdfData) -> None:
                     )
                     ui.label("(LLM-generated)").classes("text-xs text-gray-400")
                 ui.label(ddr.summary).classes(
-                    "text-sm text-gray-800 p-2 rounded bg-blue-50 border border-blue-200"
+                    "text-sm text-gray-800 p-2 rounded bg-blue-50 "
+                    "border border-blue-200 max-w-4xl break-words"
                 )
+
+            # Per-entry plain-English translations next to the original log
+            # text — only present when the user checked 'Parse Operations'
+            # at load time.
+            translated = [e for e in ddr.entries if e.plain_english]
+            if translated or ddr.narrative:
+                with ui.expansion(
+                    f"{ddr.job_category or 'DDR'} — operations, plain English "
+                    "(LLM-generated)",
+                    icon="menu_book",
+                    value=False,
+                ).classes("w-full"):
+                    if translated:
+                        _render_ops_translations(ddr)
+                    else:
+                        ui.markdown(ddr.narrative).classes(
+                            "text-sm text-gray-800 p-2 rounded bg-emerald-50 "
+                            "border border-emerald-200 max-w-4xl break-words"
+                        )
 
             with ui.expansion(
                 f"{ddr.job_category or 'DDR'} — "
@@ -697,6 +727,132 @@ def _render_ddr_card(card: ui.card, data: WCRPdfData) -> None:
                     ui.table(
                         columns=columns, rows=rows, row_key="desc"
                     ).classes("w-full text-xs").props("dense flat bordered")
+
+
+def _render_trouble(ddr) -> None:
+    """Problems the rules layer flagged in the ops log, with excerpts."""
+    from etools.core.pdf.ddr_events import trouble_excerpt
+
+    flagged = [e for e in ddr.entries if e.trouble]
+    if not flagged:
+        return
+    title = (
+        f"⚠ {ddr.job_category or 'DDR'} — {len(flagged)} "
+        f"entr{'y' if len(flagged) == 1 else 'ies'} with problems flagged"
+    )
+    with ui.expansion(title, icon="warning", value=True).classes(
+        "w-full bg-red-50"
+    ):
+        with ui.column().classes("gap-2 max-w-4xl"):
+            for e in flagged:
+                when = e.start_time.strftime("%m-%d") if e.start_time else "?"
+                with ui.row().classes("items-center gap-1 flex-wrap"):
+                    ui.label(when).classes("text-xs font-semibold text-gray-700")
+                    if e.phase:
+                        ui.label(e.phase).classes("text-xs text-gray-500")
+                    for flag in e.trouble:
+                        ui.label(flag).classes(
+                            "text-xs px-2 py-0.5 rounded-full bg-red-100 "
+                            "text-red-800 border border-red-300"
+                        )
+                ui.label(trouble_excerpt(e)).classes(
+                    "text-xs text-gray-700 break-words"
+                )
+
+
+def _render_raw_log(ddr) -> None:
+    """The operations log verbatim — one block per entry, lazily filled."""
+    n = len(ddr.entries)
+    title = (
+        f"{ddr.job_category or 'DDR'} — operations log, as written"
+        + (f" ({n} entries)" if n else "")
+    )
+    with ui.expansion(title, icon="article", value=False).classes("w-full") as exp:
+        holder = ui.column().classes("max-w-4xl gap-1")
+        if not n:
+            with holder:
+                ui.label(
+                    "Job header found, but no log entries could be parsed "
+                    "from this appendix."
+                ).classes("text-xs text-amber-800 p-2 rounded bg-amber-50")
+            return
+
+    filled = {"done": False}
+
+    def _fill(e, holder=holder, ddr=ddr, filled=filled) -> None:
+        if filled["done"] or not getattr(e, "value", False):
+            return
+        filled["done"] = True
+        with holder:
+            for entry in ddr.entries:
+                when = (
+                    entry.start_time.strftime("%m-%d %H:%M")
+                    if entry.start_time
+                    else "?"
+                )
+                bits = [when]
+                if entry.duration_hr is not None:
+                    bits.append(f"{entry.duration_hr:g} h")
+                op = entry.phase or entry.code2 or entry.code1
+                if op:
+                    bits.append(op)
+                if entry.start_depth_ftkb is not None and entry.end_depth_ftkb is not None:
+                    bits.append(
+                        f"{entry.start_depth_ftkb:.0f} → {entry.end_depth_ftkb:.0f} ft"
+                    )
+                if entry.ops_category:
+                    bits.append(entry.ops_category)
+                with ui.row().classes("items-center gap-1 mt-1 flex-wrap"):
+                    ui.label(" · ".join(bits)).classes(
+                        "text-xs font-semibold text-gray-600"
+                    )
+                    for flag in entry.trouble:
+                        ui.label(flag).classes(
+                            "text-xs px-2 py-0.5 rounded-full bg-red-100 "
+                            "text-red-800 border border-red-300"
+                        )
+                box = (
+                    "bg-red-50 border-red-300"
+                    if entry.trouble
+                    else "bg-slate-50 border-slate-200"
+                )
+                ui.label(entry.comment or "—").classes(
+                    "text-xs text-gray-700 whitespace-pre-wrap break-words "
+                    f"p-1 rounded border {box} w-full"
+                )
+
+    exp.on_value_change(_fill)
+
+
+def _render_ops_translations(ddr) -> None:
+    """Side-by-side: original time-log text | caveman plain English."""
+    with ui.grid(columns="1fr 1fr").classes("gap-x-4 gap-y-2 max-w-5xl mt-1"):
+        ui.label("Original log").classes("text-xs font-semibold text-gray-500")
+        ui.label("Plain English").classes("text-xs font-semibold text-gray-500")
+        for e in ddr.entries:
+            if not (e.comment or e.plain_english):
+                continue
+            when = e.start_time.strftime("%m-%d %H:%M") if e.start_time else "?"
+            head = " · ".join(x for x in (when, e.phase or e.code2 or e.code1) if x)
+            orig_box = (
+                "bg-red-50 border-red-300" if e.trouble else "bg-slate-50 border-slate-200"
+            )
+            with ui.column().classes("gap-0 min-w-0"):
+                with ui.row().classes("items-center gap-1 flex-wrap"):
+                    ui.label(head).classes("text-xs font-semibold text-gray-600")
+                    for flag in e.trouble:
+                        ui.label(flag).classes(
+                            "text-xs px-2 py-0.5 rounded-full bg-red-100 "
+                            "text-red-800 border border-red-300"
+                        )
+                ui.label(e.comment or "—").classes(
+                    "text-xs text-gray-600 whitespace-pre-wrap break-words "
+                    f"p-1 rounded border {orig_box}"
+                )
+            ui.label(e.plain_english or "(not translated)").classes(
+                "text-sm text-gray-900 whitespace-pre-wrap break-words p-1 "
+                "rounded bg-emerald-50 border border-emerald-200 self-start min-w-0"
+            )
 
 
 def _render_results(

@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 from welleng.survey import Survey, SurveyHeader
 
-from etools.core.coordinates import aeqd_project, grid_convergence, latlon_to_utm
+from etools.core.coordinates import grid_convergence, latlon_to_utm
 from etools.core.survey.magnetic import lookup_magnetic_field
 from etools.logging_setup import get_logger
 from etools.models import CitingType, ProcessedSurvey, SurveyFrame
@@ -228,7 +228,7 @@ def interpolate_at_md(points: pd.DataFrame, target_md: float) -> dict[str, float
 def _nev_to_latlon(
     n: np.ndarray, e: np.ndarray, lat0: float, lon0: float
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Inverse of aeqd_project — takes (north_ft, east_ft) at origin (lat0, lon0)."""
+    """AEQD-unproject (north_ft, east_ft) at origin (lat0, lon0) back to lat/lon."""
     from pyproj import Proj
 
     proj = Proj(proj="aeqd", datum="WGS84", lat_0=lat0, lon_0=lon0, units="us-ft")

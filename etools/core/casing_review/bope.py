@@ -24,7 +24,7 @@ plus the three YES/NO adequacy checks.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from etools.core.casing_review.domain import CasingDesign, CasingStringDesign
 
@@ -54,6 +54,30 @@ def _min_skip_none(*vals: float | None) -> float | None:
 
 
 @dataclass
+class BOPEOverrides:
+    """User-typed values for the BOPE sheet's hand-entered inputs.
+
+    ``prev_shoe_tvd_ft`` / ``bope_proposed_psi`` are keyed by string index
+    (0=surface, 1=intermediate, …). A missing key means "use the computed
+    value". Every downstream number (MASP checks, pressure at previous
+    shoe, required test pressure, equivalent mud weight) is recomputed
+    from the effective values, so an edit cascades exactly like typing
+    into the workbook cell.
+    """
+
+    prev_shoe_tvd_ft: dict[int, float] = field(default_factory=dict)
+    bope_proposed_psi: dict[int, float] = field(default_factory=dict)
+    op_max_pressure_psi: float | None = None
+
+    def __bool__(self) -> bool:
+        return bool(
+            self.prev_shoe_tvd_ft
+            or self.bope_proposed_psi
+            or self.op_max_pressure_psi is not None
+        )
+
+
+@dataclass
 class BOPEStringReview:
     label: str
     od_in: float | None
@@ -72,6 +96,8 @@ class BOPEStringReview:
     hold_full_at_prev_shoe: bool | None
     required_test_pressure_psi: float | None = None
     max_pressure_allowed_prev_shoe_psi: float | None = None
+    prev_shoe_overridden: bool = False
+    bope_proposed_overridden: bool = False
 
 
 @dataclass
@@ -79,6 +105,7 @@ class BOPEReview:
     strings: list[BOPEStringReview]
     operators_max_anticipated_pressure_psi: float | None
     equivalent_mud_weight_ppg: float | None
+    op_max_overridden: bool = False
 
 
 def _string_review(
@@ -87,6 +114,7 @@ def _string_review(
     *,
     is_surface: bool,
     pdf_psi: float | None,
+    proposed_override: float | None = None,
 ) -> BOPEStringReview:
     tvd = s.set_depth_tvd_ft
     mw = s.mud_weight_ppg
@@ -98,11 +126,15 @@ def _string_review(
         masp_gas_mud = max_bhp - _GAS_MUD_GRAD * tvd
         press_prev = max_bhp - _GAS_MUD_GRAD * (tvd - prev_shoe_tvd)
 
-    # The permit's BOP rating applies below the surface casing (Onshore Order
+    # Precedence: user override → permit-stated rating → inferred. The
+    # permit's BOP rating applies below the surface casing (Onshore Order
     # 2 — installed before drilling out the surface shoe). Surface drilling
     # predates the stack, so the surface rating is always inferred.
-    if pdf_psi is not None and not is_surface:
-        proposed: int | float | None = pdf_psi
+    if proposed_override is not None:
+        proposed: int | float | None = proposed_override
+        from_pdf = False
+    elif pdf_psi is not None and not is_surface:
+        proposed = pdf_psi
         from_pdf = True
     else:
         proposed = proposed_bope_psi(masp_gas)
@@ -125,24 +157,42 @@ def _string_review(
         adequate_gas=(proposed > masp_gas) if (proposed and masp_gas is not None) else None,
         adequate_gas_mud=(proposed > masp_gas_mud) if (proposed and masp_gas_mud is not None) else None,
         hold_full_at_prev_shoe=(prev_shoe_tvd > press_prev) if press_prev is not None else None,
+        bope_proposed_overridden=proposed_override is not None,
     )
 
 
 def build_bope_review(
-    design: CasingDesign, *, bope_system_psi: float | None = None
+    design: CasingDesign,
+    *,
+    bope_system_psi: float | None = None,
+    overrides: BOPEOverrides | None = None,
 ) -> BOPEReview:
     """Compute the per-string BOPE review for a finalized casing design.
 
     ``bope_system_psi`` is the permit-stated BOP rating (``APDPdfData.
     bope_system_psi``). When given it is used as-is for the strings drilled
     with the stack (below surface); otherwise every rating is inferred.
+
+    ``overrides`` carries user-typed previous-shoe depths, proposed BOP
+    ratings, and the operator's max anticipated pressure. Every derived
+    number (MASP adequacy checks, pressure at previous shoe, required test
+    pressure, equivalent mud weight) is recomputed from the effective
+    inputs, so an edit cascades exactly like typing into the workbook.
     """
+    ov = overrides or BOPEOverrides()
     rows: list[BOPEStringReview] = []
     prev_shoe = 0.0  # surface string has no previous casing shoe
     for idx, s in enumerate(design.strings):
-        rows.append(
-            _string_review(s, prev_shoe, is_surface=idx == 0, pdf_psi=bope_system_psi)
+        eff_prev_shoe = ov.prev_shoe_tvd_ft.get(idx, prev_shoe)
+        r = _string_review(
+            s,
+            eff_prev_shoe,
+            is_surface=idx == 0,
+            pdf_psi=bope_system_psi,
+            proposed_override=ov.bope_proposed_psi.get(idx),
         )
+        r.prev_shoe_overridden = idx in ov.prev_shoe_tvd_ft
+        rows.append(r)
         if s.set_depth_tvd_ft is not None:
             prev_shoe = s.set_depth_tvd_ft
 
@@ -174,12 +224,18 @@ def build_bope_review(
         else:
             r.max_pressure_allowed_prev_shoe_psi = r.prev_shoe_tvd_ft
 
-    masps = [r.masp_gas_psi for r in rows if r.masp_gas_psi is not None]
-    op_max = max(masps) if masps else None
+    if ov.op_max_pressure_psi is not None:
+        op_max = ov.op_max_pressure_psi
+        op_max_overridden = True
+    else:
+        masps = [r.masp_gas_psi for r in rows if r.masp_gas_psi is not None]
+        op_max = max(masps) if masps else None
+        op_max_overridden = False
     tvds = [r.setting_depth_tvd_ft for r in rows if r.setting_depth_tvd_ft]
     eq_mw = (op_max / (_BHP_GRAD * max(tvds))) if (op_max and tvds) else None
     return BOPEReview(
         strings=rows,
         operators_max_anticipated_pressure_psi=op_max,
         equivalent_mud_weight_ppg=eq_mw,
+        op_max_overridden=op_max_overridden,
     )

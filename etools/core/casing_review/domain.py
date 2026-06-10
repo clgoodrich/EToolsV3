@@ -8,7 +8,6 @@ DataPrint, Vertical WBD, BOPE summary) without re-parsing.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 # Default minimum design factors used by the Newfield engineering review.

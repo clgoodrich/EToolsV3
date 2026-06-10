@@ -147,13 +147,19 @@ def _parse_one_ddr(chunk: str) -> DDRRecord | None:
     time_log_match = re.search(r"\bTime\s+Log\b", chunk, re.I)
     body = chunk[time_log_match.end():] if time_log_match else chunk
 
-    record.entries = _parse_time_log(body)
+    record.entries, layout = _walk_entries(body)
+    if not record.entries and body is not chunk:
+        # The "Time Log" anchor can match prose inside a comment (e.g.
+        # "...reviewed the time log...") and slice away the real rows —
+        # retry over the whole chunk before giving up.
+        record.entries, layout = _walk_entries(chunk)
     log.info(
         "ddr.parse.one",
         job=record.job_category,
         well=record.well_name,
         api=record.api,
         rows=len(record.entries),
+        layout=layout,
     )
     return record
 
@@ -343,6 +349,169 @@ def _parse_row(
         end_depth_ftkb=end_depth,
         comment=comment,
     )
+
+
+def _walk_entries(body: str) -> tuple[list[DDRTimeLogEntry], str]:
+    """Try each known appendix layout in turn. Returns (entries, layout)."""
+    entries = _parse_time_log(body)
+    if entries:
+        return entries, "time-log"
+    entries = _parse_daily_blocks(body)
+    if entries:
+        return entries, "daily-blocks"
+    entries = _parse_report_rows(body)
+    if entries:
+        return entries, "report-rows"
+    return [], "time-log"
+
+
+# ---------------------------------------------------------------------------
+# Daily-block walker — Peloton's "Operations Summary" report layout
+# ---------------------------------------------------------------------------
+#
+# Some WCRs (e.g. completion jobs) ship the appendix as one block per
+# report period instead of a columnar time log:
+#
+#     6/25/2024 08:00 -  6/25/2024 09:00
+#     Operations at Report Time
+#     Install Tubing head
+#     Operations Next Report Period
+#     MIRU completion rig
+#     Operations Summary
+#     HSM, Reviewed JSA. MIRU, remove night cap. ...
+#     Com
+#     HSM, Reviewed JSA. MIRU, remove night cap. ...
+#
+# Page breaks re-print the report banner ("Operations Summary" + "Com")
+# mid-block; the section collector appends on repeated labels so the
+# continuation text lands back in the right section.
+
+_DAILY_RANGE_RE = re.compile(
+    r"^(\d{1,2}/\d{1,2}/\d{4})\s+(\d{1,2}:\d{2})\s*-\s*"
+    r"(\d{1,2}/\d{1,2}/\d{4})\s+(\d{1,2}:\d{2})\s*$",
+    re.MULTILINE,
+)
+_DAILY_LABELS = {
+    "operations at report time": "at_report",
+    "operations next report period": "next_period",
+    "operations summary": "summary",
+    "com": "com",
+}
+_DAILY_NOISE = (
+    re.compile(r"^RECEIVED:", re.I),
+    re.compile(r"^Page\s+\d+/\d+\s*$", re.I),
+    re.compile(r"^Well Name:", re.I),
+    re.compile(r"^Report Printed:", re.I),
+    re.compile(r"^www\.peloton\.com", re.I),
+    re.compile(r"^Daily Operations(\s+Summary)?\s*$", re.I),
+)
+
+
+def _parse_daily_blocks(body: str) -> list[DDRTimeLogEntry]:
+    """Parse the per-report-period block layout into time-log entries.
+
+    One entry per ``start - end`` date range. The full ``Com`` text (the
+    operator's complete daily account) becomes the comment, falling back
+    to the shorter ``Operations Summary`` when ``Com`` is absent; the
+    "Operations at Report Time" headline becomes the phase.
+    """
+    matches = list(_DAILY_RANGE_RE.finditer(body))
+    rows: list[DDRTimeLogEntry] = []
+    for i, m in enumerate(matches):
+        start = _parse_datetime(f"{m.group(1)} {m.group(2)}")
+        end = _parse_datetime(f"{m.group(3)} {m.group(4)}")
+        nxt = matches[i + 1].start() if i + 1 < len(matches) else len(body)
+        sections: dict[str, list[str]] = {k: [] for k in _DAILY_LABELS.values()}
+        current: str | None = None
+        for raw in body[m.end():nxt].splitlines():
+            ln = raw.strip()
+            if not ln or any(p.match(ln) for p in _DAILY_NOISE):
+                continue
+            key = _DAILY_LABELS.get(ln.lower())
+            if key is not None:
+                current = key
+                continue
+            if current is not None:
+                sections[current].append(ln)
+        comment = (
+            "\n".join(sections["com"]).strip()
+            or "\n".join(sections["summary"]).strip()
+            or None
+        )
+        phase = " ".join(sections["at_report"]).strip() or None
+        duration = (
+            round((end - start).total_seconds() / 3600.0, 2)
+            if start and end
+            else None
+        )
+        rows.append(
+            DDRTimeLogEntry(
+                index=len(rows),
+                start_time=start,
+                end_time=end,
+                duration_hr=duration,
+                phase=phase,
+                comment=comment,
+            )
+        )
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Report-row walker — the numbered "Daily Operations" summary table
+# ---------------------------------------------------------------------------
+#
+# A third appendix layout: one numbered row per report day with only a
+# date pair and a 24-hour summary, no times or depth columns:
+#
+#     Rpt #   Start Date   End Date    24 Hr Summary
+#     2.0     12/25/2022   12/26/2022  Skid Rig, Rig Up, P/U BHA, ...
+#
+# In the extracted text each row flattens to a "<rpt#> <start date>" line,
+# an optional end-date line, then the summary lines.
+
+_REPORT_ROW_RE = re.compile(
+    r"^(\d{1,3})\.\d\s+(\d{1,2}/\d{1,2}/\d{4})\s*$", re.MULTILINE
+)
+_DATE_ONLY_RE = re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$")
+_REPORT_NOISE = _DAILY_NOISE + (
+    re.compile(r"^Rpt #\s*$", re.I),
+    re.compile(r"^Start Date\s*$", re.I),
+    re.compile(r"^End Date\s*$", re.I),
+    re.compile(r"^(24 Hr )?Summary\s*$", re.I),
+    re.compile(r"^Operations Summary\s*$", re.I),
+)
+
+
+def _parse_report_rows(body: str) -> list[DDRTimeLogEntry]:
+    """Parse the numbered daily-summary table into time-log entries."""
+    matches = list(_REPORT_ROW_RE.finditer(body))
+    rows: list[DDRTimeLogEntry] = []
+    for i, m in enumerate(matches):
+        start = _parse_date(m.group(2))
+        nxt = matches[i + 1].start() if i + 1 < len(matches) else len(body)
+        lines = [
+            ln.strip()
+            for ln in body[m.end():nxt].splitlines()
+            if ln.strip() and not any(p.match(ln.strip()) for p in _REPORT_NOISE)
+        ]
+        end = None
+        if lines and _DATE_ONLY_RE.match(lines[0]):
+            end = _parse_date(lines[0])
+            lines = lines[1:]
+        comment = " ".join(lines).strip() or None
+        if comment:
+            comment = re.sub(r"\s+", " ", comment)
+        rows.append(
+            DDRTimeLogEntry(
+                index=len(rows),
+                start_time=start,
+                end_time=end,
+                duration_hr=None,
+                comment=comment,
+            )
+        )
+    return rows
 
 
 def _parse_row_single_line(

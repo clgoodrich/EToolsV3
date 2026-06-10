@@ -13,12 +13,11 @@ from pathlib import Path
 
 import openpyxl
 
-from etools.core.casing_review.bope import build_bope_review
+from etools.core.casing_review.bope import BOPEOverrides, build_bope_review
 from etools.core.casing_review.domain import CasingDesign, CasingStringDesign
 from etools.core.casing_review.footages import (
     footages_to_xy,
     location_footages,
-    polygon_footages,
 )
 from etools.core.casing_review.generator import CASING_REVIEW_TEMPLATE
 from etools.core.casing_review.grid_corners import derive_section_corners
@@ -46,6 +45,7 @@ def write_casing_review(
     dx_survey_footages: list | None = None,
     plat_repo=None,
     bope_system_psi: float | None = None,
+    bope_overrides: BOPEOverrides | None = None,
 ) -> Path:
     """Fill the Casing Review xlsx with both inputs and computed values.
 
@@ -88,13 +88,16 @@ def write_casing_review(
     _write_footer_values(cr, design)
 
     # BOPE sheet: fill its three hand-entered inputs (previous-shoe depth,
-
-    # BOPE sheet: fill its three hand-entered inputs (previous-shoe depth,
     # proposed BOPE rating per string, operator's max anticipated pressure).
     # The rest of the sheet is formula-driven off Casing Review and now
     # resolves once the per-string TVDs are written above.
     if "BOPE" in wb.sheetnames:
-        _write_bope(wb["BOPE"], design, bope_system_psi=bope_system_psi)
+        _write_bope(
+            wb["BOPE"],
+            design,
+            bope_system_psi=bope_system_psi,
+            overrides=bope_overrides,
+        )
 
     # DataPrint panel mirrors per-string outputs into a normalized form.
     if "DataPrint" in wb.sheetnames:
@@ -864,7 +867,13 @@ def _write_footer_values(cr, design: CasingDesign) -> None:
                     cr.cell(fr, col).value = None
 
 
-def _write_bope(ws, design: CasingDesign, *, bope_system_psi: float | None = None) -> None:
+def _write_bope(
+    ws,
+    design: CasingDesign,
+    *,
+    bope_system_psi: float | None = None,
+    overrides: BOPEOverrides | None = None,
+) -> None:
     """Fill the BOPE sheet's three hand-entered inputs.
 
     Everything else on the sheet is a formula off Casing Review (setting
@@ -872,25 +881,35 @@ def _write_bope(ws, design: CasingDesign, *, bope_system_psi: float | None = Non
     written. The template ships these three as stale constants from whatever
     well it was built on; replace them with this well's values.
 
+    User overrides (typed into the app's BOPE tab) are written as literal
+    values — including over the row-7 chain formulas — so the workbook's
+    own formulas cascade from the same effective inputs the tab shows.
+
     Column layout: C=surface, D=intermediate, E=production, F=4th string.
     """
     from openpyxl.styles import Font
 
-    review = build_bope_review(design, bope_system_psi=bope_system_psi)
+    review = build_bope_review(
+        design, bope_system_psi=bope_system_psi, overrides=overrides
+    )
+    cols = ("C", "D", "E", "F")
 
     # Row 7 — Previous Shoe Setting Depth (TVD). D7/E7/F7 are formulas that
     # chain to the prior string's setting depth; only C7 (surface, no prior
     # casing) is a constant. Surface string has no previous shoe → 0.
-    ws["C7"] = 0
+    # A user-overridden depth replaces the chain formula with the literal.
+    ws["C7"] = review.strings[0].prev_shoe_tvd_ft if review.strings else 0
+    for idx, r in enumerate(review.strings[:4]):
+        if r.prev_shoe_overridden:
+            ws[f"{cols[idx]}7"] = r.prev_shoe_tvd_ft
 
-    # Row 9 — BOPE Proposed (psi), per string. Permit-stated ratings are
-    # written plain; inferred ratings are flagged in bold red.
-    cols = ("C", "D", "E", "F")
+    # Row 9 — BOPE Proposed (psi), per string. Permit-stated and user-typed
+    # ratings are written plain; inferred ratings are flagged in bold red.
     for idx, r in enumerate(review.strings[:4]):
         if r.bope_proposed_psi is not None:
             cell = ws[f"{cols[idx]}9"]
             cell.value = r.bope_proposed_psi
-            if not r.bope_proposed_from_pdf:
+            if not r.bope_proposed_from_pdf and not r.bope_proposed_overridden:
                 cell.font = Font(bold=True, color="FFCC0000")
 
     # Row 11 — Operator's Max Anticipated Pressure (psi). F11 converts it to

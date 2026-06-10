@@ -63,6 +63,10 @@ class AppState:
     casing_overrides: dict[int, dict[str, Any]] = field(default_factory=dict)
     # Frac gradient override (psi/ft) the user typed into the input box.
     casing_frac_gradient_psi_per_ft: float | None = None
+    # User edits to the BOPE sheet's hand-entered inputs. Shape:
+    # {"prev_shoe": {idx: float}, "proposed": {idx: float}, "op_max": float}
+    # — idx is the string index (0=Surface…). Missing key = computed value.
+    bope_overrides: dict[str, Any] = field(default_factory=dict)
     # Path of the most recently generated Casing Review xlsx.
     casing_last_output_path: Optional[Path] = None
 

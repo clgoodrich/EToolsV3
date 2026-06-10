@@ -188,7 +188,7 @@ def test_cross_township_disables_continuation(tmp_path) -> None:
         ]
     )
     section_locations = [c.to_location_row() for c in build_section_traversal(locs, pts)]
-    assert [l.section for l in section_locations] == ["5", "32", "8"]
+    assert [loc.section for loc in section_locations] == ["5", "32", "8"]
 
     out = tmp_path / "cr.xlsx"
     write_casing_review(

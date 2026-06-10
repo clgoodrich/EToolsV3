@@ -14,7 +14,7 @@ from sqlalchemy import text
 
 from etools.db import get_engine
 from etools.logging_setup import get_logger
-from etools.models import CasingRow, WCRBundle, WCRWellInfo
+from etools.models import WCRBundle, WCRWellInfo
 
 log = get_logger(__name__)
 

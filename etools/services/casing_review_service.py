@@ -1,11 +1,7 @@
 """Orchestrate APD parsing + casing design + Excel generation.
 
-Two generation paths:
-    * ``generate_template_only``  — legacy template fill (raw APD values).
-    * ``generate``                — full pipeline through the calc engine,
-                                    optionally consuming a directional
-                                    survey to compute TVD at each casing
-                                    set depth.
+``generate`` runs the full pipeline through the calc engine, optionally
+consuming a directional survey to compute TVD at each casing set depth.
 """
 
 from __future__ import annotations
@@ -22,6 +18,7 @@ from etools.core.casing_review.engine import (
     welltrack_from_dataframe,
     welltrack_from_processed_survey,
 )
+from etools.core.casing_review.bope import BOPEOverrides
 from etools.core.casing_review.domain import CasingDesign
 from etools.core.casing_review.writer import write_casing_review
 from etools.core.pdf.apd_parser import parse_apd_pdf
@@ -62,6 +59,7 @@ class CasingReviewService:
         dx_survey_footages: list | None = None,
         output_filename: str | None = None,
         frac_gradient_override_psi_per_ft: float | None = None,
+        bope_overrides: BOPEOverrides | None = None,
     ) -> CasingReviewResult:
         if apd_data is None:
             if not apd_pdf_path:
@@ -99,6 +97,7 @@ class CasingReviewService:
             dx_survey_footages=dx_survey_footages,
             plat_repo=self._plat_repo,
             bope_system_psi=apd_data.bope_system_psi,
+            bope_overrides=bope_overrides,
         )
         log.info(
             "casing_review.generated",

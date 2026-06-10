@@ -49,16 +49,3 @@ class WellHeader(BaseModel):
     plss_location: str | None = None
     upload_filename: str | None = None
     upload_datetime: datetime | None = None
-
-
-class WellLocation(BaseModel):
-    """SHL/BHL coordinates resolved into a single record."""
-
-    api: str
-    lateral: str
-    surface_lat: float
-    surface_lon: float
-    surface_elevation: float | None = None
-    bottom_lat: float | None = None
-    bottom_lon: float | None = None
-    north_reference: str = "true"

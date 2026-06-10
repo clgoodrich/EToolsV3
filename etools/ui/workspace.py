@@ -58,6 +58,7 @@ DOCUMENT_FIELDS: tuple[str, ...] = (
     "casing_survey_label",
     "casing_overrides",
     "casing_frac_gradient_psi_per_ft",
+    "bope_overrides",
     "casing_last_output_path",
     "section_definitions",
     "wcr_data",
@@ -82,6 +83,7 @@ class WellDocument:
     id: str
     label: str
     subtitle: str = ""
+    source: str = ""  # where the well came from: "APD", "WCR", "APD+WCR", "DB"
     data: dict[str, Any] = field(default_factory=dict)
 
 
@@ -106,6 +108,19 @@ def _label_for(state: "AppState") -> tuple[str, str, str]:
     if p.citing_type:
         bits.append(p.citing_type)
     return (doc_id, label, " · ".join(bits))
+
+
+def _source_for(state: "AppState") -> str:
+    """Which document the well came from: APD permit, WCR Form 8, or the DB."""
+    has_apd = getattr(state, "apd_data", None) is not None
+    has_wcr = getattr(state, "wcr_data", None) is not None
+    if has_apd and has_wcr:
+        return "APD+WCR"
+    if has_apd:
+        return "APD"
+    if has_wcr:
+        return "WCR"
+    return "DB"
 
 
 # ---------------------------------------------------------------------------
@@ -159,13 +174,15 @@ def upsert_active_document(state: "AppState") -> str | None:
         return None
     doc = state.documents.get(doc_id)
     snapshot = capture_document_data(state)
+    source = _source_for(state)
     if doc is None:
         state.documents[doc_id] = WellDocument(
-            id=doc_id, label=label, subtitle=subtitle, data=snapshot
+            id=doc_id, label=label, subtitle=subtitle, source=source, data=snapshot
         )
     else:
         doc.label = label
         doc.subtitle = subtitle
+        doc.source = source
         doc.data = snapshot
     state.active_doc_id = doc_id
     return doc_id
@@ -189,6 +206,7 @@ def switch_document(state: "AppState", new_id: str) -> bool:
         cur = state.documents.get(state.active_doc_id)
         if cur is not None:
             cur.data = capture_document_data(state)
+            cur.source = _source_for(state)
     apply_document_data(state, target.data)
     state.active_doc_id = new_id
     return True

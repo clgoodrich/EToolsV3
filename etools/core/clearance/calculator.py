@@ -54,7 +54,8 @@ def calculate_clearances(
     for _, row in located_points.iterrows():
         conc = row.get("Conc")
         if pd.isna(conc) or conc not in section_lookup.index:
-            fnl.append(pd.NA); fsl.append(pd.NA); fel.append(pd.NA); fwl.append(pd.NA)
+            for side in (fnl, fsl, fel, fwl):
+                side.append(pd.NA)
             continue
         if conc not in cache:
             sec = section_lookup.loc[conc]

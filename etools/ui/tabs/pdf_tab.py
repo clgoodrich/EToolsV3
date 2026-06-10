@@ -411,7 +411,6 @@ def render_pdf_tab(
     async def _rerun_llm_body() -> tuple[ParsedSurvey, list[str]] | None:
         """Compute-only — returns ``(result, change_log)``. Caller renders."""
         markdown = parsed_state.get("markdown")
-        tmp_path = parsed_state.get("tmp_path")
         result = parsed_state.get("result") or ParsedSurvey(surveys=pd.DataFrame())
 
         set_progress(0.5, "Re-running text LLM on Docling markdown…")

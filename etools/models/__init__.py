@@ -1,6 +1,6 @@
 """Pydantic DTOs — typed data flowing between repositories, services, and UI."""
 
-from etools.models.well import WellHeader, WellLocation, WellLookup
+from etools.models.well import WellHeader, WellLookup
 from etools.models.survey import (
     CitingType,
     ProcessedSurvey,
@@ -34,7 +34,6 @@ from etools.models.wcr import (
 
 __all__ = [
     "WellHeader",
-    "WellLocation",
     "WellLookup",
     "APDCasingString",
     "APDFormationTop",
