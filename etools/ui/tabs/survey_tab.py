@@ -7,6 +7,7 @@ from typing import Callable
 import pandas as pd
 from nicegui import ui
 
+from etools.core.coordinates import dms_to_decimal, utm_to_latlon
 from etools.logging_setup import get_logger
 from etools.models import SurveyFrame
 from etools.services import SurveyService
@@ -65,6 +66,31 @@ def render_survey_tab(state: AppState) -> Callable[[], None]:
             kop_md_label = ui.label("KOP: —").classes("text-sm")
             landing_md_label = ui.label("Landing: —").classes("text-sm")
             method_label = ui.label("").classes("text-xs text-gray-500")
+
+        # --- Tools: interpolate at an arbitrary MD; reprocess with a new SHL ---
+        tools_row = ui.row().classes("gap-2 items-center flex-wrap")
+        with tools_row:
+            interp_md_input = ui.input("MD (ft)", placeholder="7765").props(
+                "dense outlined"
+            ).classes("w-32")
+            ui.button("Interpolate", icon="vertical_align_center", on_click=lambda: interpolate()).props(
+                "outline"
+            ).tooltip("Interpolate the processed survey at this measured depth")
+            interp_result = ui.label("").classes("text-sm font-mono")
+            ui.label("·").classes("text-gray-400 mx-2")
+            shl_lat_input = ui.input(
+                "New SHL — Lat / Easting", placeholder="40.2701 or 555200"
+            ).props("dense outlined").classes("w-48 font-mono")
+            shl_lon_input = ui.input(
+                "New SHL — Lon / Northing", placeholder="-110.3502 or 4458447"
+            ).props("dense outlined").classes("w-48 font-mono")
+            ui.button(
+                "Reprocess with new SHL", icon="edit_location_alt", on_click=lambda: reprocess_shl()
+            ).props("outline").tooltip(
+                "Re-run survey processing with the surface hole moved here. Takes decimal "
+                "lat/lon, deg min sec, or UTM 12N metres. Recalculate clearances afterwards."
+            )
+        tools_row.set_visibility(False)
 
         grid = ui.aggrid(
             {
@@ -174,6 +200,78 @@ def render_survey_tab(state: AppState) -> Callable[[], None]:
                 else ""
             )
 
+    def interpolate() -> None:
+        result = state.processed.get(citing_select.value)
+        if result is None:
+            ui.notify("Process the survey first.", type="warning")
+            return
+        try:
+            md = float(interp_md_input.value)
+        except (TypeError, ValueError):
+            ui.notify("MD must be numeric.", type="warning")
+            return
+        from etools.core.survey.processor import interpolate_at_md
+
+        points = result.frames[selected_frame["value"]].points
+        try:
+            s = interpolate_at_md(points, md)
+        except Exception as exc:
+            ui.notify(f"Interpolation failed: {exc}", type="negative")
+            return
+        parts = [f"MD {md:,.0f}"]
+        for key, label, digits in (
+            ("inclination", "Inc", 2),
+            ("azimuth", "Azi", 2),
+            ("tvd", "TVD", 1),
+            ("easting", "E", 1),
+            ("northing", "N", 1),
+            ("lat", "Lat", 5),
+            ("lon", "Lon", 5),
+        ):
+            if key in s and s[key] is not None:
+                parts.append(f"{label} {s[key]:,.{digits}f}")
+        interp_result.text = " · ".join(parts)
+
+    def reprocess_shl() -> None:
+        if not state.surveys or not state.headers:
+            ui.notify("Load a well first.", type="warning")
+            return
+        try:
+            a = dms_to_decimal(shl_lat_input.value or "")
+            b = dms_to_decimal(shl_lon_input.value or "")
+        except ValueError as exc:
+            ui.notify(f"Coordinate parse failed: {exc}", type="warning")
+            return
+        # Lat/lon detected by magnitude; bigger numbers are UTM 12N metres.
+        if abs(a) <= 90 and abs(b) <= 180:
+            lat, lon = a, b
+        else:
+            lat, lon = utm_to_latlon(a, b, 12, "N")
+        new_headers = [
+            h.model_copy(update={"surface_lat": lat, "surface_lon": lon})
+            for h in state.headers
+        ]
+        with ui.dialog() as wait_dialog, ui.card():
+            ui.label(f"Reprocessing with SHL at {lat:.5f}, {lon:.5f}…")
+            ui.spinner(size="lg")
+        wait_dialog.open()
+        try:
+            results = survey_service.process(new_headers, state.surveys)
+        except Exception as exc:  # pragma: no cover
+            wait_dialog.close()
+            ui.notify(f"Reprocessing failed: {exc}", type="negative")
+            raise
+        wait_dialog.close()
+        state.processed = results
+        state.clearances = {}
+        ui.notify(
+            f"Reprocessed {len(results)} survey(s) from SHL {lat:.5f}, {lon:.5f}. "
+            "Clearances were cleared — recalculate them on the Clearance tab.",
+            type="positive",
+            multi_line=True,
+        )
+        rerender()
+
     def process() -> None:
         if not state.surveys or not state.headers:
             ui.notify("Load a well first.", type="warning")
@@ -202,11 +300,13 @@ def render_survey_tab(state: AppState) -> Callable[[], None]:
             header_label.text = "Load a well first."
             header_label.visible = True
             controls.set_visibility(False)
+            tools_row.set_visibility(False)
             kop_card.classes("hidden")
             grid.visible = False
             return
         header_label.visible = False
         controls.set_visibility(True)
+        tools_row.set_visibility(True)
         options = sorted(state.surveys.keys())
         citing_select.options = options
         citing_select.value = state.selected_citing or options[0]

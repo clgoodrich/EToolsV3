@@ -123,7 +123,10 @@ class ClearanceService:
             rows.append(_pick_row(df, landing_md, "Landing"))
         rows.append(_pick_row(df, df["measured_depth"].iloc[-1], "BHL"))
 
-        out_cols = ["location", "measured_depth", "azimuth", "label", "FNL", "FSL", "FEL", "FWL"]
+        out_cols = [
+            "location", "measured_depth", "tvd", "easting", "northing",
+            "azimuth", "label", "FNL", "FSL", "FEL", "FWL",
+        ]
         return pd.DataFrame([r for r in rows if r is not None])[out_cols]
 
 
@@ -136,6 +139,9 @@ def _pick_row(df: pd.DataFrame, target_md: float, location_label: str) -> dict |
     return {
         "location": location_label,
         "measured_depth": float(src["measured_depth"]),
+        "tvd": _to_float(src.get("tvd")),
+        "easting": _to_float(src.get("easting")),
+        "northing": _to_float(src.get("northing")),
         "azimuth": float(src.get("azimuth")) if pd.notna(src.get("azimuth")) else None,
         "label": src.get("label"),
         "FNL": _to_float(src.get("FNL")),

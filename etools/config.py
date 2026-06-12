@@ -83,6 +83,10 @@ class Settings(BaseSettings):
 
     output_dir: Path = REPO_ROOT / "output"
 
+    # Personal WCR-processing tracker (V2's TrackingWCR.xlsx). Copy your old
+    # workbook here to keep its history; a new one is created if missing.
+    tracking_workbook: Path = REPO_ROOT / "TrackingWCR.xlsx"
+
     port: int = 8080
     log_level: str = "DEBUG"
 

@@ -7,6 +7,7 @@ from typing import Callable
 import pandas as pd
 from nicegui import ui
 
+from etools.core.coordinates import parse_coord_pair
 from etools.repositories import PlatRepository
 
 
@@ -42,6 +43,7 @@ def render_plat_tab() -> Callable[[], None]:
         with ui.tabs().classes("w-full") as sub_tabs:
             tab_sections = ui.tab("Sections", icon="grid_on")
             tab_adjacent = ui.tab("Adjacency", icon="hub")
+            tab_distance = ui.tab("Distance Checker", icon="straighten")
 
         with ui.tab_panels(sub_tabs, value=tab_sections).classes("w-full"):
             with ui.tab_panel(tab_sections):
@@ -60,6 +62,8 @@ def render_plat_tab() -> Callable[[], None]:
                         "defaultColDef": {"resizable": True, "sortable": True, "filter": True},
                     }
                 ).classes("w-full").style("height: 500px")
+            with ui.tab_panel(tab_distance):
+                _render_distance_checker()
 
     def render_bundle(bundle) -> None:
         if bundle.sections.empty:
@@ -146,3 +150,43 @@ def _parse_int(value: str | None) -> int:
     if not digits:
         raise ValueError("non-numeric")
     return int(digits)
+
+
+# ---------------------------------------------------------------------------
+# Distance checker
+# ---------------------------------------------------------------------------
+
+_COORD_HINT = "555200, 4458447 (UTM m) · 40.2701, -110.3502 · 40 16 12.4 N, 110 21 5.6 W"
+
+
+def _render_distance_checker() -> None:
+    ui.label(
+        "Perpendicular distance from a check point to the line segment A–B. "
+        "Each field takes UTM metres, decimal lat/lon, or deg min sec."
+    ).classes("text-sm text-gray-600")
+    a_input = ui.input("Segment point A", placeholder=_COORD_HINT).props(
+        "dense outlined"
+    ).classes("w-[34rem] font-mono")
+    b_input = ui.input("Segment point B", placeholder=_COORD_HINT).props(
+        "dense outlined"
+    ).classes("w-[34rem] font-mono")
+    c_input = ui.input("Check point", placeholder=_COORD_HINT).props(
+        "dense outlined"
+    ).classes("w-[34rem] font-mono")
+    result = ui.label("").classes("text-base font-medium mt-2")
+
+    def calculate() -> None:
+        from shapely.geometry import LineString, Point
+
+        try:
+            a = parse_coord_pair(a_input.value)
+            b = parse_coord_pair(b_input.value)
+            c = parse_coord_pair(c_input.value)
+        except ValueError as exc:
+            ui.notify(f"Coordinate parse failed: {exc}", type="warning")
+            return
+        meters = LineString([a, b]).distance(Point(c))
+        feet = meters * 3.28084
+        result.text = f"Distance: {feet:,.1f} ft  ({meters:,.1f} m)"
+
+    ui.button("Calculate", icon="straighten", on_click=calculate).props("color=primary")

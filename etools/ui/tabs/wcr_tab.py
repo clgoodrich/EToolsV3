@@ -30,6 +30,7 @@ from etools.logging_setup import get_logger
 from etools.models import WCRPdfData
 from etools.repositories import SurveyRepository
 from etools.services import WCRService
+from etools.services.tracking_service import update_tracking_workbook
 from etools.services.wcr_pdf_service import WCRPdfResult, WCRPdfService
 from etools.ui.promote import promote_wcr_to_active
 from etools.ui.state import AppState
@@ -152,6 +153,39 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
             legacy_controls.set_visibility(False)
 
             legacy_info_card = ui.card().classes("w-full")
+
+        # Personal processing tracker (V2's "Update Personal Record").
+        with ui.expansion(
+            "Personal record — TrackingWCR.xlsx", icon="fact_check", value=False
+        ).classes("w-full"):
+            ui.label(
+                "Logs this WCR review into your tracking workbook — one row per API, "
+                "date filed pulled from the latest sundry, date processed = today."
+            ).classes("text-xs text-gray-500")
+            with ui.row().classes("gap-4 items-center flex-wrap"):
+                ui.label("Submission included:").classes("text-sm text-gray-600")
+                trk_comp = ui.checkbox("Completion summary")
+                trk_drill = ui.checkbox("Drilling summary")
+                trk_cmt = ui.checkbox("Cement bond log")
+                trk_logs = ui.checkbox("Logs")
+                trk_asdrilled = ui.checkbox("As-drilled Excel survey")
+            with ui.row().classes("gap-4 items-center flex-wrap"):
+                trk_action = ui.checkbox("Action taken —")
+                trk_utms = ui.checkbox("UTMs")
+                trk_footages = ui.checkbox("Footages")
+                trk_perfs = ui.checkbox("Perfs")
+                trk_depths = ui.checkbox("Depths")
+                trk_other = ui.input("Other edit").props("dense outlined").classes("w-48")
+                trk_returns = ui.input("Returns", value="0").props(
+                    "dense outlined type=number"
+                ).classes("w-24").tooltip("How many times this WCR was returned to the operator")
+            with ui.row().classes("gap-3 items-center"):
+                ui.button(
+                    "Update Personal Record",
+                    icon="fact_check",
+                    on_click=lambda: update_personal_record(),
+                ).props("color=primary")
+                tracking_status = ui.label("").classes("text-sm text-gray-500")
 
     # ----------------------------------------------------------------------
     # Upload + parse moved to the Load Well tab → From WCR PDF.
@@ -504,6 +538,7 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
                 lateral=state.primary.lateral,
                 summary_footages=clearance.summary,
                 bundle=bundle,
+                points=clearance.points,
             )
         except Exception as exc:  # pragma: no cover
             ui.notify(f"WCR generation failed: {exc}", type="negative")
@@ -511,6 +546,77 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
         rel = Path(path).name
         legacy_status.text = f"Saved {rel}"
         ui.notify(f"WCR generated: {rel}", type="positive")
+
+    def update_personal_record() -> None:
+        # Resolve the well from whichever flow is active (DB load or WCR PDF).
+        api = well_name = operator = None
+        if state.primary is not None:
+            api = state.primary.api
+            well_name = state.primary.well_name
+            operator = state.primary.operator
+        data = cache.get("wcr_data")
+        if not api and data is not None and data.api:
+            api = data.api[:10]
+        if data is not None:
+            well_name = well_name or data.well_name
+            operator = operator or data.operator
+        if not api:
+            ui.notify("Load a well or parse a WCR PDF first.", type="warning")
+            return
+
+        sundry_no = date_filed = None
+        try:
+            sub = wcr_service.repo.get_latest_wcr_submission(api)
+        except Exception as exc:
+            sub = None
+            log.warning("tracking.sundry_lookup_failed", api=api, error=str(exc))
+        if sub:
+            sundry_no = sub.get("sundry_no")
+            date_filed = sub.get("submit_date")
+            well_name = well_name or sub.get("well_name")
+
+        edits = [
+            label
+            for label, on in (
+                ("utms", trk_utms.value),
+                ("footages", trk_footages.value),
+                ("perfs", trk_perfs.value),
+                ("depths", trk_depths.value),
+            )
+            if on
+        ]
+        if (trk_other.value or "").strip():
+            edits.append(trk_other.value.strip())
+
+        try:
+            path = update_tracking_workbook(
+                path=settings.tracking_workbook,
+                api=api,
+                well_name=well_name,
+                operator=operator,
+                sundry_no=sundry_no,
+                date_filed=date_filed,
+                returns=int(float(trk_returns.value or 0)),
+                action_taken=bool(trk_action.value) or bool(edits),
+                comp_sum=bool(trk_comp.value),
+                drill_sum=bool(trk_drill.value),
+                cement_log=bool(trk_cmt.value),
+                logs_included=bool(trk_logs.value),
+                as_drilled_excel=bool(trk_asdrilled.value),
+                edits=edits,
+            )
+        except PermissionError:
+            ui.notify(
+                "TrackingWCR.xlsx is open in Excel — close it and try again.",
+                type="negative",
+            )
+            return
+        except Exception as exc:
+            ui.notify(f"Tracking update failed: {exc}", type="negative")
+            raise
+        filed = f", filed {date_filed:%m/%d/%Y}" if date_filed else " (no sundry date found)"
+        tracking_status.text = f"Saved row for API {api}{filed} → {Path(path).name}"
+        ui.notify("Personal record updated.", type="positive")
 
     def refresh() -> None:
         # ---- Sync WCR data from state into local cache (used by the

@@ -187,7 +187,16 @@ class WCRPdfService:
         # ---- Resolve output path & emit ----
         info = _info_from_pdf(pdf_data)
         out = Path(output_path) if output_path else _default_output_path(pdf_data)
-        path = generate_wcr_excel(info=info, location_rows=location_rows, output_path=out)
+        casing_df, perf_date = _db_extras(pdf_data.api)
+        path = generate_wcr_excel(
+            info=info,
+            location_rows=location_rows,
+            output_path=out,
+            perf_top_md=first_perf,
+            perf_bottom_md=last_perf,
+            perf_date=perf_date,
+            casing=casing_df,
+        )
         log.info("wcr_pdf_service.generated", path=str(path))
         return WCRPdfResult(
             output_path=path,
@@ -259,7 +268,16 @@ class WCRPdfService:
         """Re-emit the Excel using current (possibly edited) location rows."""
         info = _info_from_pdf(pdf_data)
         out = Path(output_path) if output_path else _default_output_path(pdf_data)
-        path = generate_wcr_excel(info=info, location_rows=location_rows, output_path=out)
+        casing_df, perf_date = _db_extras(pdf_data.api)
+        path = generate_wcr_excel(
+            info=info,
+            location_rows=location_rows,
+            output_path=out,
+            perf_top_md=pdf_data.first_perf_md,
+            perf_bottom_md=pdf_data.last_perf_md,
+            perf_date=perf_date,
+            casing=casing_df,
+        )
         log.info("wcr_pdf_service.rewritten", path=str(path))
         return path
 
@@ -287,6 +305,27 @@ class WCRPdfService:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _db_extras(api: str | None) -> tuple[pd.DataFrame | None, str | None]:
+    """Casing table + latest perf date from the DB, when reachable.
+
+    The PDF pipeline must keep working without SQL Server, so any failure
+    here degrades to (None, None) — the workbook simply omits those cells.
+    """
+    if not api:
+        return None, None
+    try:
+        from etools.repositories import WCRRepository
+        from etools.services.wcr_service import _perf_summary
+
+        bundle = WCRRepository().get_bundle(api[:10])
+    except Exception as exc:
+        log.info("wcr_pdf_service.db_extras.unavailable", error=str(exc))
+        return None, None
+    casing = bundle.casing if bundle.casing is not None and not bundle.casing.empty else None
+    _, _, perf_date = _perf_summary(bundle.perforations)
+    return casing, perf_date
 
 
 def _ddr_kop_md(pdf_data: WCRPdfData) -> float | None:

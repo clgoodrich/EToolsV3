@@ -15,6 +15,14 @@ Output schema (matches ``tests/South_Moon_5-31-32-C4-3H_4301353996_WCR.xlsx``):
              Range_Direction | Baseline
     Rows 10-14 : SHL | Control_Point | Frac_Start | Frac_End | BHL
 
+Optional blocks (match the hand-made V2-era workbooks, e.g. the Reay WCR):
+
+    E1:G2  : Perf Top | Perf Bottom | Perf Date header + values
+    Row 16 : casing header — Feature | Top | Bottom | Diam | Weight | Grade |
+             Connection Type | Cement Top | Cement Bottom | Cement Type |
+             Sacks | Yield | Cement Weight
+    Row 17+: one row per hole/casing/cement record
+
 All numbers are written as numbers (not strings).
 """
 
@@ -24,6 +32,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable
 
+import pandas as pd
 from openpyxl import Workbook
 
 from etools.logging_setup import get_logger
@@ -69,14 +78,58 @@ _LOCATION_ORDER: tuple[str, ...] = (
     "BHL",
 )
 
+_CASING_HEADERS: tuple[str, ...] = (
+    "Feature",
+    "Top",
+    "Bottom",
+    "Diam",
+    "Weight",
+    "Grade",
+    "Connection Type",
+    "Cement Top",
+    "Cement Bottom",
+    "Cement Type",
+    "Sacks",
+    "Yield",
+    "Cement Weight",
+)
+
+# Repository column -> output column position (matches _CASING_HEADERS order).
+_CASING_SOURCE_COLS: tuple[str, ...] = (
+    "Feature",
+    "Top_MD",
+    "Bottom_MD",
+    "Diameter",
+    "Weight",
+    "Grade",
+    "ConnectionType",
+    "CementTop",
+    "CementBottom",
+    "CementType",
+    "Sacks",
+    "Yield",
+    "CementWeight",
+)
+
+_CASING_HEADER_ROW = 16
+
 
 def generate_wcr_excel(
     *,
     info: WCRWellInfo,
     location_rows: Iterable[WCRLocationRow],
     output_path: str | Path,
+    perf_top_md: float | None = None,
+    perf_bottom_md: float | None = None,
+    perf_date: str | None = None,
+    casing: pd.DataFrame | None = None,
 ) -> Path:
-    """Write the WCR workbook to ``output_path``. Overwrites if it exists."""
+    """Write the WCR workbook to ``output_path``. Overwrites if it exists.
+
+    ``casing`` takes the WCRRepository frame shape (Feature/Top_MD/.../CementWeight).
+    Perf values and casing rows are optional — omitted blocks leave those
+    cells blank, matching the South Moon reference layout.
+    """
     out_path = Path(output_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -85,6 +138,8 @@ def generate_wcr_excel(
     ws.title = "Sheet"
 
     _write_info(ws, info)
+    if perf_top_md is not None or perf_bottom_md is not None or perf_date:
+        _write_perf_block(ws, perf_top_md, perf_bottom_md, perf_date)
     _write_headers(ws)
 
     by_name = {row.name: row for row in location_rows}
@@ -95,6 +150,9 @@ def generate_wcr_excel(
         if row is None:
             continue
         _write_location(ws, row, r)
+
+    if casing is not None and len(casing):
+        _write_casing(ws, casing)
 
     wb.save(out_path)
     log.info("wcr.excel.saved", path=str(out_path))
@@ -118,6 +176,33 @@ def _write_headers(ws) -> None:
     for col, label in enumerate(_FOOTAGE_HEADERS, start=1):
         if label:  # leave column A header blank to match the reference output
             ws.cell(row=9, column=col, value=label)
+
+
+def _write_perf_block(
+    ws, top_md: float | None, bottom_md: float | None, perf_date: str | None
+) -> None:
+    ws.cell(row=1, column=5, value="Perf Top")
+    ws.cell(row=1, column=6, value="Perf Bottom")
+    ws.cell(row=1, column=7, value="Perf Date")
+    ws.cell(row=2, column=5, value=_round(top_md, 0))
+    ws.cell(row=2, column=6, value=_round(bottom_md, 0))
+    ws.cell(row=2, column=7, value=perf_date)
+
+
+def _write_casing(ws, casing: pd.DataFrame) -> None:
+    for col, label in enumerate(_CASING_HEADERS, start=1):
+        ws.cell(row=_CASING_HEADER_ROW, column=col, value=label)
+    for i, (_, src) in enumerate(casing.iterrows()):
+        r = _CASING_HEADER_ROW + 1 + i
+        for col, name in enumerate(_CASING_SOURCE_COLS, start=1):
+            value = src.get(name)
+            if value is None or pd.isna(value):
+                continue
+            if isinstance(value, (int, float)):
+                value = round(float(value), 2)
+                if value == int(value):
+                    value = int(value)
+            ws.cell(row=r, column=col, value=_serialize(value))
 
 
 def _write_location(ws, row: WCRLocationRow, r: int) -> None:

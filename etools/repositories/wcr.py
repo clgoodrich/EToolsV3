@@ -50,6 +50,33 @@ class WCRRepository:
         )
         return WCRBundle(info=info, casing=casing, perforations=perfs)
 
+    def get_latest_wcr_submission(self, api: str) -> dict | None:
+        """SundryNo + SubmitDate of the most recent WCR sundry for this API.
+
+        Feeds the personal tracking workbook (date-filed / days-to-process).
+        Returns None when the well has no sundry records.
+        """
+        sql = text(
+            """
+            SELECT TOP 1 wi.SundryNo, tas.SubmitDate, ta.Well_Nm
+            FROM tblAPDWCRWellInfo wi
+            INNER JOIN tblAPD ta        ON wi.APDNo = ta.APDNo
+            INNER JOIN tblAPDSundry tas ON ta.API_WellNo = tas.APINO
+            WHERE LEFT(ta.API_WellNo, 10) = :api
+            ORDER BY tas.SubmitDate DESC
+            """
+        )
+        with self.engine.connect() as cn:
+            df = pd.read_sql_query(sql, cn, params={"api": api[:10]})
+        if df.empty:
+            return None
+        row = df.iloc[0]
+        return {
+            "sundry_no": row.get("SundryNo"),
+            "submit_date": _to_dt(row.get("SubmitDate")),
+            "well_name": row.get("Well_Nm"),
+        }
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
@@ -115,6 +142,9 @@ class WCRRepository:
         )
 
     def _get_casing(self, api: str) -> pd.DataFrame:
+        # NB: the view's PKey is the CONSTRUCT key, not the well key —
+        # joining it straight onto well.PKey silently returns another
+        # well's strings whenever the integers collide.
         sql = text(
             """
             SELECT Feature, [Top] AS Top_MD, Bottom AS Bottom_MD,
@@ -122,9 +152,9 @@ class WCRRepository:
                    [Cement Top] AS CementTop, [Cement Bottom] AS CementBottom,
                    [Cement Type] AS CementType,
                    Sacks, Yield, [Cement Weight] AS CementWeight
-            FROM vwDM_ConstructCasingCement vw
-            INNER JOIN well w  ON w.PKey = vw.PKey
+            FROM well w
             INNER JOIN construct c ON c.WellKey = w.PKey
+            INNER JOIN vwDM_ConstructCasingCement vw ON vw.PKey = c.PKey
             WHERE w.WellID = :api
               AND Feature IS NOT NULL
             """
@@ -135,6 +165,10 @@ class WCRRepository:
             return df
 
         df = df.drop_duplicates(keep="first")
+        dropped = sorted(set(df["Feature"]) - set(_CASING_FEATURE_ORDER))
+        if dropped:
+            log.info("wcr.casing.unknown_features_dropped", api=api, features=dropped)
+        df = df[df["Feature"].isin(_CASING_FEATURE_ORDER)]
         df["Feature"] = pd.Categorical(df["Feature"], categories=_CASING_FEATURE_ORDER, ordered=True)
         df = df.sort_values(["Feature", "Bottom_MD"]).reset_index(drop=True)
         return df
@@ -145,8 +179,9 @@ class WCRRepository:
             SELECT MD, TVD, [Top] AS Top_MD, Bottom AS Bottom_MD,
                    [Zone Type] AS ZoneType, Formation, Producing,
                    TDS, [Perf Date] AS PerfDate, Status, Comments
-            FROM vwDM_ConstructPerf vp
-            INNER JOIN well w ON w.PKey = vp.PKey
+            FROM well w
+            INNER JOIN construct c ON c.WellKey = w.PKey
+            INNER JOIN vwDM_ConstructPerf vp ON vp.PKey = c.PKey
             WHERE w.WellID = :api
             ORDER BY MD
             """
