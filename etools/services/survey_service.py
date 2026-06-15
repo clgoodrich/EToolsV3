@@ -41,25 +41,38 @@ class SurveyService:
         self,
         headers: list[WellHeader],
         surveys: dict[str, "object"],
+        *,
+        surface_override: tuple[float, float] | None = None,
+        convergence_override: float | None = None,
     ) -> dict[str, SurveyResult]:
-        """Process every available citing type into both true + grid frames."""
+        """Process every available citing type into both true + grid frames.
+
+        ``surface_override`` ((lat, lon)) and ``convergence_override`` come
+        from the Survey tab's edit tools — they replace the header SHL /
+        computed convergence for every citing type so the whole pipeline
+        (KOP, clearances, WCR, viz) cascades from the edited values.
+        """
         out: dict[str, SurveyResult] = {}
         for citing_type, raw in surveys.items():
             header = _match_header(headers, citing_type)
-            if header.surface_lat is None or header.surface_lon is None:
+            lat, lon = header.surface_lat, header.surface_lon
+            if surface_override is not None:
+                lat, lon = surface_override
+            if lat is None or lon is None:
                 log.warning("survey.skip", citing=citing_type, reason="missing SHL coords")
                 continue
 
             frames = process_survey(
                 raw,
-                surface_lat=header.surface_lat,
-                surface_lon=header.surface_lon,
+                surface_lat=lat,
+                surface_lon=lon,
                 surface_elevation_ft=header.surface_elevation or 0.0,
                 north_reference=header.north_reference,
                 citing_type=citing_type,
                 api=header.api,
                 lateral=header.lateral,
                 grid_scale_factor=header.grid_scale_factor,
+                convergence_override=convergence_override,
             )
             # Geometric build-arc back-projection is the source-independent
             # KOP (matches the start of the build arc); fall back to the

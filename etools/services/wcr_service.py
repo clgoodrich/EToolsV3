@@ -75,19 +75,15 @@ class WCRService:
         safe_name = (info.well_name or info.api_well_no).replace(" ", "_").replace("/", "-")
         out_path = target_dir / f"{safe_name}_{info.api_well_no[:10]}_WCR.xlsx"
 
-        # The processed trajectory's TVD is absolute (elevation + depth);
-        # the WCR convention wants depth below surface.
-        tvd_offset = info.elevation_ft or 0.0
-
         perf_top, perf_bottom, perf_date = _perf_summary(bundle.perforations)
-        rows = self._translate_summary(summary_footages, tvd_offset=tvd_offset)
+        rows = self._translate_summary(summary_footages)
 
         if points is not None and not points.empty and perf_top is not None:
             # Replace the Landing approximation with real perf-anchored rows.
             rows = [r for r in rows if r.name not in ("Frac_Start", "Frac_End")]
-            rows.append(_row_from_points(points, perf_top, "Frac_Start", tvd_offset))
+            rows.append(_row_from_points(points, perf_top, "Frac_Start"))
             if perf_bottom is not None:
-                rows.append(_row_from_points(points, perf_bottom, "Frac_End", tvd_offset))
+                rows.append(_row_from_points(points, perf_bottom, "Frac_End"))
         elif not any(r.name == "Frac_End" for r in rows):
             # No perf data at all — reuse BHL so Frac_End isn't blank.
             bhl = next((r for r in rows if r.name == "BHL"), None)
@@ -107,26 +103,24 @@ class WCRService:
         return path
 
     @staticmethod
-    def _translate_summary(
-        summary: pd.DataFrame, *, tvd_offset: float = 0.0
-    ) -> list[WCRLocationRow]:
+    def _translate_summary(summary: pd.DataFrame) -> list[WCRLocationRow]:
         if summary is None or summary.empty:
             return []
         rows: list[WCRLocationRow] = []
         for _, src in summary.iterrows():
             legacy_name = str(src.get("location", ""))
             mapped = _LOCATION_MAP.get(legacy_name, legacy_name)
-            rows.append(_make_row(src, mapped, tvd_offset))
+            rows.append(_make_row(src, mapped))
         return rows
 
 
-def _make_row(src, name: str, tvd_offset: float) -> WCRLocationRow:
+def _make_row(src, name: str) -> WCRLocationRow:
     plss = _parse_label(src.get("label")) if pd.isna(src.get("Section", None)) or src.get("Section") is None else {}
     tvd = _to_float(src.get("tvd"))
     return WCRLocationRow(
         name=name,
         measured_depth=_to_float(src.get("measured_depth")) or 0.0,
-        tvd=(tvd - tvd_offset) if tvd is not None else 0.0,
+        tvd=tvd if tvd is not None else 0.0,
         easting=_to_float(src.get("easting")) or 0.0,
         northing=_to_float(src.get("northing")) or 0.0,
         fnl=_to_float(src.get("FNL")),
@@ -142,10 +136,10 @@ def _make_row(src, name: str, tvd_offset: float) -> WCRLocationRow:
     )
 
 
-def _row_from_points(points: pd.DataFrame, target_md: float, name: str, tvd_offset: float) -> WCRLocationRow:
+def _row_from_points(points: pd.DataFrame, target_md: float, name: str) -> WCRLocationRow:
     """Pick the survey station nearest ``target_md`` from the clearance frame."""
     idx = (points["measured_depth"] - target_md).abs().idxmin()
-    return _make_row(points.loc[idx], name, tvd_offset)
+    return _make_row(points.loc[idx], name)
 
 
 def _parse_label(label) -> dict[str, str]:

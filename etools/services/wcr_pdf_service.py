@@ -178,11 +178,8 @@ class WCRPdfService:
         located = locate_points(df, bundle.sections)
         with_clearance = calculate_clearances(located, bundle.sections)
 
-        # The trajectory's TVD is absolute (surface elevation + depth-below-KB).
-        # The WCR convention wants depth-below-surface, so subtract elevation.
-        location_rows = [
-            _to_location_row(row, tvd_offset=elev) for _, row in with_clearance.iterrows()
-        ]
+        # The trajectory's TVD is already depth below the elevation reference.
+        location_rows = [_to_location_row(row) for _, row in with_clearance.iterrows()]
 
         # ---- Resolve output path & emit ----
         info = _info_from_pdf(pdf_data)
@@ -253,10 +250,10 @@ class WCRPdfService:
         df = pd.DataFrame(interp_rows)
         located = locate_points(df, sections)
         with_clearance = calculate_clearances(located, sections)
-        return [
-            _to_location_row(row, tvd_offset=elevation_ft)
-            for _, row in with_clearance.iterrows()
-        ]
+        # elevation_ft is retained in the signature for the UI cache shape;
+        # tvd is already depth-below-reference so no offset is applied.
+        _ = elevation_ft
+        return [_to_location_row(row) for _, row in with_clearance.iterrows()]
 
     def rewrite_excel(
         self,
@@ -343,11 +340,11 @@ def _ddr_kop_md(pdf_data: WCRPdfData) -> float | None:
     return min(candidates) if candidates else None
 
 
-def _to_location_row(row, *, tvd_offset: float = 0.0) -> WCRLocationRow:
+def _to_location_row(row) -> WCRLocationRow:
     return WCRLocationRow(
         name=str(row["location"]),
         measured_depth=float(row["measured_depth"]),
-        tvd=float(row.get("tvd", 0.0)) - tvd_offset,
+        tvd=float(row.get("tvd", 0.0)),
         easting=float(row.get("easting", 0.0)),
         northing=float(row.get("northing", 0.0)),
         fnl=_to_float(row.get("FNL")),

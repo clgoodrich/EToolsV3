@@ -27,7 +27,7 @@ from __future__ import annotations
 from nicegui import ui
 
 from etools.logging_setup import get_logger
-from etools.ui.state import AppState
+from etools.ui.state import AppState, reset_survey_edits
 
 log = get_logger(__name__)
 
@@ -73,6 +73,7 @@ async def promote_apd_to_active(state: AppState, *, silent: bool = False) -> boo
         state.selected_citing = None
     state.processed = {}
     state.clearances = {}
+    reset_survey_edits(state)
 
     return await _run_post_load(state, header, what="APD")
 
@@ -126,6 +127,7 @@ async def promote_wcr_to_active(
         state.selected_citing = None
     state.processed = {}
     state.clearances = {}
+    reset_survey_edits(state)
 
     return await _run_post_load(state, header, what="WCR")
 

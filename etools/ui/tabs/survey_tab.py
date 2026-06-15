@@ -1,4 +1,13 @@
-"""Survey tab — citing/frame controls, raw + processed grids, KOP/landing markers."""
+"""Survey tab — citing/frame controls, raw + processed grids, KOP/landing markers.
+
+Survey editing: MD / inclination / azimuth cells are editable in the grid,
+stations can be added at an interpolated MD or deleted, the SHL and the
+convergence angle can be overridden. Every edit mutates the raw survey
+(``state.surveys``) or an override field and re-runs ``state.post_load`` —
+the same pipeline a fresh load uses — so TVD, KOP, clearances, the map,
+and the WCR all cascade from the edited values. "Restore original survey"
+reverts everything.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +17,14 @@ import pandas as pd
 from nicegui import ui
 
 from etools.core.coordinates import dms_to_decimal, utm_to_latlon
+from etools.core.survey import lookup_magnetic_field
+from etools.core.survey.edits import (
+    delete_station,
+    displayed_to_native_azimuth,
+    insert_station,
+    interpolate_raw_station,
+    update_station,
+)
 from etools.logging_setup import get_logger
 from etools.models import SurveyFrame
 from etools.services import SurveyService
@@ -16,6 +33,11 @@ from etools.ui.state import AppState
 log = get_logger(__name__)
 
 _FRAME_LABELS = {SurveyFrame.TRUE: "True North", SurveyFrame.GRID: "Grid North"}
+
+_MD_FIELDS = ("measured_depth", "MeasuredDepth")
+_INC_FIELDS = ("inclination", "Inclination")
+_AZI_FIELDS = ("azimuth", "Azimuth")
+_EDITABLE_FIELDS = set(_MD_FIELDS) | set(_INC_FIELDS) | set(_AZI_FIELDS)
 
 
 def render_survey_tab(state: AppState) -> Callable[[], None]:
@@ -67,15 +89,17 @@ def render_survey_tab(state: AppState) -> Callable[[], None]:
             landing_md_label = ui.label("Landing: —").classes("text-sm")
             method_label = ui.label("").classes("text-xs text-gray-500")
 
-        # --- Tools: interpolate at an arbitrary MD; reprocess with a new SHL ---
+        # --- Edit tools. Every action below cascades through post_load. ---
         tools_row = ui.row().classes("gap-2 items-center flex-wrap")
         with tools_row:
             interp_md_input = ui.input("MD (ft)", placeholder="7765").props(
                 "dense outlined"
             ).classes("w-32")
-            ui.button("Interpolate", icon="vertical_align_center", on_click=lambda: interpolate()).props(
-                "outline"
-            ).tooltip("Interpolate the processed survey at this measured depth")
+            ui.button(
+                "Interpolate + Add", icon="add_circle", on_click=lambda: interpolate()
+            ).props("outline").tooltip(
+                "Interpolate INC/AZI at this MD and insert the station into the survey"
+            )
             interp_result = ui.label("").classes("text-sm font-mono")
             ui.label("·").classes("text-gray-400 mx-2")
             shl_lat_input = ui.input(
@@ -87,19 +111,50 @@ def render_survey_tab(state: AppState) -> Callable[[], None]:
             ui.button(
                 "Reprocess with new SHL", icon="edit_location_alt", on_click=lambda: reprocess_shl()
             ).props("outline").tooltip(
-                "Re-run survey processing with the surface hole moved here. Takes decimal "
-                "lat/lon, deg min sec, or UTM 12N metres. Recalculate clearances afterwards."
+                "Re-run the whole pipeline with the surface hole moved here. Takes "
+                "decimal lat/lon, deg min sec, or UTM 12N metres."
             )
         tools_row.set_visibility(False)
+
+        edit_row = ui.row().classes("gap-2 items-center flex-wrap")
+        with edit_row:
+            conv_input = ui.input("Convergence (°)").props("dense outlined").classes(
+                "w-36 font-mono"
+            ).tooltip(
+                "Grid convergence angle used for the True ↔ Grid azimuth conversion. "
+                "Apply an override to re-run the pipeline with your value."
+            )
+            ui.button("Apply convergence", icon="explore", on_click=lambda: apply_convergence()).props(
+                "outline"
+            )
+            ui.label("·").classes("text-gray-400 mx-2")
+            ui.button(
+                "Delete selected station", icon="delete", on_click=lambda: delete_selected()
+            ).props("outline color=negative")
+            ui.button(
+                "Restore original survey", icon="restore", on_click=lambda: restore_original()
+            ).props("outline").tooltip(
+                "Revert all station edits and clear the SHL / convergence overrides"
+            )
+            edit_note = ui.label("").classes("text-xs text-amber-700")
+        edit_row.set_visibility(False)
+
+        ui.label(
+            "Tip: MD, inclination, and azimuth cells are editable — double-click a "
+            "cell, type, press Enter. Changes reprocess the survey and cascade "
+            "through clearances, the map, and the WCR."
+        ).classes("text-xs text-gray-400")
 
         grid = ui.aggrid(
             {
                 "columnDefs": [],
                 "rowData": [],
+                "rowSelection": "single",
                 "defaultColDef": {"resizable": True, "sortable": True, "filter": True},
             }
         ).classes("w-full").style("height: 600px")
         grid.visible = False
+        grid.on("cellValueChanged", lambda e: on_cell_edit(e))
 
     def current_dataframe() -> tuple[pd.DataFrame | None, str]:
         """Returns (dataframe, source_label)."""
@@ -112,6 +167,192 @@ def render_survey_tab(state: AppState) -> Callable[[], None]:
             ps = result.frames[selected_frame["value"]]
             return ps.points, f"processed · {_FRAME_LABELS[selected_frame['value']]}"
         return state.surveys.get(citing), "raw"
+
+    # ------------------------------------------------------------------
+    # Edit helpers — every mutation funnels through _cascade.
+    # ------------------------------------------------------------------
+
+    def _snapshot_original(citing: str) -> None:
+        if citing not in state.surveys_original and citing in state.surveys:
+            state.surveys_original[citing] = state.surveys[citing].copy()
+
+    async def _cascade(note: str) -> None:
+        if state.post_load is None:
+            ui.notify("Pipeline unavailable — reload the page.", type="negative")
+            return
+        ui.notify(note, type="positive")
+        await state.post_load(switch_to_survey=False)
+
+    def _edit_state_note() -> str:
+        bits = []
+        if state.surveys_original:
+            bits.append(f"{len(state.surveys_original)} survey(s) edited")
+        if state.shl_override is not None:
+            bits.append("SHL overridden")
+        if state.convergence_override is not None:
+            bits.append(f"convergence overridden ({state.convergence_override:.4f}°)")
+        return " · ".join(bits)
+
+    async def interpolate() -> None:
+        citing = citing_select.value
+        raw = state.surveys.get(citing)
+        if raw is None or raw.empty:
+            ui.notify("Load a well first.", type="warning")
+            return
+        try:
+            md = float(interp_md_input.value)
+        except (TypeError, ValueError):
+            ui.notify("MD must be numeric.", type="warning")
+            return
+        station = interpolate_raw_station(raw, md)
+        _snapshot_original(citing)
+        state.surveys[citing] = insert_station(raw, md)
+        interp_result.text = (
+            f"added MD {md:,.1f} · Inc {station['Inclination']:.2f}° "
+            f"· Azi {station['Azimuth']:.2f}°"
+        )
+        await _cascade(f"Station added at MD {md:,.1f} ft")
+
+    async def on_cell_edit(e) -> None:
+        args = e.args or {}
+        col = args.get("colId") or (args.get("colDef") or {}).get("field")
+        data = args.get("data") or {}
+        citing = citing_select.value
+        raw = state.surveys.get(citing)
+        if raw is None or col not in _EDITABLE_FIELDS:
+            rerender()
+            return
+        try:
+            new_value = float(args.get("newValue"))
+        except (TypeError, ValueError):
+            ui.notify("Value must be numeric.", type="warning")
+            rerender()  # revert the cell display
+            return
+
+        md_key = next((f for f in _MD_FIELDS if f in data), None)
+        try:
+            if col in _MD_FIELDS:
+                old_md = float(args.get("oldValue"))
+            else:
+                old_md = float(data.get(md_key))
+        except (TypeError, ValueError):
+            ui.notify("Could not identify the station's MD.", type="negative")
+            rerender()
+            return
+
+        kwargs: dict[str, float] = {}
+        if col in _MD_FIELDS:
+            kwargs["md"] = new_value
+        elif col in _INC_FIELDS:
+            kwargs["inclination"] = new_value
+        else:
+            # Azimuth typed in the displayed frame → convert to the raw
+            # survey's native north reference before storing.
+            sr = state.processed.get(citing)
+            if sr is not None and col == "azimuth":
+                ps = sr.frames[SurveyFrame.TRUE]
+                declination = 0.0
+                native = (sr.header.north_reference or "true").lower()
+                if (
+                    native.startswith("m")
+                    and sr.header.surface_lat is not None
+                    and sr.header.surface_lon is not None
+                ):
+                    declination = lookup_magnetic_field(
+                        sr.header.surface_lat,
+                        sr.header.surface_lon,
+                        altitude_m=(ps.elevation or 0.0) * 0.3048,
+                    ).declination
+                new_value = displayed_to_native_azimuth(
+                    new_value,
+                    displayed_frame=selected_frame["value"].value,
+                    native_ref=sr.header.north_reference,
+                    convergence=ps.convergence_angle or 0.0,
+                    declination=declination,
+                )
+            kwargs["azimuth"] = new_value
+
+        _snapshot_original(citing)
+        try:
+            state.surveys[citing] = update_station(raw, old_md, **kwargs)
+        except ValueError as exc:
+            ui.notify(
+                f"{exc} — this row isn't an original survey station.",
+                type="warning",
+            )
+            rerender()
+            return
+        await _cascade(f"Station at MD {old_md:,.0f} ft updated")
+
+    async def delete_selected() -> None:
+        citing = citing_select.value
+        raw = state.surveys.get(citing)
+        if raw is None or raw.empty:
+            ui.notify("Load a well first.", type="warning")
+            return
+        rows = await grid.get_selected_rows()
+        if not rows:
+            ui.notify("Select a row in the grid first.", type="warning")
+            return
+        data = rows[0]
+        md_key = next((f for f in _MD_FIELDS if f in data), None)
+        if md_key is None:
+            ui.notify("Selected row has no MD column.", type="negative")
+            return
+        md = float(data[md_key])
+        _snapshot_original(citing)
+        try:
+            state.surveys[citing] = delete_station(raw, md)
+        except ValueError as exc:
+            ui.notify(f"{exc} — this row isn't an original survey station.", type="warning")
+            return
+        await _cascade(f"Deleted station at MD {md:,.0f} ft")
+
+    async def restore_original() -> None:
+        had_edits = bool(state.surveys_original)
+        had_overrides = state.shl_override is not None or state.convergence_override is not None
+        if not had_edits and not had_overrides:
+            ui.notify("No survey edits to undo.", type="info")
+            return
+        for citing, df in state.surveys_original.items():
+            state.surveys[citing] = df.copy()
+        state.surveys_original = {}
+        state.shl_override = None
+        state.convergence_override = None
+        shl_lat_input.value = ""
+        shl_lon_input.value = ""
+        interp_result.text = ""
+        await _cascade("Restored original survey")
+
+    async def apply_convergence() -> None:
+        try:
+            state.convergence_override = float(conv_input.value)
+        except (TypeError, ValueError):
+            ui.notify("Convergence must be numeric (degrees).", type="warning")
+            return
+        await _cascade(f"Convergence set to {state.convergence_override:.4f}°")
+
+    async def reprocess_shl() -> None:
+        if not state.surveys or not state.headers:
+            ui.notify("Load a well first.", type="warning")
+            return
+        try:
+            a = dms_to_decimal(shl_lat_input.value or "")
+            b = dms_to_decimal(shl_lon_input.value or "")
+        except ValueError as exc:
+            ui.notify(f"Coordinate parse failed: {exc}", type="warning")
+            return
+        # Lat/lon detected by magnitude; bigger numbers are UTM 12N metres.
+        if abs(a) <= 90 and abs(b) <= 180:
+            lat, lon = a, b
+        else:
+            lat, lon = utm_to_latlon(a, b, 12, "N")
+        state.shl_override = (lat, lon)
+        await _cascade(f"SHL moved to {lat:.5f}, {lon:.5f}")
+
+    # ------------------------------------------------------------------
+    # Rendering
+    # ------------------------------------------------------------------
 
     def rerender() -> None:
         try:
@@ -151,6 +392,9 @@ def render_survey_tab(state: AppState) -> Callable[[], None]:
         col_defs = []
         for col in cols:
             spec: dict = {"field": col, "headerName": col}
+            if col in _EDITABLE_FIELDS:
+                spec["editable"] = True
+                spec["cellClass"] = "font-medium"
             if pd.api.types.is_numeric_dtype(display_df[col]):
                 cl = col.lower()
                 digits = 5 if ("lat" in cl or "lon" in cl) else 2
@@ -181,7 +425,9 @@ def render_survey_tab(state: AppState) -> Callable[[], None]:
         else:
             point_count.text = f"{len(df)} pts · {source}"
 
-        # KOP/landing markers come from processed data only.
+        edit_note.text = _edit_state_note()
+
+        # KOP/landing markers + convergence come from processed data only.
         result = state.processed.get(citing_select.value)
         if result is None:
             kop_card.classes("hidden")
@@ -199,78 +445,9 @@ def render_survey_tab(state: AppState) -> Callable[[], None]:
                 if result.kop.md is not None
                 else ""
             )
-
-    def interpolate() -> None:
-        result = state.processed.get(citing_select.value)
-        if result is None:
-            ui.notify("Process the survey first.", type="warning")
-            return
-        try:
-            md = float(interp_md_input.value)
-        except (TypeError, ValueError):
-            ui.notify("MD must be numeric.", type="warning")
-            return
-        from etools.core.survey.processor import interpolate_at_md
-
-        points = result.frames[selected_frame["value"]].points
-        try:
-            s = interpolate_at_md(points, md)
-        except Exception as exc:
-            ui.notify(f"Interpolation failed: {exc}", type="negative")
-            return
-        parts = [f"MD {md:,.0f}"]
-        for key, label, digits in (
-            ("inclination", "Inc", 2),
-            ("azimuth", "Azi", 2),
-            ("tvd", "TVD", 1),
-            ("easting", "E", 1),
-            ("northing", "N", 1),
-            ("lat", "Lat", 5),
-            ("lon", "Lon", 5),
-        ):
-            if key in s and s[key] is not None:
-                parts.append(f"{label} {s[key]:,.{digits}f}")
-        interp_result.text = " · ".join(parts)
-
-    def reprocess_shl() -> None:
-        if not state.surveys or not state.headers:
-            ui.notify("Load a well first.", type="warning")
-            return
-        try:
-            a = dms_to_decimal(shl_lat_input.value or "")
-            b = dms_to_decimal(shl_lon_input.value or "")
-        except ValueError as exc:
-            ui.notify(f"Coordinate parse failed: {exc}", type="warning")
-            return
-        # Lat/lon detected by magnitude; bigger numbers are UTM 12N metres.
-        if abs(a) <= 90 and abs(b) <= 180:
-            lat, lon = a, b
-        else:
-            lat, lon = utm_to_latlon(a, b, 12, "N")
-        new_headers = [
-            h.model_copy(update={"surface_lat": lat, "surface_lon": lon})
-            for h in state.headers
-        ]
-        with ui.dialog() as wait_dialog, ui.card():
-            ui.label(f"Reprocessing with SHL at {lat:.5f}, {lon:.5f}…")
-            ui.spinner(size="lg")
-        wait_dialog.open()
-        try:
-            results = survey_service.process(new_headers, state.surveys)
-        except Exception as exc:  # pragma: no cover
-            wait_dialog.close()
-            ui.notify(f"Reprocessing failed: {exc}", type="negative")
-            raise
-        wait_dialog.close()
-        state.processed = results
-        state.clearances = {}
-        ui.notify(
-            f"Reprocessed {len(results)} survey(s) from SHL {lat:.5f}, {lon:.5f}. "
-            "Clearances were cleared — recalculate them on the Clearance tab.",
-            type="positive",
-            multi_line=True,
-        )
-        rerender()
+            conv = result.frames[SurveyFrame.TRUE].convergence_angle
+            if conv is not None:
+                conv_input.value = f"{conv:.4f}"
 
     def process() -> None:
         if not state.surveys or not state.headers:
@@ -281,7 +458,12 @@ def render_survey_tab(state: AppState) -> Callable[[], None]:
             ui.spinner(size="lg")
         wait_dialog.open()
         try:
-            results = survey_service.process(state.headers, state.surveys)
+            results = survey_service.process(
+                state.headers,
+                state.surveys,
+                surface_override=state.shl_override,
+                convergence_override=state.convergence_override,
+            )
         except Exception as exc:  # pragma: no cover
             wait_dialog.close()
             ui.notify(f"Processing failed: {exc}", type="negative")
@@ -301,12 +483,14 @@ def render_survey_tab(state: AppState) -> Callable[[], None]:
             header_label.visible = True
             controls.set_visibility(False)
             tools_row.set_visibility(False)
+            edit_row.set_visibility(False)
             kop_card.classes("hidden")
             grid.visible = False
             return
         header_label.visible = False
         controls.set_visibility(True)
         tools_row.set_visibility(True)
+        edit_row.set_visibility(True)
         options = sorted(state.surveys.keys())
         citing_select.options = options
         citing_select.value = state.selected_citing or options[0]
@@ -331,38 +515,3 @@ def render_survey_tab(state: AppState) -> Callable[[], None]:
         rerender()
 
     return refresh
-
-
-def _numeric_formatter(col: str):
-    name = col.lower()
-    # Latitude / longitude get 5 decimal places (≈1 metre precision); every
-    # other numeric column rounds to 2 decimals.
-    is_lat_lon = "lat" in name or "lon" in name
-    numeric_hint = is_lat_lon or any(
-        token in name
-        for token in (
-            "depth",
-            "north",
-            "east",
-            "azimuth",
-            "incl",
-            " x",
-            "_x",
-            " y",
-            "_y",
-            "dogleg",
-            "section",
-            "tvd",
-            "dls",
-            "offset",
-        )
-    )
-    if not numeric_hint:
-        return None
-    digits = 5 if is_lat_lon else 2
-    return {
-        "function": (
-            "params.value === null || params.value === undefined ? '' : "
-            f"(typeof params.value === 'number' ? params.value.toFixed({digits}) : params.value)"
-        )
-    }

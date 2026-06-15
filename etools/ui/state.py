@@ -29,6 +29,14 @@ class AppState:
     processed: dict[str, SurveyResult] = field(default_factory=dict)
     clearances: dict[str, ClearanceResult] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict)
+    # ---- Survey edit state (Survey tab tools) ---------------------------
+    # Pristine copies of state.surveys, captured per citing type before the
+    # first user edit. "Restore original survey" copies these back.
+    surveys_original: dict[str, pd.DataFrame] = field(default_factory=dict)
+    # Overrides threaded through post_load → SurveyService.process so every
+    # reprocess (and therefore every downstream tab) honors them.
+    shl_override: tuple[float, float] | None = None  # (lat, lon)
+    convergence_override: float | None = None
     # Bound by the root page to its post-load orchestrator. Lets any tab
     # promote a freshly-loaded well into shared state and trigger the
     # full pipeline (process survey → calculate clearances → refresh
@@ -106,3 +114,12 @@ class AppState:
 
 def empty_state() -> AppState:
     return AppState()
+
+
+def reset_survey_edits(state: AppState) -> None:
+    """Drop survey edits/overrides — call whenever a fresh well loads into
+    the live state, so a previous well's SHL/convergence overrides can't
+    leak into the new one's processing."""
+    state.surveys_original = {}
+    state.shl_override = None
+    state.convergence_override = None

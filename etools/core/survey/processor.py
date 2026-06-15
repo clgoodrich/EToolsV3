@@ -58,6 +58,7 @@ def process_survey(
     api: str,
     lateral: str,
     grid_scale_factor: float | None = None,
+    convergence_override: float | None = None,
 ) -> dict[SurveyFrame, ProcessedSurvey]:
     """Process raw MD/INC/AZI rows into a ProcessedSurvey for each reference frame.
 
@@ -83,7 +84,11 @@ def process_survey(
     inc = df["Inclination"].to_numpy(dtype=float)
     azi = df["Azimuth"].to_numpy(dtype=float)
 
-    convergence = grid_convergence(surface_lat, surface_lon)
+    convergence = (
+        convergence_override
+        if convergence_override is not None
+        else grid_convergence(surface_lat, surface_lon)
+    )
     mag = lookup_magnetic_field(surface_lat, surface_lon, altitude_m=surface_elevation_ft * 0.3048)
 
     azi_ref = _normalize_north_ref(north_reference)
@@ -104,12 +109,15 @@ def process_survey(
     )
 
     surface_e, surface_n, _, _ = latlon_to_utm(surface_lat, surface_lon)
+    # start_nev z = 0 so the output ``tvd`` is true vertical DEPTH below the
+    # survey's elevation reference (0 at MD 0) — what every display and the
+    # WCR workbook expect. Elevation is carried separately on the result.
     survey = Survey(
         md=md, inc=inc, azi=azi,
         header=header,
         deg=True,
         unit="feet",
-        start_nev=[0.0, 0.0, surface_elevation_ft],
+        start_nev=[0.0, 0.0, 0.0],
     )
 
     n = np.asarray(survey.n, dtype=float)

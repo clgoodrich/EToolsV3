@@ -12,7 +12,7 @@ from etools.logging_setup import get_logger, recent_errors
 from etools.models import SurveyFrame, WellLookup
 from etools.services import ClearanceService, SurveyService, WellService
 from etools.services.well_service import WellNotFoundError
-from etools.ui.state import AppState
+from etools.ui.state import AppState, reset_survey_edits
 from etools.ui.workspace import (
     remove_document,
     switch_document,
@@ -176,7 +176,14 @@ def build_app() -> None:
                     log.info("post_load.process.start")
                     try:
                         state.processed = await loop.run_in_executor(
-                            None, partial(survey_service.process, state.headers, state.surveys)
+                            None,
+                            partial(
+                                survey_service.process,
+                                state.headers,
+                                state.surveys,
+                                surface_override=state.shl_override,
+                                convergence_override=state.convergence_override,
+                            ),
                         )
                         log.info(
                             "post_load.process.done",
@@ -362,6 +369,7 @@ def build_app() -> None:
             state.processed = {}
             state.clearances = {}
             state.selected_citing = None
+            reset_survey_edits(state)
             # Casing Review per-tab state
             state.apd_data = None
             state.apd_pdf_path = None
@@ -526,6 +534,7 @@ def build_app() -> None:
                     state.selected_citing = next(iter(bundle.surveys), None)
                     state.processed = {}
                     state.clearances = {}
+                    reset_survey_edits(state)
                     ui.notify(
                         f"Loaded {bundle.primary.well_name or bundle.primary.api} "
                         f"({sum(len(d) for d in bundle.surveys.values())} survey points)",

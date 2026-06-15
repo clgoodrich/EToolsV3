@@ -30,7 +30,7 @@ from etools.core.pdf import (
 )
 from etools.logging_setup import get_logger
 from etools.models import WellHeader
-from etools.ui.state import AppState
+from etools.ui.state import AppState, reset_survey_edits
 
 log = get_logger(__name__)
 
@@ -562,6 +562,7 @@ def render_pdf_tab(
         state.selected_citing = citing_type
         state.processed = {}
         state.clearances = {}
+        reset_survey_edits(state)
         ui.notify(
             f"Injected {len(result.surveys)} points as '{citing_type}'.",
             type="positive",
