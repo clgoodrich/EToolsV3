@@ -80,6 +80,14 @@ def process_survey(
             ignore_index=True,
         )
 
+    # welleng's minimum-curvature needs at least two stations to define a
+    # trajectory. A one-row survey (e.g. the user deleted every station but
+    # one) otherwise trips an opaque internal assertion.
+    if len(df) < 2:
+        raise ValueError(
+            f"Survey needs at least two stations to process; got {len(df)}."
+        )
+
     md = df["MeasuredDepth"].to_numpy(dtype=float)
     inc = df["Inclination"].to_numpy(dtype=float)
     azi = df["Azimuth"].to_numpy(dtype=float)

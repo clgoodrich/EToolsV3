@@ -482,6 +482,10 @@ def _project_to_wgs84(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 def _polygon_rings(geom) -> list[list[tuple[float, float]]]:
     """Return a list of [(lat, lon), ...] rings for either Polygon or MultiPolygon."""
     rings: list[list[tuple[float, float]]] = []
+    # A None/empty geometry (e.g. resolve_polygon fell through with no
+    # fallback) must not crash the whole map render — just contribute no rings.
+    if geom is None or getattr(geom, "is_empty", False):
+        return rings
     if geom.geom_type == "Polygon":
         rings.append([(y, x) for x, y in geom.exterior.coords])
     elif geom.geom_type == "MultiPolygon":

@@ -11,6 +11,7 @@ reverts everything.
 
 from __future__ import annotations
 
+import math
 from typing import Callable
 
 import pandas as pd
@@ -204,6 +205,9 @@ def render_survey_tab(state: AppState) -> Callable[[], None]:
         except (TypeError, ValueError):
             ui.notify("MD must be numeric.", type="warning")
             return
+        if not math.isfinite(md):
+            ui.notify("MD must be a finite number.", type="warning")
+            return
         station = interpolate_raw_station(raw, md)
         _snapshot_original(citing)
         state.surveys[citing] = insert_station(raw, md)
@@ -227,6 +231,10 @@ def render_survey_tab(state: AppState) -> Callable[[], None]:
         except (TypeError, ValueError):
             ui.notify("Value must be numeric.", type="warning")
             rerender()  # revert the cell display
+            return
+        if not math.isfinite(new_value):
+            ui.notify("Value must be a finite number.", type="warning")
+            rerender()
             return
 
         md_key = next((f for f in _MD_FIELDS if f in data), None)
@@ -326,10 +334,14 @@ def render_survey_tab(state: AppState) -> Callable[[], None]:
 
     async def apply_convergence() -> None:
         try:
-            state.convergence_override = float(conv_input.value)
+            value = float(conv_input.value)
         except (TypeError, ValueError):
             ui.notify("Convergence must be numeric (degrees).", type="warning")
             return
+        if not math.isfinite(value):
+            ui.notify("Convergence must be a finite number.", type="warning")
+            return
+        state.convergence_override = value
         await _cascade(f"Convergence set to {state.convergence_override:.4f}°")
 
     async def reprocess_shl() -> None:

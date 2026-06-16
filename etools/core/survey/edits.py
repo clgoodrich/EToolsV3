@@ -9,10 +9,23 @@ cascade from the same single source of truth.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pandas as pd
 
 _MD_TOL_FT = 0.51  # stations are integer-ish feet; half a foot finds "the" row
+
+
+def _require_finite_md(md: float) -> float:
+    """Reject NaN/inf MDs. ``float("nan")`` and ``float("inf")`` both slip
+    past a plain ``float()`` parse in the UI, and a non-finite MD silently
+    poisons interpolation (all-NaN station) or, via ``_locate``, mutates an
+    arbitrary row. Fail loudly instead."""
+    md = float(md)
+    if not math.isfinite(md):
+        raise ValueError("MD must be a finite number")
+    return md
 
 
 def _sorted(raw: pd.DataFrame) -> pd.DataFrame:
@@ -21,6 +34,7 @@ def _sorted(raw: pd.DataFrame) -> pd.DataFrame:
 
 def _locate(df: pd.DataFrame, md: float) -> int:
     """Index of the station at ``md`` (within tolerance) or raise."""
+    md = _require_finite_md(md)
     deltas = (df["MeasuredDepth"].astype(float) - float(md)).abs()
     idx = int(deltas.idxmin())
     if float(deltas.loc[idx]) > _MD_TOL_FT:
@@ -37,6 +51,7 @@ def interpolate_raw_station(raw: pd.DataFrame, md: float) -> dict[str, float]:
     """
     if raw.empty:
         raise ValueError("survey is empty")
+    md = _require_finite_md(md)
     df = _sorted(raw)
     mds = df["MeasuredDepth"].to_numpy(dtype=float)
     inc = df["Inclination"].to_numpy(dtype=float)
@@ -86,7 +101,16 @@ def update_station(
     df = raw.copy().reset_index(drop=True)
     idx = _locate(df, old_md)
     if md is not None:
-        df.loc[idx, "MeasuredDepth"] = float(md)
+        new_md = _require_finite_md(md)
+        # Moving a station onto an existing MD must replace that station, not
+        # create a second row at the same depth (which process_survey would
+        # later drop_duplicates away, silently losing one of the two).
+        collision = df.index[
+            (df["MeasuredDepth"].astype(float) - new_md).abs() <= _MD_TOL_FT
+        ].difference([idx])
+        if len(collision):
+            df = df.drop(index=collision)
+        df.loc[idx, "MeasuredDepth"] = new_md
     if inclination is not None:
         df.loc[idx, "Inclination"] = float(inclination)
     if azimuth is not None:
