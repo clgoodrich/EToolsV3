@@ -56,7 +56,13 @@ def configure_logging() -> None:
     sys.stdout = _utf8_stream(sys.stdout)
     sys.stderr = _utf8_stream(sys.stderr)
 
-    level = getattr(logging, settings.log_level.upper(), logging.INFO)
+    # Console honors ETOOLS_LOG_LEVEL; the FILE always records full DEBUG so a
+    # user can hand us a complete session trace when something breaks, even
+    # while the visible console stays quiet. The root logger + structlog must
+    # therefore run at the lower of the two so DEBUG records reach the file.
+    console_level = getattr(logging, settings.log_level.upper(), logging.INFO)
+    file_level = logging.DEBUG
+    root_level = min(console_level, file_level)
 
     # File handler: persistent rotating log under output/logs/.
     log_dir = settings.output_dir / "logs"
@@ -69,18 +75,20 @@ def configure_logging() -> None:
             encoding="utf-8",
         )
         file_handler.setFormatter(logging.Formatter("%(message)s"))
-        file_handler.setLevel(level)
+        file_handler.setLevel(file_level)
     except Exception as exc:  # pragma: no cover
         file_handler = None
         print(f"[logging] file handler init failed: {exc}", file=sys.stderr)
 
-    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setLevel(console_level)
+    handlers: list[logging.Handler] = [stream_handler]
     if file_handler is not None:
         handlers.append(file_handler)
 
     logging.basicConfig(
         format="%(message)s",
-        level=level,
+        level=root_level,
         handlers=handlers,
         force=True,  # in case basicConfig was called earlier with the old stream
     )
@@ -128,7 +136,7 @@ def configure_logging() -> None:
             structlog.processors.TimeStamper(fmt="iso"),
             structlog.dev.ConsoleRenderer(colors=False),
         ],
-        wrapper_class=structlog.make_filtering_bound_logger(level),
+        wrapper_class=structlog.make_filtering_bound_logger(root_level),
         logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )

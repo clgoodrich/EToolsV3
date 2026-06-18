@@ -264,6 +264,20 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
             font-weight: 700; font-size: 11px; }
           .pill.yes { background: #dcfce7; color: #15803d; }
           .pill.no { background: #fee2e2; color: #b91c1c; }
+          /* Print: isolate the region the user asked to print so window.print()
+             captures only that tab's contents, like a screenshot. The button
+             that triggers it adds .print-region to its target + .printing to
+             the body; both are removed again on afterprint. */
+          @media print {
+            body.printing * { visibility: hidden !important; }
+            body.printing .print-region,
+            body.printing .print-region * { visibility: visible !important; }
+            body.printing .print-region {
+              position: absolute !important; left: 0; top: 0; width: 100%;
+              margin: 0 !important; padding: 0 !important; }
+            body.printing .no-print { display: none !important; }
+            .modebar { display: none !important; }  /* Plotly hover toolbar */
+          }
         </style>
         """
     )
@@ -391,13 +405,19 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
                 with ui.tab_panel(cache["inputs_tab"]) as p:
                     cache["inputs_card"] = p
                 with ui.tab_panel(cache["bope_tab"]) as p:
-                    cache["bope_card"] = p
+                    _print_button("print-target-bope", "BOPE")
+                    cache["bope_card"] = ui.column().classes(
+                        "w-full gap-0 print-target-bope"
+                    )
                 with ui.tab_panel(cache["design_tab"]) as p:
                     cache["design_card"] = p
                 with ui.tab_panel(cache["sections_tab"]) as p:
                     cache["sections_card"] = p
                 with ui.tab_panel(cache["wbd_tab"]) as p:
-                    cache["wbd_card"] = p
+                    _print_button("print-target-wbd", "WBD")
+                    cache["wbd_card"] = ui.column().classes(
+                        "w-full gap-0 print-target-wbd"
+                    )
                 with ui.tab_panel(cache["result_tab"]) as p:
                     cache["result_card"] = p
         # Each tab button is hidden until its content has been rendered.
@@ -751,6 +771,37 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
 # ---------------------------------------------------------------------------
 # Pure rendering helpers (no closure state)
 # ---------------------------------------------------------------------------
+
+
+def _print_button(target_class: str, label: str) -> None:
+    """A 'Print <label>' button that prints just its tab's content, like a
+    screenshot. Placed OUTSIDE the print-target container (marked ``no-print``)
+    so the button itself never appears in the output."""
+    ui.button(
+        f"Print {label}", icon="print",
+        on_click=lambda: _print_region(target_class),
+    ).props("outline size=sm").classes("no-print mb-2")
+
+
+def _print_region(target_class: str) -> None:
+    """Isolate the element carrying ``target_class`` and invoke the browser's
+    print dialog. The print stylesheet (page head) hides everything except the
+    element tagged ``print-region``; we tag it, print, and untag on afterprint."""
+    js = (
+        "(function(){"
+        f"var el=document.querySelector('.{target_class}');"
+        "if(!el){return;}"
+        "el.classList.add('print-region');"
+        "document.body.classList.add('printing');"
+        "var cleanup=function(){"
+        "el.classList.remove('print-region');"
+        "document.body.classList.remove('printing');"
+        "window.removeEventListener('afterprint',cleanup);};"
+        "window.addEventListener('afterprint',cleanup);"
+        "setTimeout(function(){window.print();},50);"
+        "})();"
+    )
+    ui.run_javascript(js)
 
 
 def _render_meta(card: ui.card, data: APDPdfData) -> None:
