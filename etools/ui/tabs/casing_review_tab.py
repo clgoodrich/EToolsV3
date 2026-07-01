@@ -264,20 +264,12 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
             font-weight: 700; font-size: 11px; }
           .pill.yes { background: #dcfce7; color: #15803d; }
           .pill.no { background: #fee2e2; color: #b91c1c; }
-          /* Print: isolate the region the user asked to print so window.print()
-             captures only that tab's contents, like a screenshot. The button
-             that triggers it adds .print-region to its target + .printing to
-             the body; both are removed again on afterprint. */
-          @media print {
-            body.printing * { visibility: hidden !important; }
-            body.printing .print-region,
-            body.printing .print-region * { visibility: visible !important; }
-            body.printing .print-region {
-              position: absolute !important; left: 0; top: 0; width: 100%;
-              margin: 0 !important; padding: 0 !important; }
-            body.printing .no-print { display: none !important; }
-            .modebar { display: none !important; }  /* Plotly hover toolbar */
-          }
+          /* Printing a single tab is handled in _print_region(): it clones the
+             target into an isolated iframe and prints that, so no page-level
+             @media print rules are needed here. The .print-header carries the
+             well name / API etc.; it is hidden on screen and revealed only
+             inside the print iframe (see _print_region). */
+          .print-header { display: none; }
         </style>
         """
     )
@@ -783,22 +775,88 @@ def _print_button(target_class: str, label: str) -> None:
     ).props("outline size=sm").classes("no-print mb-2")
 
 
+def _print_header(data: APDPdfData | None, title: str) -> None:
+    """A well-identification banner (well name, API, operator, …) placed at the
+    top of a printable card. Hidden on screen via ``.print-header``; the print
+    iframe (see ``_print_region``) reveals it so every printout is labeled with
+    which well it belongs to."""
+    well = (getattr(data, "well_name", None) or "—") if data is not None else "—"
+    api = (getattr(data, "api", None) or "—") if data is not None else "—"
+    meta_bits = []
+    if data is not None:
+        for val in (
+            getattr(data, "operator", None),
+            getattr(data, "field_name", None),
+            getattr(data, "county", None) and f"{data.county} County",
+        ):
+            if val:
+                meta_bits.append(str(val))
+    sub = "  ·  ".join(meta_bits)
+    html = (
+        "<div class='print-header' style=\"font-family:system-ui,-apple-system,"
+        "'Segoe UI',sans-serif;margin:0 0 12px;padding:0 0 8px;"
+        "border-bottom:2px solid #0f172a;\">"
+        f"<div style='font-size:18px;font-weight:800;color:#0f172a'>{_esc(well)}</div>"
+        f"<div style='font-size:12.5px;color:#334155;margin-top:2px'>"
+        f"API {_esc(api)}" + (f"  ·  {_esc(sub)}" if sub else "") + "</div>"
+        f"<div style='font-size:11px;color:#64748b;font-weight:600;"
+        f"letter-spacing:.04em;margin-top:3px'>{_esc(title.upper())}</div>"
+        "</div>"
+    )
+    ui.html(html)
+
+
+def _esc(value) -> str:
+    """Minimal HTML-escape for values interpolated into a print header."""
+    return (
+        str(value)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
 def _print_region(target_class: str) -> None:
-    """Isolate the element carrying ``target_class`` and invoke the browser's
-    print dialog. The print stylesheet (page head) hides everything except the
-    element tagged ``print-region``; we tag it, print, and untag on afterprint."""
+    """Print just the element carrying ``target_class``, like a screenshot.
+
+    The earlier ``@media print`` + ``visibility:hidden`` trick is unreliable
+    inside NiceGUI's Quasar layout: positioned / ``overflow``-clipped /
+    ``transform``ed ancestors clip the absolutely-positioned region, and a
+    Plotly SVG (the WBD) does not reflow under print media — so nothing (or a
+    blank page) came out.
+
+    Instead we clone the target's markup plus every page stylesheet into a
+    hidden, isolated iframe and print *that*. The iframe is its own document
+    with no Quasar ancestors, so what you see is exactly what prints. Works
+    for both the styled BOPE HTML and the rendered Plotly SVG."""
     js = (
         "(function(){"
         f"var el=document.querySelector('.{target_class}');"
         "if(!el){return;}"
-        "el.classList.add('print-region');"
-        "document.body.classList.add('printing');"
-        "var cleanup=function(){"
-        "el.classList.remove('print-region');"
-        "document.body.classList.remove('printing');"
-        "window.removeEventListener('afterprint',cleanup);};"
-        "window.addEventListener('afterprint',cleanup);"
-        "setTimeout(function(){window.print();},50);"
+        # Carry over <style> blocks + linked stylesheets so the clone is styled.
+        "var head='';"
+        "document.querySelectorAll('style, link[rel=\"stylesheet\"]')"
+        ".forEach(function(n){head+=n.outerHTML;});"
+        "var f=document.createElement('iframe');"
+        "f.setAttribute('aria-hidden','true');"
+        "f.style.cssText='position:fixed;right:0;bottom:0;width:0;height:0;border:0;';"
+        "document.body.appendChild(f);"
+        "var doc=f.contentWindow.document;"
+        "doc.open();"
+        "doc.write('<!DOCTYPE html><html><head>'+head+"
+        "'<style>@page{margin:12mm;}body{margin:0;}"
+        ".no-print{display:none!important;}.modebar{display:none!important;}"
+        ".print-header{display:block!important;}</style>"
+        "</head><body>'+el.outerHTML+'</body></html>');"
+        "doc.close();"
+        "var printed=false;"
+        "function go(){"
+        "if(printed){return;}printed=true;"
+        "try{f.contentWindow.focus();f.contentWindow.print();}catch(e){}"
+        "setTimeout(function(){f.remove();},1000);}"
+        # Print once the clone has settled; fall back if onload already fired.
+        "f.onload=function(){setTimeout(go,200);};"
+        "setTimeout(go,500);"
         "})();"
     )
     ui.run_javascript(js)
@@ -1112,6 +1170,7 @@ def _render_bope(
     base = build_bope_review(design, bope_system_psi=psi)
 
     with card:
+        _print_header(data, "BOPE Review")
         # ---- Editable inputs (rendered once — edits only redraw the
         # results box below, so the input firing the event survives). ----
         if state is not None:
@@ -2053,6 +2112,7 @@ def _render_wbd(card: ui.card, design: CasingDesign, data: APDPdfData) -> None:
     fig = render_wellbore_figure(design, formations=formations)
     fig.update_layout(autosize=False)
     with card:
+        _print_header(data, "Vertical Wellbore Diagram")
         ui.label("Vertical Wellbore Diagram").classes("text-sm font-semibold")
         ui.plotly(fig).style("min-height: 700px;")
 
