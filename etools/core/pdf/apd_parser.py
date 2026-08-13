@@ -67,6 +67,9 @@ def parse_apd_pdf(
     text = _extract_text(path)
     data = APDPdfData(source_pdf=str(path))
     data.form_type = "apd" if "APPLICATION FOR PERMIT TO DRILL" in text else "unknown"
+    # Independent of mode — the LLM only returns geologic tops, so the BMSGW
+    # marker is always read from the text and re-applied after any merge.
+    data.bmsgw_depth_ft = _extract_bmsgw_ft(text)
 
     if mode != "llm":
         _extract_header(text, data)
@@ -152,7 +155,12 @@ def _merge_llm(into: APDPdfData, llm, *, overwrite: bool) -> None:
         into.locations = [APDLocationRow(**L.model_dump()) for L in llm.locations]
     if (overwrite or not into.formations) and llm.formations:
         from etools.models import APDFormationTop
-        into.formations = [APDFormationTop(**f.model_dump()) for f in llm.formations]
+        # The LLM returns geologic tops only, and this replaces the list
+        # wholesale — so re-apply the BMSGW rule on top of its result.
+        into.formations = _with_bmsgw(
+            [APDFormationTop(**f.model_dump()) for f in llm.formations],
+            into.bmsgw_depth_ft,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -625,6 +633,33 @@ def _finalize_formations(rows: list[APDFormationTop]) -> list[APDFormationTop]:
     return out
 
 
+# "Base of Moderately Saline" ground water — a regulatory marker rather than
+# a geologic top, printed either as "Base of moderately saline\n1,800'" or as
+# "Base of Moderately Saline (water)   +/- 2,500'".
+_BMSGW_RE = re.compile(
+    r"Base\s+of\s+(?:Moderately\s+)?Saline(?:\s*\(?water\)?)?[\s:]*"
+    r"(?:\n\s*)?(?:\+/-\s*)?([\d][\d,]*)\s*['’]?",
+    re.I,
+)
+
+# Above this many geologic tops the APD carries a full geosteering list, and
+# the hand-made reviews do NOT add a BMSGW row (11/11 in the reference set).
+# On the sparse permits (4 tops) they always do (3/3).
+_BMSGW_MAX_TOPS = 6
+
+
+def _extract_bmsgw_ft(text: str) -> float | None:
+    """Depth to the base of moderately saline ground water, when stated."""
+    m = _BMSGW_RE.search(text)
+    if not m:
+        return None
+    try:
+        v = float(m.group(1).replace(",", ""))
+    except ValueError:
+        return None
+    return v if 0 < v < 20000 else None
+
+
 def _extract_formations(text: str, data: APDPdfData) -> None:
     """Formation tops from the APD.
 
@@ -632,6 +667,11 @@ def _extract_formations(text: str, data: APDPdfData) -> None:
     summary, the directional-plan appendix list, and the legacy known-name
     layout — clean each, then keep whichever yielded the **most** valid tops,
     since the user wants the fullest list available.
+
+    On permits whose only formation data is the sparse Section-1 table, the
+    reviewers also record the base of moderately saline ground water (BMSGW)
+    alongside the geologic tops — it drives surface-casing/cement protection.
+    They omit it when a full geosteering list is present, so we mirror that.
     """
     candidates = [
         _finalize_formations(_extract_formations_geosteering(text)),
@@ -639,7 +679,27 @@ def _extract_formations(text: str, data: APDPdfData) -> None:
         _finalize_formations(_extract_formations_known(text)),
     ]
     best = max(candidates, key=len)
-    data.formations.extend(best)
+    data.bmsgw_depth_ft = _extract_bmsgw_ft(text)
+    data.formations.extend(_with_bmsgw(best, data.bmsgw_depth_ft))
+
+
+def _with_bmsgw(
+    tops: list[APDFormationTop], bmsgw_ft: float | None
+) -> list[APDFormationTop]:
+    """Add a BMSGW row to a sparse tops list, depth-sorted. No-op when the
+    depth is unknown, the list is a full geosteering one, or it's already
+    there. Applied after the LLM backfill too, since that replaces the list.
+    """
+    if (
+        bmsgw_ft is None
+        or not tops
+        or len(tops) > _BMSGW_MAX_TOPS
+        or any("BMSGW" in (f.name or "").upper() for f in tops)
+    ):
+        return tops
+    out = list(tops) + [APDFormationTop(name="BMSGW", md_ft=bmsgw_ft, tvd_ft=None)]
+    out.sort(key=lambda f: f.md_ft if f.md_ft is not None else float("inf"))
+    return out
 
 
 _PPG_TO_PSI_PER_FT = 0.05194806  # psi/ft per ppg per ft

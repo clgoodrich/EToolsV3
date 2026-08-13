@@ -36,6 +36,11 @@ class CasingStringDesign:
     grade: str
     collar: str | None
 
+    # Top of the string (APD "length top"). 0/None = run from surface; a
+    # non-zero value means the string is hung off inside the previous one,
+    # i.e. a liner. Drives STRING-block placement — see ``block_index``.
+    top_depth_ft: float | None = None
+
     # Cement
     cement_lead_sacks: int | None = None
     cement_lead_yield: float | None = None       # ft^3/sx
@@ -64,6 +69,24 @@ class CasingStringDesign:
     joint_klbs: float | None = None
     body_klbs: float | None = None
     id_in: float | None = None
+
+    # Which STRING N block of the Casing Review template this string occupies
+    # (0-based: 0 → STRING 1 at row 10, … 3 → STRING 4 at row 55). Assigned by
+    # the engine. This is deliberately NOT the string's position in
+    # ``CasingDesign.strings`` — a production *liner* always occupies STRING 4,
+    # leaving STRING 3 empty, which is how the hand-made reviews are laid out.
+    # Everything except the workbook writer iterates the strings list in
+    # sequence and should ignore this field. ``None`` means "unassigned" (a
+    # design built by hand rather than by the engine); the writer then falls
+    # back to list position. Do NOT default this to 0 — that would put every
+    # such string in STRING 1.
+    block_index: int | None = None
+
+    @property
+    def is_liner(self) -> bool:
+        """True when the string hangs off inside the previous one rather than
+        running from surface (APD 'length top' > 0)."""
+        return bool(self.top_depth_ft)
 
     # ----- Computed -----
     @property

@@ -46,6 +46,7 @@ def write_casing_review(
     plat_repo=None,
     bope_system_psi: float | None = None,
     bope_overrides: BOPEOverrides | None = None,
+    formations: list | None = None,
 ) -> Path:
     """Fill the Casing Review xlsx with both inputs and computed values.
 
@@ -75,9 +76,13 @@ def write_casing_review(
     cr["B6"] = design.api
     cr["B9"] = design.frac_gradient_psi_per_ft
 
+    # Place each string in the STRING block the engine assigned it, NOT its
+    # position in the list — a production liner belongs in STRING 4 with
+    # STRING 3 left empty, matching the hand-made reviews.
     block_tops = (10, 25, 40, 55)
-    for idx, s in enumerate(design.strings[:4]):
-        _write_block(cr, block_tops[idx], s, is_surface=idx == 0)
+    for s in design.strings[:4]:
+        bi = _block_of(s, design)
+        _write_block(cr, block_tops[bi], s, is_surface=bi == 0)
 
     # Footer block per string (Next Set Depth / Next MW / Next BHP / Fracture
     # Initiation Pressure / Max anticipated pressure at shoe). The template
@@ -102,6 +107,12 @@ def write_casing_review(
     # DataPrint panel mirrors per-string outputs into a normalized form.
     if "DataPrint" in wb.sheetnames:
         _write_dataprint(wb["DataPrint"], design)
+
+    # Formation tops. The template ships with a sample well's tops baked in,
+    # so this must run even when we have none to write — otherwise every
+    # workbook inherits the sample's formations.
+    if "Formations" in wb.sheetnames:
+        _write_formations(wb["Formations"], formations or [])
 
     # SHL + BHL Section sheets. Each section sheet's row-7 input block
     # drives every formula in that sheet via Grid-Numbers DGET lookups.
@@ -814,6 +825,22 @@ def _write_block(ws, top: int, s: CasingStringDesign, *, is_surface: bool) -> No
     put("AE", data_row, s.id_in)
 
 
+def _block_of(s: CasingStringDesign, design: CasingDesign) -> int:
+    """Which STRING block (0-3) this string occupies.
+
+    Uses the engine-assigned ``block_index``; falls back to the string's
+    position in the list for designs built by hand (tests, older callers)
+    where the field was never set.
+    """
+    bi = getattr(s, "block_index", None)
+    if isinstance(bi, int) and 0 <= bi < 4:
+        return bi
+    try:
+        return min(design.strings.index(s), 3)
+    except ValueError:
+        return 0
+
+
 def _write_footer_values(cr, design: CasingDesign) -> None:
     """Pre-fill each string's footer block (rows 24/39/54/69) with computed
     values, mirroring the template formulas, so they display even in viewers
@@ -836,14 +863,21 @@ def _write_footer_values(cr, design: CasingDesign) -> None:
     def put(row, col, val):
         cr.cell(row, col).value = None if val is None else round(val, 1)
 
+    # Map each occupied block to (this string, the next string in DEPTH order).
+    # The "next" chain follows the strings list, which stays in sequence even
+    # when a block is skipped (a liner in STRING 4 leaves STRING 3 empty).
+    by_block: dict[int, tuple] = {}
+    for seq, s in enumerate(design.strings[:4]):
+        nxt = design.strings[seq + 1] if seq + 1 < n else None
+        by_block[_block_of(s, design)] = (s, nxt)
+
     for idx in range(4):
         fr = footer_rows[idx]
-        if idx >= n:  # unused slot — clear stale template constants
+        if idx not in by_block:  # unused slot — clear stale template constants
             for col in (2, 4, 6, 9, 12):
                 cr.cell(fr, col).value = None
             continue
-        cur = design.strings[idx]
-        nxt = design.strings[idx + 1] if idx + 1 < n else None
+        cur, nxt = by_block[idx]
         tvd = cur.set_depth_tvd_ft
 
         if tvd is not None:
@@ -925,15 +959,54 @@ def _write_bope(
         ws["F10"] = 0
 
 
+_FORMATION_FIRST_ROW = 3
+_FORMATION_LAST_ROW = 18
+
+
+def _write_formations(ws, formations: list) -> None:
+    """Write the Formation Tops table (B = name, C = depth MD), shallowest
+    first, and clear any unused rows.
+
+    The shipped template has a sample well's tops hard-coded in B3:C6, and
+    nothing used to overwrite them — so every generated workbook carried that
+    well's formations no matter which well it was for. Always rewrite the
+    whole B/C range, even when ``formations`` is empty.
+
+    Columns A/H/J hold the template's own formulas (they scale each top to a
+    row on the wellbore diagram); leave them untouched.
+    """
+    rows = [
+        f for f in formations
+        if getattr(f, "name", None) and getattr(f, "md_ft", None) is not None
+    ]
+    rows.sort(key=lambda f: f.md_ft)
+
+    for i, r in enumerate(range(_FORMATION_FIRST_ROW, _FORMATION_LAST_ROW + 1)):
+        if i < len(rows):
+            ws.cell(r, 2).value = rows[i].name
+            ws.cell(r, 3).value = round(float(rows[i].md_ft), 2)
+        else:
+            ws.cell(r, 2).value = None
+            ws.cell(r, 3).value = None
+    if len(rows) > (_FORMATION_LAST_ROW - _FORMATION_FIRST_ROW + 1):
+        log.warning(
+            "casing_review.formations_truncated",
+            have=len(rows),
+            capacity=_FORMATION_LAST_ROW - _FORMATION_FIRST_ROW + 1,
+        )
+
+
 def _write_dataprint(ws, design: CasingDesign) -> None:
     """Write each string's normalized output into the DataPrint sheet.
 
     Column-range per string starts at column B (string 1), Q (string 2),
     AF (string 3), AU (string 4). The data rows start at row 11.
     """
+    # Column per STRING block, matching the Casing Review sheet's layout — a
+    # liner in STRING 4 writes to AU and leaves AF (STRING 3) empty.
     starts = ("B", "Q", "AF", "AU")
-    for idx, s in enumerate(design.strings[:4]):
-        col0 = starts[idx]
+    for s in design.strings[:4]:
+        col0 = starts[_block_of(s, design)]
         # Row 7 carries the inch-prefix label, e.g. '9.625" Casing'.
         ws[f"{col0}7"] = f'{s.od_in}" Casing'
         # Row 11 starts the values; the spreadsheet repeats the per-stage

@@ -34,11 +34,12 @@ from etools.core.casing_review.bope import BOPEOverrides, build_bope_review
 from etools.core.casing_review.domain import CasingDesign
 from etools.core.casing_review.engine import (
     CasingDesignEngine,
+    _interpolate_tvd,
     welltrack_from_dataframe,
 )
 from etools.core.pdf.parser import parse_survey_pdf
 from etools.logging_setup import get_logger
-from etools.models import APDPdfData
+from etools.models import APDFormationTop, APDPdfData
 from etools.repositories import SurveyRepository
 from etools.services import CasingReviewService
 from etools.ui.promote import promote_apd_to_active
@@ -581,7 +582,11 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
         cache["gen_status"].text = f"Saved {out.name}"
         _render_result(cache["result_card"], out, _serve_output_file(out))
         cache["result_tab"].visible = True
-        ui.notify(f"Casing Review generated: {out.name}", type="positive")
+        ui.notify(f"Casing Review generated: {out.name} — opening…", type="positive")
+        # Hand the finished workbook straight to Excel so the user doesn't
+        # have to go find it. Fire-and-forget; the result card still offers
+        # Open / Download if the shell launch doesn't take.
+        _open_in_default_app(out)
 
     # ----------------------------------------------------------------------
     # Render helpers — all read from ``state`` so reconnects come up clean.
@@ -738,7 +743,19 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
         _safe("design_card", "design_tab", lambda c: _render_design(c, design))
         _safe("sections_card", "sections_tab", lambda c: _render_sections(c, data, state))
         _safe("wbd_card", "wbd_tab", lambda c: _render_wbd(c, design, data))
-        _safe("formations_card", "formations_tab", lambda c: _render_formations(c, data))
+        # Formations only affect the WBD's dashed markers — never the casing
+        # design — so an edit re-renders just that one card, and a failure
+        # there is swallowed rather than allowed to break the tab.
+        def _formations_changed() -> None:
+            try:
+                _render_wbd(cache["wbd_card"], design, data)
+            except Exception as exc:  # pragma: no cover - defensive UI guard
+                log.exception("casing_review.wbd_refresh_failed", error=str(exc))
+
+        _safe(
+            "formations_card", "formations_tab",
+            lambda c: _render_formations(c, data, state, on_change=_formations_changed),
+        )
 
     def _lazy_design_render() -> None:
         """Used to defer the heavy design rebuild via ui.timer to keep the
@@ -978,44 +995,215 @@ def _render_meta(card: ui.card, data: APDPdfData) -> None:
             ).props("dense flat bordered")
 
 
-def _render_formations(card: ui.card, data: APDPdfData) -> None:
+def _formation_md_cap(data: APDPdfData, welltrack) -> tuple[float, str] | None:
+    """Upper bound for a hand-entered formation MD: 110% of the survey's final
+    MD, falling back to 110% of the APD's proposed MD when no survey is
+    loaded. ``None`` when neither is known (no bound can be enforced)."""
+    if welltrack:
+        return welltrack[-1].md_ft * 1.10, "the survey's final MD"
+    if data.proposed_md_ft:
+        return data.proposed_md_ft * 1.10, "the APD's proposed MD"
+    return None
+
+
+def _validate_formation_md(
+    md_val: float, data: APDPdfData, welltrack
+) -> str | None:
+    """Return an error message for an out-of-range formation MD, else None."""
+    if md_val < 0:
+        return "Top MD can't be negative."
+    cap = _formation_md_cap(data, welltrack)
+    if cap is not None and md_val > cap[0]:
+        return (
+            f"Top MD can't exceed 110% of {cap[1]} ({cap[0]:,.0f} ft)."
+        )
+    return None
+
+
+def _render_formations(
+    card: ui.card,
+    data: APDPdfData,
+    state: AppState | None = None,
+    *,
+    on_change: Callable[[], None] | None = None,
+) -> None:
     """Formation tops extracted from the APD (Section 6 / page-2 table),
-    shown as a standalone tab. Populated by the rules parser with an Ollama
-    backfill; the same list drives the dashed markers on the WBD figure."""
+    shown as a standalone tab and editable by hand.
+
+    Rows always stay sorted by Top MD. Editing a row's Top MD recomputes its
+    Top TVD by interpolating along the loaded directional survey (left manual
+    when no survey is loaded). Entered MDs are bounded: no negatives, and no
+    deeper than 110% of the survey's final MD. The list drives the dashed
+    markers on the WBD figure.
+    """
     card.clear()
+
+    def _welltrack():
+        if state is None or state.casing_survey_df is None:
+            return []
+        try:
+            return welltrack_from_dataframe(state.casing_survey_df)
+        except Exception as exc:  # pragma: no cover - defensive UI guard
+            log.exception("casing_review.formations_welltrack_failed", error=str(exc))
+            return []
+
+    def _changed() -> None:
+        data.formations.sort(
+            key=lambda f: f.md_ft if f.md_ft is not None else float("inf")
+        )
+        body.refresh()
+        if on_change is not None:
+            on_change()
+
     with card:
         ui.label("Formation tops").classes("text-sm font-semibold")
         ui.label(
-            "Geological formation tops parsed from the APD. These also appear "
-            "as dashed markers on the Vertical Wellbore Diagram."
+            "Geological formation tops parsed from the APD, or added by hand "
+            "below. Rows sort by Top MD automatically; editing Top MD "
+            "recomputes Top TVD from the loaded survey. These also appear as "
+            "dashed markers on the Vertical Wellbore Diagram."
         ).classes("text-xs text-gray-600 mb-2")
 
-        ui.label(f"{len(data.formations)} formation top(s)").classes(
-            "text-sm font-semibold mt-1 text-gray-700"
-        )
-        if data.formations:
-            fm_cols = [
-                {"name": "idx", "label": "#", "field": "idx"},
-                {"name": "name", "label": "Formation", "field": "name", "align": "left"},
-                {"name": "md", "label": "Top MD (ft)", "field": "md"},
-                {"name": "tvd", "label": "Top TVD (ft)", "field": "tvd"},
-            ]
-            fm_rows = [
-                {
-                    "idx": i + 1,
-                    "name": f.name,
-                    "md": f"{f.md_ft:g}" if f.md_ft is not None else "—",
-                    "tvd": f"{f.tvd_ft:g}" if f.tvd_ft is not None else "—",
-                }
-                for i, f in enumerate(data.formations)
-            ]
-            ui.table(columns=fm_cols, rows=fm_rows, row_key="idx").classes(
-                "w-full text-xs"
-            ).props("dense flat bordered")
-        else:
-            ui.label(
-                "No formation tops were extracted from this APD."
-            ).classes("text-xs p-2 rounded bg-slate-100 text-slate-700")
+        @ui.refreshable
+        def body() -> None:
+            wt = _welltrack()
+            ui.label(f"{len(data.formations)} formation top(s)").classes(
+                "text-sm font-semibold mt-1 text-gray-700"
+            )
+            cap = _formation_md_cap(data, wt)
+            if not wt:
+                ui.label(
+                    "No directional survey loaded — Top TVD won't "
+                    "auto-recalculate from Top MD. Enter it by hand if needed."
+                ).classes("text-xs text-amber-800 bg-amber-50 p-1 rounded mb-1")
+            if cap is not None:
+                ui.label(
+                    f"Top MD must be between 0 and {cap[0]:,.0f} ft "
+                    f"(110% of {cap[1]})."
+                ).classes("text-xs text-gray-500 mb-1")
+
+            if not data.formations:
+                ui.label(
+                    "No formation tops yet — add one below."
+                ).classes("text-xs p-2 rounded bg-slate-100 text-slate-700")
+                return
+
+            for i, f in enumerate(data.formations):
+                with ui.row().classes(
+                    "items-center gap-1 flex-wrap p-1 rounded"
+                    + (" bg-slate-50" if i % 2 == 0 else "")
+                ):
+                    ui.label(f"{i + 1}").classes("w-6 text-xs text-gray-500")
+
+                    def _name_handler(fm=f):
+                        def handler(e) -> None:
+                            val = (e.sender.value or "").strip()
+                            if val and val != fm.name:
+                                fm.name = val
+                                _changed()
+                        return handler
+
+                    (
+                        ui.input(value=f.name)
+                        .props("dense outlined")
+                        .classes("w-48")
+                        .on("blur", _name_handler())
+                        .on("keydown.enter", _name_handler())
+                    )
+
+                    def _md_handler(fm=f):
+                        def handler(e) -> None:
+                            val = _parse_optional(e.sender.value, cast=float)
+                            if val is None or val == fm.md_ft:
+                                return
+                            track = _welltrack()
+                            err = _validate_formation_md(val, data, track)
+                            if err:
+                                ui.notify(err, type="warning")
+                                e.sender.value = (
+                                    "" if fm.md_ft is None else f"{fm.md_ft:g}"
+                                )
+                                return
+                            fm.md_ft = val
+                            if track:
+                                fm.tvd_ft = _interpolate_tvd(track, val)
+                            _changed()
+                        return handler
+
+                    ui.label("MD").classes("text-xs text-gray-500")
+                    (
+                        ui.input(value="" if f.md_ft is None else f"{f.md_ft:g}")
+                        .props("dense outlined suffix=ft")
+                        .classes("w-28")
+                        .on("blur", _md_handler())
+                        .on("keydown.enter", _md_handler())
+                    )
+
+                    def _tvd_handler(fm=f):
+                        def handler(e) -> None:
+                            fm.tvd_ft = _parse_optional(e.sender.value, cast=float)
+                            _changed()
+                        return handler
+
+                    ui.label("TVD").classes("text-xs text-gray-500")
+                    (
+                        ui.input(value="" if f.tvd_ft is None else f"{f.tvd_ft:g}")
+                        .props("dense outlined suffix=ft")
+                        .classes("w-28")
+                        .on("blur", _tvd_handler())
+                        .on("keydown.enter", _tvd_handler())
+                    )
+
+                    def _delete_handler(fm=f):
+                        def handler() -> None:
+                            if fm in data.formations:
+                                data.formations.remove(fm)
+                            _changed()
+                        return handler
+
+                    ui.button(icon="delete", on_click=_delete_handler()).props(
+                        "flat dense round color=red size=sm"
+                    )
+
+        body()
+
+        ui.separator().classes("my-2")
+        ui.label("Add a formation top").classes("text-xs font-semibold text-gray-700")
+        with ui.row().classes("items-center gap-1 flex-wrap"):
+            name_in = (
+                ui.input(placeholder="Formation name")
+                .props("dense outlined")
+                .classes("w-48")
+            )
+            md_in = (
+                ui.input(placeholder="Top MD (ft)")
+                .props("dense outlined suffix=ft")
+                .classes("w-28")
+            )
+
+            def _add() -> None:
+                nm = (name_in.value or "").strip()
+                md_val = _parse_optional(md_in.value, cast=float)
+                if not nm or md_val is None:
+                    ui.notify("Enter a name and a Top MD.", type="warning")
+                    return
+                track = _welltrack()
+                err = _validate_formation_md(md_val, data, track)
+                if err:
+                    ui.notify(err, type="warning")
+                    return
+                data.formations.append(
+                    APDFormationTop(
+                        name=nm,
+                        md_ft=md_val,
+                        tvd_ft=_interpolate_tvd(track, md_val) if track else None,
+                    )
+                )
+                name_in.value = ""
+                md_in.value = ""
+                _changed()
+
+            ui.button("Add", icon="add", on_click=_add).props("color=primary dense")
 
 
 def _apply_string_overrides(design: CasingDesign, overrides: dict) -> None:
@@ -2283,11 +2471,53 @@ def _parse_optional(raw, *, cast=float):
         return None
 
 
+def _open_in_default_app(path: Path) -> None:
+    """Open ``path`` with the OS's default application (Excel for .xlsx).
+
+    ETools runs as a local app — the server process is on the same machine as
+    the browser — so launching the file server-side opens it on the user's own
+    desktop. Mirrors ``etools.main._open_in_default_browser``: the Windows
+    shell (``os.startfile``) respects the registered default handler.
+
+    Best-effort and off the event loop: launching Excel can block for a
+    moment, and a failure here must never break generation — the workbook is
+    already saved and the Download button still works.
+    """
+    import os
+    import subprocess
+    import sys
+    import threading
+
+    def _go() -> None:
+        try:
+            if sys.platform == "win32":
+                os.startfile(str(path))  # noqa: S606 — shell call to default handler
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(path)])
+            else:
+                subprocess.Popen(["xdg-open", str(path)])
+        except Exception:  # pragma: no cover - defensive, OS-dependent
+            # Nested guard: logging itself can raise (e.g. UnicodeEncodeError
+            # when the console codec can't render the message). Nothing here
+            # is worth killing the thread — or spraying a traceback — over.
+            try:
+                log.exception("casing_review.open_output_failed", path=str(path))
+            except Exception:
+                pass
+
+    threading.Thread(target=_go, daemon=True).start()
+
+
 def _render_result(card: ui.card, path: Path, download_url: str) -> None:
     card.clear()
     with card:
         with ui.row().classes("items-center gap-3 w-full"):
             ui.label("Generated Casing Review").classes("text-sm font-semibold flex-1")
+            ui.button(
+                "Open in Excel",
+                icon="open_in_new",
+                on_click=lambda: _open_in_default_app(path),
+            ).props("flat dense")
             ui.button(
                 "Open folder",
                 icon="folder_open",

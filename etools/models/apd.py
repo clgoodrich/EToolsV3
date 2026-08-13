@@ -85,6 +85,11 @@ class APDPdfData(BaseModel):
     # system or better will be used"). Authoritative when present — the
     # BOPE review shows it as-is rather than inferring a rating.
     bope_system_psi: Optional[float] = None
+    # Depth to the base of moderately saline ground water, when the permit
+    # states it. A regulatory marker (surface-casing/cement protection), not a
+    # geologic top — on sparse permits it is also listed among the formations
+    # as "BMSGW", matching how the reviews are written by hand.
+    bmsgw_depth_ft: Optional[float] = None
 
     locations: list[APDLocationRow] = Field(default_factory=list)
     casing: list[APDCasingString] = Field(default_factory=list)

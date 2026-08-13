@@ -44,6 +44,25 @@ class WelltrackPoint:
     tvd_ft: float
 
 
+def _free_slot(slots: list, preferred: int) -> int | None:
+    """The preferred STRING block if free, else the nearest free one.
+
+    Two APD tags can want the same block (``I2`` and ``Prod`` both prefer
+    block 3), and previously the loser was dropped from the review entirely.
+    Search deeper first — a colliding string is nearly always the deeper one —
+    then fall back to shallower blocks so nothing is silently lost.
+    """
+    if 0 <= preferred < len(slots) and slots[preferred] is None:
+        return preferred
+    for i in range(preferred + 1, len(slots)):
+        if slots[i] is None:
+            return i
+    for i in range(min(preferred, len(slots)) - 1, -1, -1):
+        if slots[i] is None:
+            return i
+    return None
+
+
 class CasingDesignEngine:
     """Build CasingDesigns. Catalog is cached across calls."""
 
@@ -71,16 +90,42 @@ class CasingDesignEngine:
                 apd.proposed_md_ft, apd.proposed_tvd_ft
             )
 
-        # Skip Conductor — engineering review covers Surface and deeper.
+        # Reviewable strings only — Conductor maps to -1 and is excluded, as
+        # engineering review covers Surface and deeper. Sort shallowest-first:
+        # some APDs list the casing table in reverse, and block assignment
+        # must follow real depth order, not document order.
+        rows = [
+            (cs, _TAG_TO_LABEL[cs.tag][0])
+            for cs in apd.casing
+            if _TAG_TO_LABEL.get(cs.tag) is not None
+            and _TAG_TO_LABEL[cs.tag][1] >= 0
+        ]
+        rows.sort(key=lambda r: r[0].length_bottom_ft or 0.0)
+
         slots: list[CasingStringDesign | None] = [None] * 4
-        for cs in apd.casing:
-            mapping = _TAG_TO_LABEL.get(cs.tag)
-            if mapping is None:
+        for cs, label in rows:
+            # A string hung off inside the previous one (APD "length top" > 0)
+            # is a liner, and the hand-made reviews always place a liner in the
+            # STRING 4 block, leaving STRING 3 empty. The APD tags these rows
+            # "Prod" like any other production casing, so the tag can't tell us
+            # apart — the geometry can. Everything else fills in order.
+            if (cs.length_top_ft or 0) > 0:
+                preferred = 3
+            else:
+                preferred = next(
+                    (i for i in range(4) if slots[i] is None), 3
+                )
+            idx = _free_slot(slots, preferred)
+            if idx is None:
+                log.warning(
+                    "casing_review.no_free_string_slot",
+                    tag=cs.tag,
+                    reason="more than 4 reviewable strings",
+                )
                 continue
-            label, idx = mapping
-            if idx < 0 or idx >= 4 or slots[idx] is not None:
-                continue
-            slots[idx] = self._build_string(cs, label, welltrack, idx == 0)
+            s = self._build_string(cs, label, welltrack, idx == 0)
+            s.block_index = idx
+            slots[idx] = s
         design.strings = [s for s in slots if s is not None]
         design.finalize()
         return design
@@ -107,6 +152,7 @@ class CasingDesignEngine:
             weight_ppf=cs.weight_ppf or 0.0,
             grade=cs.grade or "",
             collar=cs.collar,
+            top_depth_ft=cs.length_top_ft,
             cement_lead_sacks=cs.cement_lead_sacks,
             cement_lead_yield=cs.cement_lead_yield,
             cement_lead_weight_ppg=cs.cement_lead_weight_ppg,

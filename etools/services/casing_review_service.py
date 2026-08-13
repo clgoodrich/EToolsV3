@@ -105,6 +105,7 @@ class CasingReviewService:
             plat_repo=self._plat_repo,
             bope_system_psi=apd_data.bope_system_psi,
             bope_overrides=bope_overrides,
+            formations=apd_data.formations,
         )
         log.info(
             "casing_review.generated",
