@@ -390,6 +390,7 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
                 cache["design_tab"] = ui.tab("Computed design", icon="calculate")
                 cache["sections_tab"] = ui.tab("Sections", icon="grid_on")
                 cache["wbd_tab"] = ui.tab("WBD", icon="view_in_ar")
+                cache["formations_tab"] = ui.tab("Formations", icon="layers")
                 cache["result_tab"] = ui.tab("Output", icon="folder_open")
             with ui.tab_panels(cr_tabs, value=cache["meta_tab"]).classes("w-full"):
                 with ui.tab_panel(cache["meta_tab"]) as p:
@@ -410,11 +411,13 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
                     cache["wbd_card"] = ui.column().classes(
                         "w-full gap-0 print-target-wbd"
                     )
+                with ui.tab_panel(cache["formations_tab"]) as p:
+                    cache["formations_card"] = p
                 with ui.tab_panel(cache["result_tab"]) as p:
                     cache["result_card"] = p
         # Each tab button is hidden until its content has been rendered.
         for k in ("meta_tab", "inputs_tab", "bope_tab", "design_tab",
-                  "sections_tab", "wbd_tab", "result_tab"):
+                  "sections_tab", "wbd_tab", "formations_tab", "result_tab"):
             cache[k].visible = False
 
     # ----------------------------------------------------------------------
@@ -735,6 +738,7 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
         _safe("design_card", "design_tab", lambda c: _render_design(c, design))
         _safe("sections_card", "sections_tab", lambda c: _render_sections(c, data, state))
         _safe("wbd_card", "wbd_tab", lambda c: _render_wbd(c, design, data))
+        _safe("formations_card", "formations_tab", lambda c: _render_formations(c, data))
 
     def _lazy_design_render() -> None:
         """Used to defer the heavy design rebuild via ui.timer to keep the
@@ -972,6 +976,46 @@ def _render_meta(card: ui.card, data: APDPdfData) -> None:
             ui.table(columns=cs_cols, rows=cs_rows, row_key="tag").classes(
                 "w-full text-xs"
             ).props("dense flat bordered")
+
+
+def _render_formations(card: ui.card, data: APDPdfData) -> None:
+    """Formation tops extracted from the APD (Section 6 / page-2 table),
+    shown as a standalone tab. Populated by the rules parser with an Ollama
+    backfill; the same list drives the dashed markers on the WBD figure."""
+    card.clear()
+    with card:
+        ui.label("Formation tops").classes("text-sm font-semibold")
+        ui.label(
+            "Geological formation tops parsed from the APD. These also appear "
+            "as dashed markers on the Vertical Wellbore Diagram."
+        ).classes("text-xs text-gray-600 mb-2")
+
+        ui.label(f"{len(data.formations)} formation top(s)").classes(
+            "text-sm font-semibold mt-1 text-gray-700"
+        )
+        if data.formations:
+            fm_cols = [
+                {"name": "idx", "label": "#", "field": "idx"},
+                {"name": "name", "label": "Formation", "field": "name", "align": "left"},
+                {"name": "md", "label": "Top MD (ft)", "field": "md"},
+                {"name": "tvd", "label": "Top TVD (ft)", "field": "tvd"},
+            ]
+            fm_rows = [
+                {
+                    "idx": i + 1,
+                    "name": f.name,
+                    "md": f"{f.md_ft:g}" if f.md_ft is not None else "—",
+                    "tvd": f"{f.tvd_ft:g}" if f.tvd_ft is not None else "—",
+                }
+                for i, f in enumerate(data.formations)
+            ]
+            ui.table(columns=fm_cols, rows=fm_rows, row_key="idx").classes(
+                "w-full text-xs"
+            ).props("dense flat bordered")
+        else:
+            ui.label(
+                "No formation tops were extracted from this APD."
+            ).classes("text-xs p-2 rounded bg-slate-100 text-slate-700")
 
 
 def _apply_string_overrides(design: CasingDesign, overrides: dict) -> None:

@@ -108,7 +108,9 @@ class WCRPdfService:
         )
 
         lat, lon = self._resolve_surface_latlon(pdf_data, surface_lat, surface_lon)
-        elev = surface_elevation_ft or pdf_data.elevation_ft
+        # ``or`` would treat an explicit 0.0 ft (sea level) as missing and
+        # silently substitute the PDF value; use an explicit None check.
+        elev = surface_elevation_ft if surface_elevation_ft is not None else pdf_data.elevation_ft
         if elev is None:
             raise ValueError("Surface elevation missing — provide it explicitly or fix the PDF.")
 

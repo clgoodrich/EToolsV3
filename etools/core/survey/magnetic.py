@@ -8,6 +8,7 @@ subclass — we just hand welleng pre-computed declination/dip/B_total via the
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
@@ -49,6 +50,14 @@ def lookup_magnetic_field(
     when: float | datetime | None = None,
 ) -> MagneticField:
     """WMM lookup. ``when`` may be a decimal year, a datetime, or None for today."""
+    if not (math.isfinite(lat) and math.isfinite(lon)):
+        raise ValueError(
+            f"magnetic-field lookup needs finite lat/lon, got ({lat}, {lon})"
+        )
+    if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+        raise ValueError(
+            f"magnetic-field lookup lat/lon out of range: ({lat}, {lon})"
+        )
     if when is None:
         when_dec = decimal_year()
     elif isinstance(when, datetime):

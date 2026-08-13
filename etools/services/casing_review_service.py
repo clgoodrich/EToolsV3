@@ -6,6 +6,7 @@ consuming a directional survey to compute TVD at each casing set depth.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -67,7 +68,13 @@ class CasingReviewService:
             apd_data = parse_apd_pdf(apd_pdf_path)
 
         if frac_gradient_override_psi_per_ft is not None:
-            apd_data.frac_gradient_psi_per_ft = frac_gradient_override_psi_per_ft
+            f = frac_gradient_override_psi_per_ft
+            if not math.isfinite(f) or f <= 0.0:
+                raise ValueError(
+                    "frac gradient override must be a positive, finite number "
+                    f"(psi/ft); got {f}"
+                )
+            apd_data.frac_gradient_psi_per_ft = f
 
         # Welltrack precedence: ProcessedSurvey (best, min-curvature)
         # → raw DataFrame (good if it carries MD/TVD) → synthetic from APD.

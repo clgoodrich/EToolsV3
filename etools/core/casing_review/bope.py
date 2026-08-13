@@ -24,6 +24,7 @@ plus the three YES/NO adequacy checks.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 from etools.core.casing_review.domain import CasingDesign, CasingStringDesign
@@ -40,7 +41,9 @@ _TEST_YIELD_FRAC = 0.70  # casing/BOPE test = 70% of internal yield
 
 def proposed_bope_psi(masp_psi: float | None) -> int | None:
     """Smallest standard stack rating that exceeds ``masp_psi``."""
-    if masp_psi is None:
+    # NaN/inf must not fall through to the max rating: ``nan > r`` is always
+    # False, so a bad MASP would silently recommend the 15,000-psi stack.
+    if masp_psi is None or not math.isfinite(masp_psi):
         return None
     for r in STANDARD_BOPE_RATINGS_PSI:
         if r > masp_psi:

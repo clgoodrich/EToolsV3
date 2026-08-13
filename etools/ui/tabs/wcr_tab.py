@@ -743,6 +743,35 @@ def _render_wcr_metadata(card: ui.card, data: WCRPdfData) -> None:
                 ui.label(label).classes("text-gray-500")
                 ui.label(str(value) if value not in (None, "") else "—")
 
+        ui.label(f"Section 32 — formation tops ({len(data.formations)})").classes(
+            "text-sm font-semibold mt-3 text-gray-700"
+        )
+        if data.formations:
+            fm_cols = [
+                {"name": "idx", "label": "#", "field": "idx"},
+                {"name": "name", "label": "Formation", "field": "name", "align": "left"},
+                {"name": "md", "label": "Top MD (ft)", "field": "md"},
+                {"name": "tvd", "label": "Top TVD (ft)", "field": "tvd"},
+                {"name": "desc", "label": "Description", "field": "desc", "align": "left"},
+            ]
+            fm_rows = [
+                {
+                    "idx": i + 1,
+                    "name": f.name,
+                    "md": f"{f.top_md:g}" if f.top_md is not None else "—",
+                    "tvd": f"{f.top_tvd:g}" if f.top_tvd is not None else "—",
+                    "desc": f.description or "—",
+                }
+                for i, f in enumerate(data.formations)
+            ]
+            ui.table(columns=fm_cols, rows=fm_rows, row_key="idx").classes(
+                "w-full text-xs"
+            ).props("dense flat bordered")
+        else:
+            ui.label(
+                "No formation tops were extracted from this WCR."
+            ).classes("text-xs p-2 rounded bg-slate-100 text-slate-700")
+
 
 def _render_ddr_card(card: ui.card, data: WCRPdfData) -> None:
     """Show the Operation Summary Report (DDR) highlights for each job."""

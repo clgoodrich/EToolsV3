@@ -138,6 +138,8 @@ def displayed_to_native_azimuth(
     welleng conventions: azi_grid = azi_true − convergence,
     azi_magnetic = azi_true − declination.
     """
+    if not math.isfinite(value):
+        raise ValueError("azimuth must be a finite number")
     azi_true = value if displayed_frame.lower().startswith("t") else value + convergence
     ref = (native_ref or "true").strip().lower()
     if ref.startswith("g"):

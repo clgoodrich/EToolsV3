@@ -92,6 +92,22 @@ def process_survey(
     inc = df["Inclination"].to_numpy(dtype=float)
     azi = df["Azimuth"].to_numpy(dtype=float)
 
+    # Validate before welleng/pyproj see the data. NaN/inf otherwise leaks out
+    # as a cryptic ``OutOfRangeError`` from the lat/lon reprojection, and an
+    # absurd inclination/azimuth (e.g. 9,999,999°) is silently turned into a
+    # meaningless trajectory that poisons clearances, footages, and the map.
+    for name, arr in (("MeasuredDepth", md), ("Inclination", inc), ("Azimuth", azi)):
+        if not np.all(np.isfinite(arr)):
+            bad = int(np.count_nonzero(~np.isfinite(arr)))
+            raise ValueError(
+                f"Survey {name} contains {bad} non-finite value(s) (NaN/inf); "
+                "clean the survey before processing."
+            )
+    if np.any((inc < 0.0) | (inc > 180.0)):
+        raise ValueError("Survey inclination out of range [0, 180] degrees.")
+    if np.any((azi < 0.0) | (azi > 360.0)):
+        raise ValueError("Survey azimuth out of range [0, 360] degrees.")
+
     convergence = (
         convergence_override
         if convergence_override is not None

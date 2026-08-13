@@ -84,7 +84,12 @@ class CasingStringDesign:
         """
         wash = 1.0 + self.hole_washout_pct / 100.0
         hole_effective = wash * self.hole_size_in
-        return (hole_effective**2 - self.od_in**2) / 183.35
+        cap = (hole_effective**2 - self.od_in**2) / 183.35
+        # A physically impossible geometry (OD ≥ effective hole) yields a
+        # negative "capacity". Clamp to 0 so callers using this directly don't
+        # get a nonsense negative; ``cement_height_ft`` already treats 0 as
+        # "no annulus" and returns None.
+        return cap if cap > 0.0 else 0.0
 
     @property
     def cement_height_ft(self) -> float | None:

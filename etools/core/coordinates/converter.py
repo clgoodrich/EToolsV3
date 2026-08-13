@@ -6,10 +6,29 @@ this module is the single source of truth.
 
 from __future__ import annotations
 
+import math
 from functools import lru_cache
 
 import utm
 from pyproj import CRS, Proj
+
+
+def _validate_latlon(lat: float, lon: float) -> None:
+    """Reject non-finite or out-of-range lat/lon before they reach pyproj/utm.
+
+    Without this, ``NaN`` slips through ``grid_convergence`` as ``inf`` (poisoning
+    every downstream azimuth/clearance) and an out-of-range latitude surfaces as
+    a cryptic raw ``ProjError``/``OutOfRangeError`` instead of an actionable
+    message.
+    """
+    if not (math.isfinite(lat) and math.isfinite(lon)):
+        raise ValueError(
+            f"latitude/longitude must be finite numbers, got ({lat}, {lon})"
+        )
+    if not -90.0 <= lat <= 90.0:
+        raise ValueError(f"latitude {lat} out of range [-90, 90]")
+    if not -180.0 <= lon <= 180.0:
+        raise ValueError(f"longitude {lon} out of range [-180, 180]")
 
 
 @lru_cache(maxsize=128)
@@ -23,6 +42,7 @@ def grid_convergence(lat: float, lon: float, crs: str = "EPSG:32043") -> float:
     Default CRS is Utah Central Zone (NAD27 State Plane), matching the legacy
     pipeline. Positive = grid north is east of true north.
     """
+    _validate_latlon(lat, lon)
     proj = _spcs_proj(crs)
     factors = proj.get_factors(lon, lat, radians=False, errcheck=True)
     return float(factors.meridian_convergence)
@@ -30,6 +50,7 @@ def grid_convergence(lat: float, lon: float, crs: str = "EPSG:32043") -> float:
 
 def latlon_to_utm(lat: float, lon: float) -> tuple[float, float, int, str]:
     """Returns (easting, northing, zone_number, zone_letter)."""
+    _validate_latlon(lat, lon)
     e, n, zn, zl = utm.from_latlon(lat, lon)
     return float(e), float(n), int(zn), str(zl)
 
@@ -52,8 +73,12 @@ def dms_to_decimal(part: str) -> float:
         raise ValueError(f"no number in {part!r}")
     value = nums[0]
     if len(nums) > 1:
+        if not 0.0 <= nums[1] < 60.0:
+            raise ValueError(f"minutes must be in [0, 60), got {nums[1]} in {part!r}")
         value += nums[1] / 60.0
     if len(nums) > 2:
+        if not 0.0 <= nums[2] < 60.0:
+            raise ValueError(f"seconds must be in [0, 60), got {nums[2]} in {part!r}")
         value += nums[2] / 3600.0
     return sign * value
 

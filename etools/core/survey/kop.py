@@ -324,24 +324,56 @@ def _kop_rate_of_change(md, grad_roll, grad_std, min_sustained) -> float | None:
 
 
 def _kop_piecewise(md, inc) -> float | None:
+    """Split point minimizing the total OLS residual of two linear fits.
+
+    Mathematically identical to fitting ``linregress`` on ``[:i]`` and ``[i:]``
+    for every candidate ``i`` and taking the argmin of the summed residual sum
+    of squares — but computed in O(n) via prefix sums instead of O(n²), so a
+    high-frequency 10k-point survey no longer blocks the UI for ~15 s.
+
+    For points on a segment, the OLS residual sum of squares is
+    ``Syy − Sxy²/Sxx`` (centered moments), each obtainable in O(1) from
+    cumulative sums.
+    """
     n = len(md)
     if n < 10:
         return None
     start = max(3, int(n * 0.10))
     end = min(n - 3, int(n * 0.70))
-    best_err = np.inf
-    best_idx: int | None = None
-    for i in range(start, end):
-        s1 = linregress(md[:i], inc[:i])
-        s2 = linregress(md[i:], inc[i:])
-        err = float(
-            np.sum((s1.slope * md[:i] + s1.intercept - inc[:i]) ** 2)
-            + np.sum((s2.slope * md[i:] + s2.intercept - inc[i:]) ** 2)
+    if start >= end:
+        return None
+
+    x = np.asarray(md, dtype=float)
+    y = np.asarray(inc, dtype=float)
+    # Prefix sums of length n+1: c*[k] = sum over the first k elements.
+    cx = np.concatenate(([0.0], np.cumsum(x)))
+    cy = np.concatenate(([0.0], np.cumsum(y)))
+    cxx = np.concatenate(([0.0], np.cumsum(x * x)))
+    cyy = np.concatenate(([0.0], np.cumsum(y * y)))
+    cxy = np.concatenate(([0.0], np.cumsum(x * y)))
+
+    def _seg_sse(k, sx, sy, sxx, syy, sxy):
+        """Residual SSE of the OLS fit over segments with these moments."""
+        sxx_c = sxx - sx * sx / k
+        syy_c = syy - sy * sy / k
+        sxy_c = sxy - sx * sy / k
+        # When x is constant on the segment (sxx_c<=0) the best fit is the mean
+        # → SSE = syy_c; guard the divide so those entries contribute 0 there.
+        ratio = np.divide(
+            sxy_c * sxy_c, sxx_c, out=np.zeros_like(sxy_c), where=sxx_c > 0
         )
-        if err < best_err:
-            best_err = err
-            best_idx = i
-    return float(md[best_idx]) if best_idx is not None else None
+        return syy_c - ratio
+
+    i = np.arange(start, end)
+    kL = i.astype(float)
+    kR = (n - i).astype(float)
+    errL = _seg_sse(kL, cx[i], cy[i], cxx[i], cyy[i], cxy[i])
+    errR = _seg_sse(
+        kR, cx[n] - cx[i], cy[n] - cy[i], cxx[n] - cxx[i], cyy[n] - cyy[i], cxy[n] - cxy[i]
+    )
+    total = errL + errR
+    best_idx = int(i[int(np.argmin(total))])
+    return float(md[best_idx])
 
 
 def _kop_changepoint(md, inc, grad_roll) -> float | None:

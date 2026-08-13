@@ -1,8 +1,7 @@
 """Load Well tab — single entry point for every downstream workflow.
 
-Three on-ramps, presented as sub-tabs:
+Two on-ramps, presented as sub-tabs:
 
-* **From Database** — API + lateral lookup against DirectionalSurveyHeader.
 * **From APD PDF** — drag-drop an APD application PDF, parse it, route the
   user to the Casing Review tab where the rest of the workflow happens.
 * **From WCR PDF** — drag-drop a Form 8 WCR, parse it, route to the WCR
@@ -39,7 +38,7 @@ log = get_logger(__name__)
 
 def render_load_tab(
     state: AppState,
-    on_load: LoadHandler,
+    on_load: LoadHandler | None = None,
     on_route_to_casing: RouteHandler | None = None,
     on_route_to_wcr: RouteHandler | None = None,
 ) -> Callable[[], None]:
@@ -55,53 +54,15 @@ def render_load_tab(
     with ui.column().classes("p-6 gap-4 w-full max-w-4xl"):
         ui.label("Load Well").classes("text-2xl font-semibold")
         ui.label(
-            "Pick one of three on-ramps. After loading you'll be routed to "
+            "Pick one of two on-ramps. After loading you'll be routed to "
             "the right downstream tab."
         ).classes("text-sm text-gray-600")
 
         with ui.tabs().classes("w-full").props("dense") as entry_tabs:
-            tab_db = ui.tab("From Database", icon="storage")
             tab_apd = ui.tab("From APD PDF", icon="upload_file")
             tab_wcr = ui.tab("From WCR PDF", icon="upload_file")
 
-        with ui.tab_panels(entry_tabs, value=tab_db).classes("w-full"):
-            # --- DB --------------------------------------------------
-            with ui.tab_panel(tab_db):
-                with ui.column().classes("gap-3"):
-                    ui.label(
-                        "Enter the 10-digit API number and a 4-character lateral "
-                        "identifier (default 0000). Pulls from DirectionalSurveyHeader."
-                    ).classes("text-sm text-gray-600")
-                    with ui.row().classes("gap-2 items-end"):
-                        api_input = ui.input(
-                            "API (10 digits)",
-                            value="4301354722",
-                            validation={
-                                "Must be 10 digits": lambda v: bool(v) and v.isdigit() and len(v) == 10
-                            },
-                        ).props("dense outlined").classes("w-56")
-                        lateral_input = ui.input(
-                            "Lateral",
-                            value="0000",
-                            validation={"Max 4 chars": lambda v: v is not None and len(v) <= 4},
-                        ).props("dense outlined").classes("w-32")
-
-                        async def submit_db() -> None:
-                            api = (api_input.value or "").strip()
-                            lateral = (lateral_input.value or "0000").strip() or "0000"
-                            try:
-                                lookup = WellLookup(api=api, lateral=lateral)
-                            except ValueError as exc:
-                                ui.notify(f"Invalid input: {exc}", type="warning")
-                                return
-                            result = on_load(lookup)
-                            if asyncio.iscoroutine(result):
-                                await result
-
-                        ui.button("Load Well", icon="download", on_click=submit_db).props(
-                            "color=primary"
-                        )
-
+        with ui.tab_panels(entry_tabs, value=tab_apd).classes("w-full"):
             # --- APD PDF ---------------------------------------------
             with ui.tab_panel(tab_apd):
                 with ui.column().classes("gap-3"):

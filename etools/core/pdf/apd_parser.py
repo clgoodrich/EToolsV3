@@ -418,64 +418,282 @@ def _build_string_from_cells(tag: str, cells: list[str]) -> APDCasingString | No
 # ---------------------------------------------------------------------------
 
 
-def _extract_formations(text: str, data: APDPdfData) -> None:
-    """Page 2 has Formation Tops listed as ``name\\nMD\\nTVD`` triples.
+# The page-2 "FORMATION TOPS" table. Header + rows follow, one token per
+# PyMuPDF line, until the next section. Columns vary but are typically
+# FORMATION | SHL TOP (TVD) | BHL TOP (TVD) | MD TOP (well plan).
+_FT_HEADER_RE = re.compile(r"FORMATION\s+TOPS", re.I)
+_FT_STOP_RE = re.compile(
+    r"DEPTH TO OIL|<<<PAGE>>>|PRESSURE CONTROL|CIRCULATING MEDIUM", re.I
+)
+# Lines that are column headers / labels, not formation names.
+_FT_LABEL_RE = re.compile(
+    r"\b(FORMATION|SHL\s+TOP|BHL\s+TOP|MD\s+TOP|\(?TVD\)?|well\s+plan)\b", re.I
+)
+# A line that is *only* a bare column tag like "MD", "TVD" or "TVD /".
+_FT_BARE_LABEL_RE = re.compile(r"^(?:MD|TVD)\s*/?\s*$", re.I)
 
-    We can't perfectly anchor without table structure, so we look for the
-    formations block and pull TVDs that follow a known formation name.
+
+def _ft_valid_depth(v: float) -> bool:
+    """A real formation top is at Surface (0) or hundreds+ of feet down.
+    Anything in between is a misparsed header fragment, not a depth."""
+    return v == 0.0 or v >= 100.0
+
+
+def _ft_depth_token(s: str) -> float | None:
+    """A FORMATION TOPS cell: ``Surface`` -> 0, ``5,061'`` -> 5061, else None
+    (i.e. the line is a formation name, not a depth)."""
+    s = s.strip()
+    if s.lower() == "surface":
+        return 0.0
+    m = re.match(r"^(\d[\d,]*)", s)  # leading digits, tolerate ',' and foot mark
+    if not m:
+        return None
+    try:
+        return float(m.group(1).replace(",", ""))
+    except ValueError:
+        return None
+
+
+def _extract_formations_tops_table(text: str) -> list[APDFormationTop]:
+    """Parse the page-2 "FORMATION TOPS" summary table (any names).
+
+    TVD comes from the first depth column (SHL TOP), MD from the last
+    (MD TOP / well plan). Returns [] if the table isn't present.
     """
-    # Names commonly seen in Uintah/Duchesne APDs. Extend as needed.
-    known = (
-        "Uinta",
-        "Green River",
-        "Garden Gulch member",
-        "Uteland Butte",
-        "Mahogany",
-        "Wasatch",
-        "Castle Peak",
-        "Mancos",
-        "Frontier",
-        "Lateral TD",
-    )
+    hdr = _FT_HEADER_RE.search(text)
+    if not hdr:
+        return []
+    block = text[hdr.end():]
+    stop = _FT_STOP_RE.search(block)
+    if stop:
+        block = block[: stop.start()]
+
+    lines = [ln.strip() for ln in block.splitlines() if ln.strip()]
+    rows: list[tuple[str, list[float]]] = []
+    name: str | None = None
+    vals: list[float] = []
+
+    def _flush() -> None:
+        nonlocal name, vals
+        if name and vals:
+            rows.append((name, vals))
+        name, vals = None, []
+
+    for ln in lines:
+        if _FT_LABEL_RE.search(ln) or _FT_BARE_LABEL_RE.match(ln):
+            continue
+        depth = _ft_depth_token(ln)
+        if depth is not None:
+            if name is not None:
+                vals.append(depth)
+        elif name is not None and not vals:
+            name = f"{name} {ln}"  # multi-line formation name
+        else:
+            _flush()
+            name = ln
+    _flush()
+
+    out: list[APDFormationTop] = []
+    for nm, vs in rows:
+        if not any(c.isalpha() for c in nm):
+            continue  # name must have letters
+        if not any(_ft_valid_depth(v) for v in vs):
+            continue  # no plausible depth -> misparsed header fragment
+        tvd = vs[0] if vs else None
+        md = vs[2] if len(vs) >= 3 else (vs[-1] if vs else None)
+        out.append(APDFormationTop(name=nm, tvd_ft=tvd, md_ft=md))
+    return out
+
+
+# The directional-plan appendix "Formations" table. Rows stream one token per
+# line as: MD, TVD, Name, Dip — e.g. "5,097.79 / 5,061.00 / Top Green River /
+# 2.42". This list is usually the fullest (every geosteering marker).
+_GEO_HEADER_RE = re.compile(r"(?m)^\s*Formations\s*$")
+_GEO_STOP_RE = re.compile(
+    r"(?im)^\s*(?:MD|TVD)\s*$|\+E/-W|Local Coordinates|Plan Annotations|Comment"
+)
+
+
+def _geo_num(s: str) -> float | None:
+    """A geosteering numeric cell like ``5,097.79`` or ``2.42``; else None."""
+    s = s.strip()
+    if re.fullmatch(r"-?[\d,]+(?:\.\d+)?", s):
+        try:
+            return float(s.replace(",", ""))
+        except ValueError:
+            return None
+    return None
+
+
+def _extract_formations_geosteering(text: str) -> list[APDFormationTop]:
+    """Parse the directional-plan appendix formation list (MD, TVD, Name, Dip
+    repeating). Returns [] if not present."""
+    hdr = _GEO_HEADER_RE.search(text)
+    if not hdr:
+        return []
+    block = text[hdr.end():]
+    stop = _GEO_STOP_RE.search(block)
+    if stop:
+        block = block[: stop.start()]
+
+    lines = [ln.strip() for ln in block.splitlines() if ln.strip()]
+    out: list[APDFormationTop] = []
+    nums: list[float] = []
+    for ln in lines:
+        v = _geo_num(ln)
+        if v is not None:
+            nums.append(v)
+            continue
+        if not any(c.isalpha() for c in ln):
+            continue
+        # A name line. Its depth pair is the last two depth-magnitude numbers
+        # since the previous formation (dip / dip-direction values are small
+        # and filtered out). Column order varies by operator, so MD is the
+        # larger of the pair and TVD the smaller (MD >= TVD always).
+        depths = [n for n in nums if _ft_valid_depth(n) and n > 0.0]
+        if len(depths) >= 2:
+            a, b = depths[-2], depths[-1]
+            out.append(
+                APDFormationTop(name=ln, tvd_ft=min(a, b), md_ft=max(a, b))
+            )
+        nums = []
+    return out
+
+
+# Legacy layout: each row is ``name\nTVD\nMD`` and the name is one of a known
+# set. Kept as a last-resort fallback so older PDFs don't regress.
+_KNOWN_FORMATIONS = (
+    "Uinta",
+    "Green River",
+    "Garden Gulch member",
+    "Uteland Butte",
+    "Mahogany",
+    "Wasatch",
+    "Castle Peak",
+    "Mancos",
+    "Frontier",
+    "Lateral TD",
+)
+
+
+def _extract_formations_known(text: str) -> list[APDFormationTop]:
     pat = re.compile(
-        r"(" + "|".join(re.escape(n) for n in known) + r")\s*\n"
+        r"(" + "|".join(re.escape(n) for n in _KNOWN_FORMATIONS) + r")\s*\n"
         r"\s*([\d,]+)\s*'?\s*\n"
         r"\s*([\d,]+)\s*'?",
         re.I,
     )
+    out: list[APDFormationTop] = []
     for m in pat.finditer(text):
         try:
-            tvd = float(m.group(2).replace(",", ""))
-            md = float(m.group(3).replace(",", ""))
+            a = float(m.group(2).replace(",", ""))
+            b = float(m.group(3).replace(",", ""))
         except ValueError:
             continue
-        data.formations.append(
-            APDFormationTop(name=m.group(1), tvd_ft=tvd, md_ft=md)
-        )
+        if not (_ft_valid_depth(a) and _ft_valid_depth(b)):
+            continue  # drop misparsed non-depth values (e.g. a casing size)
+        # Column order isn't guaranteed; MD >= TVD physically.
+        out.append(APDFormationTop(name=m.group(1), tvd_ft=min(a, b), md_ft=max(a, b)))
+    return out
+
+
+def _plausible_formation_name(nm: str) -> bool:
+    """Reject junk the loose table parsers can pick up (header fragments,
+    mashed-together multi-name strings, sentences from the drilling plan)."""
+    nm = nm.strip()
+    if not (2 <= len(nm) <= 35):
+        return False
+    if not any(c.isalpha() for c in nm):
+        return False
+    if any(ch in nm for ch in ":%()"):  # sentences / column labels, not names
+        return False
+    if len(nm.split()) > 5:
+        return False
+    return True
+
+
+def _finalize_formations(rows: list[APDFormationTop]) -> list[APDFormationTop]:
+    """Drop implausible names and enforce MD >= TVD on every row."""
+    out: list[APDFormationTop] = []
+    for x in rows:
+        if not _plausible_formation_name(x.name):
+            continue
+        tvd, md = x.tvd_ft, x.md_ft
+        if tvd is not None and md is not None and tvd > md:
+            tvd, md = md, tvd  # physical guarantee: measured depth >= TVD
+        out.append(APDFormationTop(name=x.name.strip(), tvd_ft=tvd, md_ft=md))
+    return out
+
+
+def _extract_formations(text: str, data: APDPdfData) -> None:
+    """Formation tops from the APD.
+
+    We parse every table we know how to read — the page-2 "FORMATION TOPS"
+    summary, the directional-plan appendix list, and the legacy known-name
+    layout — clean each, then keep whichever yielded the **most** valid tops,
+    since the user wants the fullest list available.
+    """
+    candidates = [
+        _finalize_formations(_extract_formations_geosteering(text)),
+        _finalize_formations(_extract_formations_tops_table(text)),
+        _finalize_formations(_extract_formations_known(text)),
+    ]
+    best = max(candidates, key=len)
+    data.formations.extend(best)
+
+
+_PPG_TO_PSI_PER_FT = 0.05194806  # psi/ft per ppg per ft
+# A frac gradient at shoe realistically lands in this psi/ft band. Anything
+# outside it (e.g. a casing weight of 24 ppf → 1.25 psi/ft) is not a frac
+# gradient and must not be selected.
+_FRAC_PLAUSIBLE_LO = 0.40
+_FRAC_PLAUSIBLE_HI = 1.10
+
+
+def _frac_to_psi_per_ft(x: float) -> float:
+    """A value >5 is ppg (converted); a small value is already psi/ft."""
+    return round(x * _PPG_TO_PSI_PER_FT, 4) if x > 5 else x
 
 
 def _extract_frac_gradient(text: str, data: APDPdfData) -> None:
     """Pull the production-shoe frac gradient from the Safety Factors table.
 
-    The table renders as a column block with "Frac Grad @ Shoe" as a
-    header label followed by per-string values; the production string is
-    typically the rightmost column. We pick the largest number ≤ 20 that
-    follows "Frac" to stay safe across operators.
+    The table renders as a column block with "Frac Grad @ Shoe" as a header
+    label followed by per-string values, interleaved with other columns
+    (casing weight, safety factors). The old heuristic took ``max(nums[:4])``,
+    which on some permits grabbed the casing **weight** (e.g. 24 ppf) and
+    mis-converted it as ppg → 1.25 psi/ft, silently inflating burst design
+    factors. Instead we convert each candidate to psi/ft and keep only those in
+    a physically plausible frac-gradient band, then take the largest (the
+    production shoe is deepest → highest gradient).
     """
     m = re.search(r"Frac\s*\n?\s*Grad[^\n]*\n?\s*@?\s*Shoe[^\n]*\n", text, re.I)
     if not m:
         return
     tail = text[m.end() : m.end() + 400]
-    nums = [float(x) for x in re.findall(r"\b(\d+(?:\.\d+)?)\b", tail) if 0 < float(x) <= 25]
-    if not nums:
+    # Widen the collection window to ≤60 so casing weights are seen (and then
+    # rejected by the plausibility filter) rather than sneaking in under ≤25.
+    raw_nums = [
+        float(x)
+        for x in re.findall(r"\b(\d+(?:\.\d+)?)\b", tail)
+        if 0 < float(x) <= 60
+    ]
+    if not raw_nums:
         return
-    # The first few numbers after the label belong to the conductor / surface
-    # /intermediate; production is typically the largest, in psi/ft when small
-    # (<1) or in ppg when large. We accept either.
-    chosen = max(nums[:4]) if len(nums) >= 4 else nums[-1]
-    if chosen > 5:  # treat as ppg → convert to psi/ft (0.05194806 psi/ft per ppg per ft)
-        chosen = round(chosen * 0.05194806, 4)
+    candidates = [_frac_to_psi_per_ft(x) for x in raw_nums[:8]]
+    plausible = [c for c in candidates if _FRAC_PLAUSIBLE_LO <= c <= _FRAC_PLAUSIBLE_HI]
+    if plausible:
+        data.frac_gradient_psi_per_ft = max(plausible)
+        return
+    # Nothing lands in the plausible band — fall back to the old behaviour but
+    # flag it so a reviewer verifies against the permit instead of trusting a
+    # silently-wrong number.
+    chosen = _frac_to_psi_per_ft(max(raw_nums[:4]) if len(raw_nums) >= 4 else raw_nums[-1])
     data.frac_gradient_psi_per_ft = chosen
+    data.warnings.append(
+        f"Frac gradient @ shoe parsed as {chosen} psi/ft, outside the expected "
+        f"{_FRAC_PLAUSIBLE_LO}–{_FRAC_PLAUSIBLE_HI} psi/ft range — verify against the permit."
+    )
 
 
 # ---------------------------------------------------------------------------

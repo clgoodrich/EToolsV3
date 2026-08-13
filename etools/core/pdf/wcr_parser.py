@@ -129,6 +129,20 @@ def parse_wcr_pdf(
             "different."
         )
         log.info("wcr_pdf.detected_form15", path=str(path))
+    elif data.form_type == "unknown":
+        if re.search(r"APPLICATION\s+FOR\s+PERMIT\s+TO\s+DRILL", combined, re.I):
+            data.warnings.append(
+                "This PDF looks like an APD (Application for Permit to Drill), "
+                "not a Form 8 Well Completion Report. WCR field extraction will "
+                "return empty or unreliable results — load it on the Casing "
+                "Review tab instead."
+            )
+        else:
+            data.warnings.append(
+                "Could not confirm this PDF is a Form 8 Well Completion Report; "
+                "extracted fields may be empty or unreliable."
+            )
+        log.info("wcr_pdf.detected_unknown_form", path=str(path))
     layers_used: list[str] = ["pymupdf"]
     if docling_markdown:
         layers_used.append("docling")
@@ -195,9 +209,16 @@ def parse_wcr_pdf(
                 layers_used.append("llm-text")
             else:
                 log.info("wcr_pdf.llm.skip", reason="ollama unavailable or model missing")
+                _fallback_to_rules_if_needed(
+                    combined, data, mode, layers_used,
+                    reason="Ollama is unavailable or the model is missing",
+                )
         except Exception as exc:
             log.warning("wcr_pdf.llm.failed", error=str(exc))
             data.warnings.append(f"LLM extraction failed: {exc}")
+            _fallback_to_rules_if_needed(
+                combined, data, mode, layers_used, reason=f"LLM extraction failed: {exc}",
+            )
 
     # ---- DDR LLM augmentation (opt-in via ``parse_operations``) ----
     # Slow on CPU Ollama: the summary call alone is minutes per DDR and
@@ -533,11 +554,56 @@ def _collapse_padded_numbers(text: str) -> str:
     return _PADDED_NUM_RE.sub(fix, text)
 
 
+def _fallback_to_rules_if_needed(
+    text: str,
+    data: WCRPdfData,
+    mode: str,
+    layers_used: list[str],
+    *,
+    reason: str,
+) -> None:
+    """Run the rules extractors when an ``llm``-mode parse produced no data.
+
+    In ``mode="llm"`` the rules layer is skipped up front; if the LLM then
+    can't run (Ollama offline) or fails, the parse would otherwise return an
+    all-empty result indistinguishable from "successfully parsed an empty
+    form". Fall back to rules so the user still gets fields, with a warning.
+    """
+    if mode != "llm" or "rules" in layers_used:
+        return
+    data.warnings.append(
+        f"LLM mode requested but {reason}; fell back to rules-based extraction."
+    )
+    _extract_header(text, data)
+    _extract_positions(text, data)
+    _extract_casing(text, data)
+    _extract_formations(text, data)
+    _extract_perf_stages(text, data)
+    _extract_section_33_intervals(text, data)
+    if "rules-fallback" not in layers_used:
+        layers_used.append("rules-fallback")
+
+
+# Blank-template placeholder strings that must never be accepted as real
+# field values (e.g. an un-filled Form 8 whose well-name box reads
+# "Autofill from system data").
+_PLACEHOLDER_VALUES = frozenset(
+    {"autofill from system data", "autofill from system", "n/a", "none"}
+)
+
+
 def _extract_header(text: str, data: WCRPdfData) -> None:
     for field, pat in _HEADER_PATTERNS.items():
         m = pat.search(text)
         if m:
-            setattr(data, field, m.group(1).strip())
+            val = m.group(1).strip()
+            if val.lower() in _PLACEHOLDER_VALUES:
+                data.warnings.append(
+                    f"Ignored placeholder value {val!r} for {field} — this looks "
+                    "like a blank template rather than a filled report."
+                )
+                continue
+            setattr(data, field, val)
 
     # Elevations: "21. DEPTH REFERENCE ELEVATION\n5742 (US Feet)"
     m = re.search(
@@ -554,8 +620,17 @@ def _extract_header(text: str, data: WCRPdfData) -> None:
     # Total depth + PBTD: "24. TOTAL DEPTH\nMD 19263 TVD 8387"
     m = re.search(r"24\.\s*TOTAL DEPTH\s*\n\s*MD\s*(\d+)\s*TVD\s*(\d+)", text, re.I)
     if m:
-        data.total_md_ft = float(m.group(1))
-        data.total_tvd_ft = float(m.group(2))
+        md_val = float(m.group(1))
+        tvd_val = float(m.group(2))
+        # A 2 ft "total depth" is a mis-read form-field number, not a real well.
+        if md_val >= 100.0:
+            data.total_md_ft = md_val
+            data.total_tvd_ft = tvd_val
+        else:
+            data.warnings.append(
+                f"Ignored implausible total depth (MD {md_val} ft) from Section 24 — "
+                "verify the report."
+            )
     m = re.search(
         r"25\.\s*PLUGGED BACK TOTAL DEPTH\s*\n\s*MD\s*(\d+)\s*TVD\s*(\d+)", text, re.I
     )
@@ -840,6 +915,14 @@ def _extract_perf_stages(text: str, data: WCRPdfData) -> None:
             size = float(m.group("size"))
         except ValueError:
             size = None
+        # Plausibility guard: a real stage has a shot count in the tens/low
+        # hundreds and a perf/hole size around 0.3–0.6 in. When this free-
+        # floating regex instead matches the Section-33 "COMPLETED INTERVALS"
+        # row, the TOP-TVD / BOTTOM-TVD columns land in num_perfs/size (e.g.
+        # 9166 / 9595). Skip such rows so ``_extract_section_33_intervals``
+        # (which reads that row correctly) fills the intervals instead.
+        if (num_perfs is not None and num_perfs > 500) or (size is not None and size > 2.0):
+            continue
         data.perf_stages.append(
             PerfStage(
                 stage=stage,
