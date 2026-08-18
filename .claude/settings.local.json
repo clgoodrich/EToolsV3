@@ -3,5 +3,8 @@
     "allow": [
       "Bash(tree:*)"
     ]
+  },
+  "enabledPlugins": {
+    "chrome-devtools-mcp@claude-plugins-official": true
   }
 }

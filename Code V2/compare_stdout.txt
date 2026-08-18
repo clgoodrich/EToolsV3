@@ -1,0 +1,76 @@
+ETools Casing Review Excel Comparison Report
+======================================================================
+
+======================================================================
+APD: application_43013537270000.pdf
+Existing Excel: Casing Review_43013537270000_Myton City UT 16-23 3-2-25-36-7H.xlsx
+======================================================================
+  Generating from application_43013537270000.pdf ...
+2026-07-07 15:47:37 [info     ] apd_pdf.parse.start            mode=rules+llm path=C:\ETools_Portable\APD\application_43013537270000.pdf
+2026-07-07 15:47:38 [info     ] apd_pdf.parse.done             api=43013537270000 casing=4 formations=2 locations=3 path=C:\ETools_Portable\APD\application_43013537270000.pdf
+2026-07-07 15:47:41 [info     ] section_sheet.utm_written      conc=2303S02WU sheet='SHL Section' utm=(579135.0, 4450578.0)
+2026-07-07 15:47:41 [info     ] section_sheet.utm_written      conc=2503S02WU sheet='BHL Section 1' utm=(579580.7, 4450350.8)
+2026-07-07 15:47:41 [info     ] section_sheet.utm_written      conc=3603S02WU sheet='BHL Section 3' utm=(579619.5, 4447300.2)
+2026-07-07 15:48:16 [info     ] casing_review.generated        api=43013537270000 had_welltrack=False path='C:\\ETools_Portable\\app\\output\\Casing Review_43013537270000_Myton City UT 16-23 3-2-25-36-7H.xlsx' strings=3
+ERROR processing application_43013537270000.pdf: 'CasingReviewResult' object has no attribute 'excel_path'
+Traceback (most recent call last):
+  File "C:\ETools_Portable\compare_excel.py", line 177, in <module>
+    report_pair(apd_path, exist_path)
+  File "C:\ETools_Portable\compare_excel.py", line 119, in report_pair
+    gen_path = generate_excel(apd_path)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ETools_Portable\compare_excel.py", line 44, in generate_excel
+    log(f"  Generated: {result.excel_path}")
+                        ^^^^^^^^^^^^^^^^^
+AttributeError: 'CasingReviewResult' object has no attribute 'excel_path'
+
+
+======================================================================
+APD: application_43013537010000 Check.pdf
+Existing Excel: Casing Review_43013537010000_UT 16-9 3-2-16-21-1H.xlsx
+======================================================================
+  Generating from application_43013537010000 Check.pdf ...
+2026-07-07 15:48:16 [info     ] apd_pdf.parse.start            mode=rules+llm path='C:\\ETools_Portable\\APD\\application_43013537010000 Check.pdf'
+2026-07-07 15:48:17 [info     ] apd_pdf.parse.done             api=43013537010000 casing=4 formations=3 locations=3 path='C:\\ETools_Portable\\APD\\application_43013537010000 Check.pdf'
+2026-07-07 15:48:20 [info     ] section_sheet.utm_written      conc=0903S02WU sheet='SHL Section' utm=(575733.7, 4453674.0)
+2026-07-07 15:48:20 [info     ] section_sheet.utm_written      conc=1603S02WU sheet='BHL Section 1' utm=(575972.3, 4453487.7)
+2026-07-07 15:48:21 [info     ] section_sheet.utm_written      conc=2103S02WU sheet='BHL Section 3' utm=(576000.1, 4450429.1)
+2026-07-07 15:48:52 [info     ] casing_review.generated        api=43013537010000 had_welltrack=False path='C:\\ETools_Portable\\app\\output\\Casing Review_43013537010000_UT 16-9 3-2-16-21-1H.xlsx' strings=3
+ERROR processing application_43013537010000 Check.pdf: 'CasingReviewResult' object has no attribute 'excel_path'
+Traceback (most recent call last):
+  File "C:\ETools_Portable\compare_excel.py", line 177, in <module>
+    report_pair(apd_path, exist_path)
+  File "C:\ETools_Portable\compare_excel.py", line 119, in report_pair
+    gen_path = generate_excel(apd_path)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ETools_Portable\compare_excel.py", line 44, in generate_excel
+    log(f"  Generated: {result.output_path}")
+                        ^^^^^^^^^^^^^^^^^
+AttributeError: 'CasingReviewResult' object has no attribute 'excel_path'
+
+
+======================================================================
+APD: application_13067.pdf
+Existing Excel: Casing Review_43019500930000_Federal 1-15H-20-21.xlsx
+======================================================================
+  Generating from application_13067.pdf ...
+2026-07-07 15:48:52 [info     ] apd_pdf.parse.start            mode=rules+llm path=C:\ETools_Portable\APD\application_13067.pdf
+2026-07-07 15:48:52 [info     ] apd_pdf.parse.done             api=43019500930000 casing=3 formations=0 locations=4 path=C:\ETools_Portable\APD\application_13067.pdf
+2026-07-07 15:48:55 [info     ] section_sheet.utm_written      conc=1520S21ES sheet='SHL Section' utm=(622469.4, 4324303.1)
+2026-07-07 15:48:55 [info     ] section_sheet.utm_written      conc=1520S21ES sheet='BHL Section 1' utm=(622566.9, 4324502.7)
+2026-07-07 15:48:55 [info     ] section_sheet.utm_written      conc=1020S21ES sheet='BHL Section 3' utm=(623359.8, 4326133.7)
+2026-07-07 15:49:23 [info     ] casing_review.generated        api=43019500930000 had_welltrack=False path='C:\\ETools_Portable\\app\\output\\Casing Review_43019500930000_Federal 1-15H-20-21.xlsx' strings=2
+ERROR processing application_13067.pdf: 'CasingReviewResult' object has no attribute 'excel_path'
+Traceback (most recent call last):
+  File "C:\ETools_Portable\compare_excel.py", line 177, in <module>
+    report_pair(apd_path, exist_path)
+  File "C:\ETools_Portable\compare_excel.py", line 119, in report_pair
+    gen_path = generate_excel(apd_path)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ETools_Portable\compare_excel.py", line 44, in generate_excel
+    log(f"  Generated: {result.output_path}")
+                        ^^^^^^^^^^^^^^^^^
+AttributeError: 'CasingReviewResult' object has no attribute 'excel_path'
+
+
+Report written to comparison_report.txt

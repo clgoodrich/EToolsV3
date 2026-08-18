@@ -1,0 +1,232 @@
+======================================================================
+WCR STRESS TEST REPORT
+======================================================================
+
+## 1. WCR Parse Edge Cases
+
+  RAISE [Non-existent file]: FileNotFoundError: no such file: 'C:\ETools_Portable\WCR\does_not_exist.pdf' (0.10s)
+  RAISE [Empty file]: FileDataError: Failed to open file 'C:\\ETools_Portable\\STRESS_TEST_LOG.md'. (0.00s)
+  PASS [APD file as WCR]: api=None well=None casing=0 formations=0 stages=0 positions=2 warnings=[] (0.97s)
+  PASS [Template PDF]: api=None well='Autofill from system data' casing=0 formations=0 stages=0 positions=0 warnings=[] (0.04s)
+  PASS [Complete PDF]: api=None well=None casing=0 formations=0 stages=0 positions=2 warnings=[] (0.88s)
+  PASS [Complete (1) PDF]: api=None well=None casing=0 formations=0 stages=0 positions=2 warnings=[] (0.61s)
+  PASS [complete (2) PDF]: api=None well=None casing=0 formations=0 stages=0 positions=2 warnings=[] (0.39s)
+  PASS [max_pages=1]: api='4301353995' well='South Moon 4-31-32-C4-1H' casing=4 formations=6 stages=0 positions=4 warnings=[] (0.53s)
+  PASS [max_pages=5]: api='4301353995' well='South Moon 4-31-32-C4-1H' casing=4 formations=6 stages=41 positions=4 warnings=[] (0.58s)
+  PASS [mode=llm (no ollama)]: api=None well=None casing=0 formations=0 stages=0 positions=0 warnings=["LLM extraction failed: 1 validation error for LLMWCRExtraction\n  Invalid JSON: EOF while parsing an object at line 1 column 1 [type=json_invalid, input_value='{', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/json_invalid"] (10.09s)
+
+## 2. Parse All Root WCR PDFs
+
+  43047561340000_08252022_014109.pdf: api=None, well=None, md=None, casing=0, fmns=0, stages=0, ISSUES: ['NO API', 'NO WELL NAME', 'NO TOTAL MD', 'NO POSITIONS'] (0.07s)
+  complete (1).pdf: api=None, well=None, md=None, casing=0, fmns=0, stages=0, ISSUES: ['NO API', 'NO WELL NAME', 'NO TOTAL MD'] (0.64s)
+  complete (2).pdf: api=None, well=None, md=None, casing=0, fmns=0, stages=0, ISSUES: ['NO API', 'NO WELL NAME', 'NO TOTAL MD'] (0.38s)
+  complete.pdf: api=None, well=None, md=None, casing=0, fmns=0, stages=0, ISSUES: ['NO API', 'NO WELL NAME', 'NO TOTAL MD'] (0.87s)
+  Template_pdf_test.pdf: api=None, well='Autofill from system data', md=None, casing=0, fmns=0, stages=0, ISSUES: ['NO API', 'NO TOTAL MD', 'NO POSITIONS'] (0.05s)
+  WCR 43013539950000.pdf: api=4301353995, well='South Moon 4-31-32-C4-1H', md=19494.0, casing=4, fmns=6, stages=41, OK (0.51s)
+  WCR 43013539960000.pdf: api=4301353996, well='South Moon 5-31-32-C4-3H', md=19263.0, casing=4, fmns=6, stages=43, OK (0.64s)
+  WCR 43013539970000.pdf: api=4301353997, well='South Moon 4-31-32-C4-2H', md=19549.0, casing=4, fmns=6, stages=46, OK (0.54s)
+  WCR 43013540190000.pdf: api=4301354019, well='Federal 3-18D-65', md=5759.0, casing=3, fmns=0, stages=0, OK (0.12s)
+  WCR 43013540300000.pdf: api=4301354030, well='Federal 15-7D-65', md=5947.0, casing=3, fmns=0, stages=0, OK (0.13s)
+  WCR 43013543050000.pdf: api=4301354305, well='Wild 74-3328-22G', md=20514.0, casing=3, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 9595.0', 'SUSPICIOUS PERF COUNT: 9166'] (0.47s)
+  WCR 43013543060000.pdf: api=4301354306, well='Wild 51-3328-22D', md=20551.0, casing=3, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 10037.0', 'SUSPICIOUS PERF COUNT: 9719'] (0.61s)
+  wcr 43013543070000.pdf: api=4301354307, well='Wild 54-3328-22H', md=20797.0, casing=3, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 10053.0', 'SUSPICIOUS PERF COUNT: 9600'] (0.49s)
+  WCR 43013543080000.pdf: api=4301354308, well='Wild 62-3328-22F', md=20556.0, casing=4, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 9946.0', 'SUSPICIOUS PERF COUNT: 9494'] (0.53s)
+  WCR 43013543100000.pdf: api=4301354310, well='Wild 40-3328-22C', md=12568.0, casing=4, fmns=0, stages=1, OK (0.43s)
+  WCR 43013543110000.pdf: api=4301354311, well='Wild 60-3328-22A', md=20287.0, casing=4, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 9945.0', 'SUSPICIOUS PERF COUNT: 9521'] (0.48s)
+  WCR 43013543150000.pdf: api=4301354315, well='Wild 70-3328-22B', md=20028.0, casing=4, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 9620.0', 'SUSPICIOUS PERF COUNT: 9176'] (0.44s)
+  WCR 43013543510000.pdf: api=4301354351, well='Jorgensen UT 16-9 3-2-9-4-12H', md=19115.0, casing=4, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 9516.0', 'SUSPICIOUS PERF COUNT: 9032'] (0.07s)
+  WCR 43013543830000.pdf: api=4301354383, well='North Moon 12-31-32-B4-8H', md=21319.0, casing=4, fmns=5, stages=38, OK (0.47s)
+  WCR 43013544520000.pdf: api=4301354452, well='South Moon 5-31-32-C4-4H', md=19356.0, casing=4, fmns=6, stages=44, OK (0.48s)
+  WCR 43013544530000.pdf: api=4301354453, well='South Moon 5-31-32-C4-5H', md=19268.0, casing=4, fmns=6, stages=44, OK (0.49s)
+  WCR 43013544690000.pdf: api=4301354469, well='Trident 81-2221-23D', md=21022.0, casing=4, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 9977.0', 'SUSPICIOUS PERF COUNT: 9967'] (0.41s)
+  WCR 43013544720000.pdf: api=4301354472, well='Trident 80-2221-23C', md=21001.0, casing=4, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 9441.0', 'SUSPICIOUS PERF COUNT: 9557'] (0.37s)
+  WCR 43013544750000.pdf: api=4301354475, well='Trident 85-2221-23F', md=20325.0, casing=4, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 9342.0', 'SUSPICIOUS PERF COUNT: 9458'] (0.36s)
+  WCR 43013544760000.pdf: api=4301354476, well='Trident 86-2221-23G', md=20548.0, casing=4, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 9245.0', 'SUSPICIOUS PERF COUNT: 9346'] (0.43s)
+  WCR 43013544770000.pdf: api=4301354477, well='Trident 89-2221-23I', md=20068.0, casing=4, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 9858.0', 'SUSPICIOUS PERF COUNT: 9764'] (0.38s)
+  WCR 43013544780000.pdf: api=4301354478, well='Trident 99-2221-23J', md=20135.0, casing=4, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 9040.0', 'SUSPICIOUS PERF COUNT: 9098'] (0.45s)
+  WCR 43013544890000.pdf: api=4301354489, well='RP Tribal 21N-31W-H2CP', md=18203.0, casing=3, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 8388.0', 'SUSPICIOUS PERF COUNT: 8637'] (0.02s)
+  WCR 43013545420000 2.0.pdf: api=None, well=None, md=None, casing=0, fmns=0, stages=0, ISSUES: ['NO API', 'NO WELL NAME', 'NO TOTAL MD', 'NO POSITIONS'] (0.41s)
+  WCR 43013545420000.pdf: api=4301354542, well='Goose 52-2423-23E', md=2.0, casing=0, fmns=0, stages=1, OK (0.01s)
+  WCR 43013545560000.pdf: api=4301354556, well='Goose 72-2423-23D', md=2.0, casing=4, fmns=0, stages=1, OK (0.54s)
+  WCR 43013546110000.pdf: api=4301354611, well='Brutus Buckeye 25-13-8-16-1H', md=17470.0, casing=3, fmns=1, stages=0, OK (0.05s)
+  WCR 43013546120000.pdf: api=4301354612, well='Brutus Buckeye 26-13-8-16-3H', md=17405.0, casing=3, fmns=1, stages=0, OK (0.04s)
+  WCR 43013546130000.pdf: api=4301354613, well='Brutus Buckeye 26-13-8-16-4H', md=17482.0, casing=3, fmns=1, stages=0, OK (0.05s)
+  WCR 43013546140000.pdf: api=4301354614, well='Brutus Buckeye 26-11-8-16-2H', md=20033.0, casing=3, fmns=1, stages=0, OK (0.05s)
+  WCR 43013546200000.pdf: api=4301354620, well='LFR Caravan 12-23-24-B4-6H', md=22201.0, casing=4, fmns=5, stages=57, OK (0.59s)
+  WCR 43013546210000.pdf: api=4301354621, well='LFR Caravan 12-23-24-B4-7H', md=21756.0, casing=4, fmns=5, stages=57, OK (0.54s)
+  WCR 43013546220000.pdf: api=4301354622, well='LFR Caravan 13-23-24-B4-8H', md=21330.0, casing=4, fmns=4, stages=50, OK (0.52s)
+  WCR 43013546230000.pdf: api=4301354623, well='LFR Caravan 13-23-24-B4-9H', md=21706.0, casing=4, fmns=5, stages=41, OK (0.57s)
+  WCR 43013546240000.pdf: api=4301354624, well='LFR Caravan 23/24-26/25-B4-10H', md=20439.0, casing=4, fmns=3, stages=56, OK (0.54s)
+  WCR 43013546460000.pdf: api=4301354646, well='RP TRIBAL 21N-31W-H4LP', md=17788.0, casing=3, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 8175.0', 'SUSPICIOUS PERF COUNT: 7840'] (0.08s)
+  WCR 43037159760000.pdf: api=None, well=None, md=None, casing=0, fmns=0, stages=0, ISSUES: ['NO API', 'NO WELL NAME', 'NO TOTAL MD', 'NO POSITIONS'] (0.23s)
+  WCR 43037163980000.pdf: api=None, well=None, md=None, casing=0, fmns=0, stages=0, ISSUES: ['NO API', 'NO WELL NAME', 'NO TOTAL MD', 'NO POSITIONS'] (0.23s)
+  WCR 43037302370400.pdf: api=None, well=None, md=None, casing=0, fmns=0, stages=0, ISSUES: ['NO API', 'NO WELL NAME', 'NO TOTAL MD', 'NO POSITIONS'] (0.16s)
+  wcr 43037302410000.pdf: api=None, well=None, md=None, casing=0, fmns=0, stages=0, ISSUES: ['NO API', 'NO WELL NAME', 'NO TOTAL MD', 'NO POSITIONS'] (0.33s)
+  WCR 43047331580000.pdf: api=None, well=None, md=None, casing=0, fmns=0, stages=0, ISSUES: ['NO API', 'NO WELL NAME', 'NO TOTAL MD', 'NO POSITIONS'] (0.03s)
+  WCR 43047560590000.pdf: api=4304756059, well='RD Tribal 19N-31E-H6UB', md=18501.0, casing=3, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 8526.0', 'SUSPICIOUS PERF COUNT: 8243'] (0.08s)
+  WCR 43047560600000.pdf: api=4304756060, well='RD Tribal 19N-31E-H8UB', md=19156.0, casing=3, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 8572.0', 'SUSPICIOUS PERF COUNT: 8254'] (0.08s)
+  WCR 43047566710000.pdf: api=4304756671, well='Ute Tribal 12-01-5-2E', md=5854.0, casing=2, fmns=0, stages=0, OK (0.08s)
+  WCR 43047566730000.pdf: api=4304756673, well='Ute Tribal 01-16-5-2E', md=5846.0, casing=2, fmns=0, stages=0, OK (0.07s)
+  WCR 43047566880000.pdf: api=4304756688, well='Ute Tribal 02-09-5-2E', md=6333.0, casing=2, fmns=0, stages=0, OK (0.08s)
+  WCR 43047566910000.pdf: api=4304756691, well='Ute Tribal 33-13-4-2E', md=6742.0, casing=2, fmns=0, stages=0, OK (0.08s)
+  WCR 43047567500000.pdf: api=None, well=None, md=None, casing=0, fmns=0, stages=0, ISSUES: ['NO API', 'NO WELL NAME', 'NO TOTAL MD', 'NO POSITIONS'] (0.05s)
+  WCR 43047569140000.pdf: api=4304756914, well='Willow Creek 06-15A-9-20', md=5984.0, casing=2, fmns=0, stages=0, OK (0.08s)
+  WCR 43047570050000.pdf: api=4304757005, well='RD Tribal 7N-31E-H3CP', md=18676.0, casing=3, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 8945.0', 'SUSPICIOUS PERF COUNT: 8428'] (0.06s)
+  WCR 43047571780000.pdf: api=4304757178, well='RD Tribal 7N-31E-H1LP', md=18611.0, casing=3, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 8745.0', 'SUSPICIOUS PERF COUNT: 8238'] (0.02s)
+  WCR 43047572980000.pdf: api=4304757298, well='Dobby 1236-5MVH', md=18215.0, casing=4, fmns=0, stages=1, OK (0.17s)
+  WCR 43047573040000.pdf: api=4304757304, well='Dobby 1236-7MVH', md=19025.0, casing=4, fmns=0, stages=1, OK (0.18s)
+  WCR 43047573090000.pdf: api=4304757309, well='RD Tribal 19N-31E-H5CP', md=18115.0, casing=3, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 8161.0', 'SUSPICIOUS PERF COUNT: 7850'] (0.02s)
+  WCR 43047573100000.pdf: api=4304757310, well='RD Tribal 19N-31E-H6CP', md=18115.0, casing=3, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 8337.0', 'SUSPICIOUS PERF COUNT: 8056'] (0.02s)
+  WCR 43047573110000.pdf: api=4304757311, well='RD Tribal 19N-31E-H7CP', md=17911.0, casing=3, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 8168.0', 'SUSPICIOUS PERF COUNT: 7853'] (0.02s)
+  WCR 43047573470000.pdf: api=4304757347, well='RD Tribal 19N-31E-H4CP', md=18886.0, casing=3, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 8364.0', 'SUSPICIOUS PERF COUNT: 8056'] (0.02s)
+  WCR 43047573480000.pdf: api=4304757348, well='RD Tribal 19N-31E-H4UB', md=18796.0, casing=3, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 8515.0', 'SUSPICIOUS PERF COUNT: 8227'] (0.02s)
+  WCR 43047573560000.pdf: api=4304757356, well='RW 2733C-3MVH', md=19054.0, casing=4, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 9530.0', 'SUSPICIOUS PERF COUNT: 9642'] (0.23s)
+  WCR 43047573580000.pdf: api=4304757358, well='RW 2715C-1MVH', md=19846.0, casing=4, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 9821.0', 'SUSPICIOUS PERF COUNT: 9607'] (0.24s)
+  WCR 43047574960000.pdf: api=4304757496, well='RD TRIBAL 17S-31E-H2UB', md=18620.0, casing=3, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 8122.0', 'SUSPICIOUS PERF COUNT: 8433'] (0.07s)
+  WCR 43047574970000.pdf: api=4304757497, well='RD TRIBAL 17S-31E-H4UB', md=18667.0, casing=3, fmns=0, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 8130.0', 'SUSPICIOUS PERF COUNT: 8433'] (0.07s)
+  WCR 43047576330000.pdf: api=4304757633, well='PELICAN STATE 2-32D-6-20', md=8747.0, casing=2, fmns=2, stages=1, ISSUES: ['SUSPICIOUS PERF SIZE: 8565.0', 'SUSPICIOUS PERF COUNT: 6889'] (0.11s)
+
+## 3. WCR Excel Generate + Compare vs Existing
+
+======================================================================
+WCR PDF: WCR 43013539960000.pdf
+Existing: South_Moon_5-31-32-C4-3H_4301353996_WCR.xlsx
+======================================================================
+  Generating WCR Excel (no survey)...
+  Generated: C:\ETools_Portable\app\output\South_Moon_5-31-32-C4-3H_4301353996_WCR.xlsx (19.0s)
+  Loading workbooks for comparison...
+
+  [Sheet] -- 44 differences
+    E1: GEN='Perf Top'  EXIST=None
+    F1: GEN='Perf Bottom'  EXIST=None
+    G1: GEN='Perf Date'  EXIST=None
+    E2: GEN='8808'  EXIST=None
+    F2: GEN='19202'  EXIST=None
+    D10: GEN=552369  EXIST=552368  (0.00%)
+    E10: GEN=4447779  EXIST=4447778  (0.00%)
+    F10: GEN=1922.09  EXIST=1925.31  (0.17%)
+    G10: GEN=3358.95  EXIST=3355.77  (0.09%)
+    H10: GEN=4161.25  EXIST=4164.58  (0.08%)
+    I10: GEN=1239.67  EXIST=1236.37  (0.27%)
+    B11: GEN=7765  EXIST=7840  (0.96%)
+    C11: GEN=7755.15  EXIST=7574.39  (2.39%)
+    D11: GEN=552368  EXIST=551841  (0.10%)
+    E11: GEN=4447882  EXIST=4447850  (0.00%)
+    F11: GEN=1583.64  EXIST=1734.54  (8.70%)
+    G11: GEN=3697.34  EXIST=3665.24  (0.88%)
+    H11: GEN=4159.12  EXIST=5890.3  (29.39%)
+    I11: GEN=1239.06  EXIST=491.4  (152.15%)
+    J11: GEN='31'  EXIST='36'  (13.89%)
+    M11: GEN='4'  EXIST='5'  (20.00%)
+    C12: GEN=8796.82  EXIST=8224.2  (6.96%)
+    D12: GEN=552368  EXIST=552035  (0.06%)
+    E12: GEN=4447896  EXIST=4447856  (0.00%)
+    F12: GEN=1538.18  EXIST=1648.98  (6.72%)
+    G12: GEN=3742.79  EXIST=3643.9  (2.71%)
+    H12: GEN=4158.83  EXIST=5253.61  (20.84%)
+    I12: GEN=1238.98  EXIST=145.18  (753.41%)
+    C13: GEN=14003.44  EXIST=8385.62  (66.99%)
+    D13: GEN=552353  EXIST=555199  (0.51%)
+    ... (14 more)
+
+  TOTAL DIFFERENCES: 44
+
+======================================================================
+WCR PDF: WCR 43013540190000.pdf
+Existing: Federal_3-18D-65_4301354019_WCR.xlsx
+======================================================================
+  Generating WCR Excel (no survey)...
+  Generated: C:\ETools_Portable\app\output\Federal_3-18D-65_4301354019_WCR.xlsx (17.5s)
+  Loading workbooks for comparison...
+
+  [Sheet] -- 101 differences
+    E1: GEN=None  EXIST='Perf Top'
+    F1: GEN=None  EXIST='Perf Bottom'
+    G1: GEN=None  EXIST='Perf Date'
+    E2: GEN=None  EXIST='3298'
+    F2: GEN=None  EXIST='3697'
+    G2: GEN=None  EXIST='2024-07-12 00:00:00.000'
+    A4: GEN='WellType'  EXIST='ConstructKeyWellType'
+    B4: GEN='OW'  EXIST='0000'
+    B5: GEN='2023-10-12'  EXIST='OW'
+    B6: GEN='2024-06-08'  EXIST='2023-10-12'
+    B7: GEN='2024-06-13'  EXIST='2024-06-08'
+    B8: GEN='2024-07-13'  EXIST='2024-06-13'
+    B9: GEN='MeasuredDepth'  EXIST=None
+    C9: GEN='TVD'  EXIST=None
+    D9: GEN='Easting'  EXIST=None
+    E9: GEN='Northing'  EXIST=None
+    F9: GEN='FNL'  EXIST=None
+    G9: GEN='FSL'  EXIST=None
+    H9: GEN='FEL'  EXIST=None
+    I9: GEN='FWL'  EXIST=None
+    J9: GEN='Section'  EXIST=None
+    K9: GEN='Township'  EXIST=None
+    L9: GEN='Township_Direction'  EXIST=None
+    M9: GEN='Range'  EXIST=None
+    N9: GEN='Range_Direction'  EXIST=None
+    O9: GEN='Baseline'  EXIST=None
+    A10: GEN='SHL'  EXIST=None
+    B10: GEN='0'  EXIST='measured_depth'
+    C10: GEN='0'  EXIST='tvd'
+    D10: GEN='543444'  EXIST='easting'
+    ... (71 more)
+
+  TOTAL DIFFERENCES: 101
+
+======================================================================
+WCR PDF: WCR 43013540300000.pdf
+Existing: Federal_15-7D-65_4301354030_WCR.xlsx
+======================================================================
+  Generating WCR Excel (no survey)...
+  Generated: C:\ETools_Portable\app\output\Federal_15-7D-65_4301354030_WCR.xlsx (18.4s)
+  Loading workbooks for comparison...
+
+  [Sheet] -- 100 differences
+    E1: GEN=None  EXIST='Perf Top'
+    F1: GEN=None  EXIST='Perf Bottom'
+    G1: GEN=None  EXIST='Perf Date'
+    E2: GEN=None  EXIST='2248'
+    F2: GEN=None  EXIST='3711'
+    G2: GEN=None  EXIST='2024-07-12 00:00:00.000'
+    A4: GEN='WellType'  EXIST='ConstructKeyWellType'
+    B4: GEN='OW'  EXIST='0000'
+    B5: GEN='2023-10-10'  EXIST='OW'
+    B6: GEN='2024-05-22'  EXIST='2023-10-10'
+    B7: GEN='2024-05-28'  EXIST='2024-05-22'
+    B8: GEN='2024-07-12'  EXIST='2024-05-28'
+    B9: GEN='MeasuredDepth'  EXIST=None
+    C9: GEN='TVD'  EXIST=None
+    D9: GEN='Easting'  EXIST=None
+    E9: GEN='Northing'  EXIST=None
+    F9: GEN='FNL'  EXIST=None
+    G9: GEN='FSL'  EXIST=None
+    H9: GEN='FEL'  EXIST=None
+    I9: GEN='FWL'  EXIST=None
+    J9: GEN='Section'  EXIST=None
+    K9: GEN='Township'  EXIST=None
+    L9: GEN='Township_Direction'  EXIST=None
+    M9: GEN='Range'  EXIST=None
+    N9: GEN='Range_Direction'  EXIST=None
+    O9: GEN='Baseline'  EXIST=None
+    A10: GEN='SHL'  EXIST=None
+    B10: GEN='0'  EXIST='measured_depth'
+    C10: GEN='0'  EXIST='tvd'
+    D10: GEN='543423'  EXIST='easting'
+    ... (70 more)
+
+  TOTAL DIFFERENCES: 100
+
+## 4. WCR Service Edge Cases
+
+  RAISE [No args]: ValueError: Provide either wcr_pdf_path or wcr_data. (0.00s)
+  RAISE [Empty survey DF]: ValueError: Cannot process an empty survey. (0.00s)
+  RAISE [NaN surface lat]: AssertionError: latitude out of bounds (0.00s)
+  PASS [None surface lat]: output=C:\ETools_Portable\app\output\South_Moon_4-31-32-C4-1H_4301353995_WCR.xlsx (17.4s)
+  RAISE [Extreme lat 91]: ProjError: proj error: Invalid coordinate: (Internal Proj Error: lcc: Invalid latitude) (0.00s)
+  RAISE [Survey with NaN]: OutOfRangeError: latitude out of range (must be between 80 deg S and 84 deg N) (0.01s)
+  PASS [Zero elevation]: output=C:\ETools_Portable\app\output\South_Moon_4-31-32-C4-1H_4301353995_WCR.xlsx (18.3s)
+  PASS [Negative elevation]: output=C:\ETools_Portable\app\output\South_Moon_4-31-32-C4-1H_4301353995_WCR.xlsx (17.3s)
+  PASS [Good run (baseline)]: output=C:\ETools_Portable\app\output\South_Moon_4-31-32-C4-1H_4301353995_WCR.xlsx (17.3s)
+
+WCR stress test complete.
