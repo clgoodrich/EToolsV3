@@ -173,14 +173,17 @@ def _extract_text(path: Path) -> str:
         import fitz  # PyMuPDF
     except ImportError as exc:
         raise RuntimeError("PyMuPDF is required to parse APD PDFs") from exc
-    doc = fitz.open(str(path))
-    pages: list[str] = []
-    for i in range(len(doc)):
-        try:
-            pages.append(doc.load_page(i).get_text("text"))
-        except Exception as exc:
-            log.warning("apd_pdf.page_failed", page=i + 1, error=str(exc))
-            pages.append("")
+    # ``with`` so the handle is released even when a page raises: an open
+    # fitz Document keeps the file locked on Windows, which is what made
+    # temp-upload cleanup fail.
+    with fitz.open(str(path)) as doc:
+        pages: list[str] = []
+        for i in range(len(doc)):
+            try:
+                pages.append(doc.load_page(i).get_text("text"))
+            except Exception as exc:
+                log.warning("apd_pdf.page_failed", page=i + 1, error=str(exc))
+                pages.append("")
     return "\n\n<<<PAGE>>>\n\n".join(pages)
 
 

@@ -728,11 +728,13 @@ def vision_transcribe_page(
         raise RuntimeError("PyMuPDF not installed") from e
 
     started = time.time()
-    doc = fitz.open(str(path))
-    if page < 1 or page > len(doc):
-        raise ValueError(f"Page {page} out of range (PDF has {len(doc)} pages)")
-    pix = doc.load_page(page - 1).get_pixmap(dpi=dpi)
-    img_bytes = pix.tobytes("png")
+    with fitz.open(str(path)) as doc:
+        if page < 1 or page > len(doc):
+            raise ValueError(
+                f"Page {page} out of range (PDF has {len(doc)} pages)"
+            )
+        pix = doc.load_page(page - 1).get_pixmap(dpi=dpi)
+        img_bytes = pix.tobytes("png")
 
     client = OllamaClient()
     if not client.health():
@@ -826,11 +828,12 @@ def _pymupdf_extract_text(path: Path) -> str:
         log.warning("pdf.pymupdf.open_failed", error=str(exc))
         return ""
     parts: list[str] = []
-    for i in range(len(doc)):
-        try:
-            parts.append(doc.load_page(i).get_text())
-        except Exception as exc:
-            log.warning("pdf.pymupdf.page_failed", page=i + 1, error=str(exc))
+    with doc:
+        for i in range(len(doc)):
+            try:
+                parts.append(doc.load_page(i).get_text())
+            except Exception as exc:
+                log.warning("pdf.pymupdf.page_failed", page=i + 1, error=str(exc))
     return "\n".join(parts)
 
 
@@ -842,9 +845,9 @@ def _render_pages_to_png(path: Path, max_pages: int = 8) -> list[bytes]:
         log.warning("pdf.render.no_fitz")
         return []
     out: list[bytes] = []
-    doc = fitz.open(str(path))
-    for i in range(min(len(doc), max_pages)):
-        page = doc.load_page(i)
-        pix = page.get_pixmap(dpi=150)
-        out.append(pix.tobytes("png"))
+    with fitz.open(str(path)) as doc:
+        for i in range(min(len(doc), max_pages)):
+            page = doc.load_page(i)
+            pix = page.get_pixmap(dpi=150)
+            out.append(pix.tobytes("png"))
     return out

@@ -432,11 +432,11 @@ def _render_pages_to_png(path: Path, max_pages: int = 6) -> list[bytes]:
     except ImportError:
         return []
     out: list[bytes] = []
-    doc = fitz.open(str(path))
-    for i in range(min(len(doc), max_pages)):
-        page = doc.load_page(i)
-        pix = page.get_pixmap(dpi=150)
-        out.append(pix.tobytes("png"))
+    with fitz.open(str(path)) as doc:
+        for i in range(min(len(doc), max_pages)):
+            page = doc.load_page(i)
+            pix = page.get_pixmap(dpi=150)
+            out.append(pix.tobytes("png"))
     return out
 
 
@@ -453,14 +453,14 @@ def _extract_text(path: Path) -> str:
         import fitz  # PyMuPDF
     except ImportError as exc:
         raise RuntimeError("PyMuPDF is required to parse WCR PDFs") from exc
-    doc = fitz.open(str(path))
-    pages: list[str] = []
-    for i in range(len(doc)):
-        try:
-            pages.append(doc.load_page(i).get_text("text"))
-        except Exception as exc:  # pragma: no cover
-            log.warning("wcr_pdf.page_failed", page=i + 1, error=str(exc))
-            pages.append("")
+    with fitz.open(str(path)) as doc:
+        pages: list[str] = []
+        for i in range(len(doc)):
+            try:
+                pages.append(doc.load_page(i).get_text("text"))
+            except Exception as exc:  # pragma: no cover
+                log.warning("wcr_pdf.page_failed", page=i + 1, error=str(exc))
+                pages.append("")
     return "\n\n<<<PAGE>>>\n\n".join(pages)
 
 

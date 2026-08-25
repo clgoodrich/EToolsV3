@@ -68,8 +68,10 @@ def _extract_text(path: str | Path) -> str:
         import fitz  # PyMuPDF
     except ImportError as exc:
         raise RuntimeError("PyMuPDF required to parse DDRs") from exc
-    doc = fitz.open(str(path))
-    return "\n".join(doc.load_page(i).get_text("text") for i in range(len(doc)))
+    with fitz.open(str(path)) as doc:
+        return "\n".join(
+            doc.load_page(i).get_text("text") for i in range(len(doc))
+        )
 
 
 # ---------------------------------------------------------------------------
