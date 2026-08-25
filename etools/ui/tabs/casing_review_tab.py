@@ -1947,17 +1947,35 @@ def _render_segment_cell(
         return str(int(value))
 
     def _fire_viz_refresh() -> None:
-        cb = getattr(state, "viz_refresh", None)
-        if cb is not None:
+        """Repaint the map and plat SVG after a geometry edit.
+
+        The override has already been written to the SectionDefinition by the
+        time we get here -- and it feeds the Excel generator from there. So a
+        silent failure means the data changed but the screen did not, which
+        reads to the user as "my edit did nothing" and invites them to make
+        the same edit twice.
+        """
+        failed: list[str] = []
+        for label, cb, event in (
+            ("map", getattr(state, "viz_refresh", None),
+             "section_panel.viz_refresh.failed"),
+            ("plat diagram", on_geometry_change,
+             "section_panel.plat_refresh.failed"),
+        ):
+            if cb is None:
+                continue
             try:
                 cb()
             except Exception as exc:
-                log.warning("section_panel.viz_refresh.failed", error=str(exc))
-        if on_geometry_change is not None:
-            try:
-                on_geometry_change()
-            except Exception as exc:
-                log.warning("section_panel.plat_refresh.failed", error=str(exc))
+                log.warning(event, error=str(exc))
+                failed.append(label)
+        if failed:
+            ui.notify(
+                "Your edit was saved, but the "
+                f"{' and '.join(failed)} could not be redrawn. "
+                "Switch tabs and back to refresh it.",
+                type="warning",
+            )
 
     def _apply():
         new_dist = _parse_optional(refs["dist"].value, cast=float)

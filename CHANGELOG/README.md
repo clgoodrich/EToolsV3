@@ -23,6 +23,7 @@ alters app behavior or output. Skip trivial edits (typos, formatting, one-line t
 ## Index
 
 <!-- newest first: - [YYYY-MM-DD Title](file.md) — one-line hook -->
+- [2026-08-25 Half-updated state](2026-08-25-half-updated-state.md) - A failed load left the new well's survey beside the old well's clearances; the well-state group is now all-or-nothing, and a saved edit that fails to repaint says so.
 - [2026-08-25 Coordinate guards and LLM transport](2026-08-25-coords-and-llm-transport.md) - Swapping lat/lon made Reprocess SHL silently do nothing; Ollama non-JSON bodies and num_predict truncation were reported as the wrong failure.
 - [2026-08-25 Mount latch, KOP guards, CRS](2026-08-25-latches-kop-crs.md) - A failed /output mount latched and killed every download link; KOP analysed zero-padded garbage on short surveys; an all-miss spatial join only logged at info.
 - [2026-08-25 Surface silent degradation](2026-08-25-surface-silent-degradation.md) - A DB blip silently dropped the casing table from a WCR and made a failed survey lookup look like a well with no survey; both now tell you.
