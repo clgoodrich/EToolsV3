@@ -15,6 +15,7 @@ from nicegui import ui
 
 from etools.config import settings
 from etools.logging_setup import configure_logging, get_logger
+from etools.preflight import format_preflight_report, missing_data_files
 from etools.ui.app import build_app
 
 
@@ -31,6 +32,19 @@ def run() -> None:
         log_file=str(log_file),
     )
     print(f"\n[etools] Persistent log: {log_file}\n")
+
+    # Tell the user about missing data files up front. Without this the
+    # server starts and binds the port, then every page load dies inside
+    # root() with the real cause visible only in the log.
+    missing = missing_data_files()
+    if missing:
+        print(format_preflight_report(missing))
+        log.warning(
+            "etools.preflight.missing_data_files",
+            files=[s.name for s in missing],
+            paths=[str(s.path) for s in missing],
+        )
+
     build_app()
     _open_in_default_browser(f"http://127.0.0.1:{settings.port}/")
     ui.run(
