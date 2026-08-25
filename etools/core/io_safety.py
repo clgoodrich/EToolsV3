@@ -40,18 +40,32 @@ def atomic_output(path: Path | str, *, keep_failed: bool = False) -> Iterator[Pa
     # Sibling temp file: os.replace is only atomic within one filesystem.
     # The PID keeps two concurrent generations of the same well apart.
     work = path.with_name(f".{path.stem}.{os.getpid()}.partial{path.suffix}")
+
+    def _discard() -> None:
+        if keep_failed:
+            return
+        try:
+            work.unlink(missing_ok=True)
+        except OSError as exc:
+            log.warning(
+                "io_safety.temp_cleanup_failed", path=str(work), error=str(exc)
+            )
+
     try:
         yield work
     except BaseException:
-        if not keep_failed:
-            try:
-                work.unlink(missing_ok=True)
-            except OSError as exc:
-                log.warning(
-                    "io_safety.temp_cleanup_failed", path=str(work), error=str(exc)
-                )
+        _discard()
         raise
-    os.replace(work, path)
+
+    # The replace itself is the most likely failure of all: on Windows it
+    # raises PermissionError when the destination is open in Excel. It has to
+    # be inside the cleanup path too, or every blocked save leaves a partial
+    # file behind.
+    try:
+        os.replace(work, path)
+    except BaseException:
+        _discard()
+        raise
 
 
 def describe_write_error(path: str | Path, exc: BaseException) -> str:

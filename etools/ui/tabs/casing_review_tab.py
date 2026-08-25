@@ -44,6 +44,7 @@ from etools.repositories import SurveyRepository
 from etools.services import CasingReviewService
 from etools.ui.promote import promote_apd_to_active
 from etools.ui.state import AppState
+from etools.core.io_safety import describe_write_error
 
 log = get_logger(__name__)
 
@@ -572,8 +573,18 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
             )
         except Exception as exc:
             log.exception("casing_review.generate_failed")
-            ui.notify(f"Generation failed: {exc}", type="negative")
-            cache["gen_status"].text = "Generation failed — see logs."
+            # An OSError here is nearly always the output file being open in
+            # Excel -- the app auto-opens it after every generation and the
+            # filename is deterministic, so regenerating targets a locked
+            # path. Say that, instead of echoing errno 13.
+            if isinstance(exc, OSError):
+                msg = describe_write_error(
+                    svc.output_dir / svc._default_filename(data), exc
+                )
+            else:
+                msg = f"Generation failed: {exc}"
+            ui.notify(msg, type="negative")
+            cache["gen_status"].text = msg
             return
         finally:
             cache["gen_btn"].props(remove="loading")

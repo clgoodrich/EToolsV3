@@ -30,6 +30,7 @@ from etools.logging_setup import get_logger
 from etools.models import WCRPdfData
 from etools.repositories import SurveyRepository
 from etools.services import WCRService
+from etools.core.io_safety import describe_write_error
 from etools.services.tracking_service import update_tracking_workbook
 from etools.services.wcr_pdf_service import WCRPdfResult, WCRPdfService
 from etools.ui.promote import promote_wcr_to_active
@@ -337,7 +338,12 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
             result = wcr_pdf_service.generate(**kwargs)
         except Exception as exc:
             log.exception("wcr.generate_failed")
-            ui.notify(f"WCR generation failed: {exc}", type="negative")
+            msg = (
+                describe_write_error(_wcr_output_hint(cache), exc)
+                if isinstance(exc, OSError)
+                else f"WCR generation failed: {exc}"
+            )
+            ui.notify(msg, type="negative")
             return
 
         cache["last_result"] = result
@@ -462,7 +468,12 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
             )
         except Exception as exc:
             log.exception("wcr.rewrite_failed")
-            ui.notify(f"Save failed: {exc}", type="negative")
+            msg = (
+                describe_write_error(result.output_path, exc)
+                if isinstance(exc, OSError)
+                else f"Save failed: {exc}"
+            )
+            ui.notify(msg, type="negative")
             return
         generate_status.text = f"Saved {Path(path).name}"
         ui.notify(f"WCR updated: {Path(path).name}", type="positive")
