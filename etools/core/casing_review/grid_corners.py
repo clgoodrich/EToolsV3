@@ -13,6 +13,10 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from etools.logging_setup import get_logger
+
+log = get_logger(__name__)
+
 _DB_PATH = Path(__file__).resolve().parents[2] / "data" / "grid_numbers.sqlite"
 
 _M_TO_FT = 3.280839895
@@ -106,6 +110,10 @@ class GridCornerCatalog:
         return cur.fetchall()
 
 
+# Below this the two corners are the same point to within survey precision.
+_MIN_BOUNDARY_LEN_M = 1e-6
+
+
 def _bearing_to_dms_alignment(d_east: float, d_west_unused=None, *, d_north: float):
     """Convert a segment vector into (degrees, minutes, seconds, alignment).
 
@@ -116,6 +124,16 @@ def _bearing_to_dms_alignment(d_east: float, d_west_unused=None, *, d_north: flo
     the SE/NW quadrant). Validated against known sections to within a few
     arc-minutes.
     """
+    # atan2(0, 0) returns exactly 0.0, so a boundary with no length used to
+    # be reported as a confident bearing due north instead of "no data".
+    # GridCorner's dms fields are all Optional, so None passes straight
+    # through without changing the caller's 4-tuple unpack.
+    if math.hypot(d_east, d_north) < _MIN_BOUNDARY_LEN_M:
+        log.warning(
+            "grid_corners.zero_length_boundary", d_east=d_east, d_north=d_north
+        )
+        return None, None, None, None
+
     az = math.degrees(math.atan2(d_east, d_north)) % 360.0  # azimuth, cw from N
     if az <= 90:
         mag, align = az, 2          # NE
