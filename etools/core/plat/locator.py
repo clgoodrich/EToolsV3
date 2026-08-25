@@ -35,6 +35,13 @@ def locate_points(
         return out
 
     geom = [Point(x, y) for x, y in zip(points[easting_col], points[northing_col])]
+    # NOTE: this ASSIGNS the sections' CRS to the points, it does not
+    # reproject them. Callers are expected to pass UTM zone 12N eastings and
+    # northings, which is what the plat sections use. A gross mismatch (e.g.
+    # degrees where metres are expected) puts every point outside every
+    # section and is caught by the no_matches warning below; a subtle one
+    # (NAD83 vs NAD27) would not be caught at all, which is why the match
+    # rate is logged on every call.
     pts_gdf = gpd.GeoDataFrame(points.copy(), geometry=geom, crs=sections.crs)
     joined = gpd.sjoin(
         pts_gdf,
@@ -52,10 +59,20 @@ def locate_points(
     for col in ("Section", "Township", "Township_Direction", "Range", "Range_Direction", "Baseline"):
         joined[col] = plss.apply(lambda d, k=col: d.get(k))
 
-    matched = joined["Conc"].notna().sum()
+    matched = int(joined["Conc"].notna().sum())
     log.info(
-        "plat.locate", points=len(points), matched=int(matched), unique_sections=joined["Conc"].nunique()
+        "plat.locate", points=len(points), matched=matched, unique_sections=joined["Conc"].nunique()
     )
+    if len(joined) and matched == 0:
+        # Indistinguishable in the output from "this well is off-plat", so
+        # it has to be loud: the usual cause is the eastings/northings not
+        # actually being in the sections' CRS.
+        log.warning(
+            "plat.locate.no_matches",
+            points=len(points),
+            sections_crs=str(sections.crs),
+            hint="every point fell outside every section - check the input CRS",
+        )
     return joined
 
 
