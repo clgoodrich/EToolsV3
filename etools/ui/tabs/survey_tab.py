@@ -348,17 +348,21 @@ def render_survey_tab(state: AppState) -> Callable[[], None]:
         if not state.surveys or not state.headers:
             ui.notify("Load a well first.", type="warning")
             return
+        # The conversion has to be inside this try: utm_to_latlon raises
+        # ValueError for a coordinate it cannot project, and when that call
+        # sat below the except the handler simply died -- no dialog, no
+        # notification, the button appeared to do nothing at all.
         try:
             a = dms_to_decimal(shl_lat_input.value or "")
             b = dms_to_decimal(shl_lon_input.value or "")
+            # Lat/lon detected by magnitude; bigger numbers are UTM 12N metres.
+            if abs(a) <= 90 and abs(b) <= 180:
+                lat, lon = a, b
+            else:
+                lat, lon = utm_to_latlon(a, b, 12, "N")
         except ValueError as exc:
             ui.notify(f"Coordinate parse failed: {exc}", type="warning")
             return
-        # Lat/lon detected by magnitude; bigger numbers are UTM 12N metres.
-        if abs(a) <= 90 and abs(b) <= 180:
-            lat, lon = a, b
-        else:
-            lat, lon = utm_to_latlon(a, b, 12, "N")
         state.shl_override = (lat, lon)
         await _cascade(f"SHL moved to {lat:.5f}, {lon:.5f}")
 

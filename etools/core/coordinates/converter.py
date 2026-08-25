@@ -56,7 +56,30 @@ def latlon_to_utm(lat: float, lon: float) -> tuple[float, float, int, str]:
 
 
 def utm_to_latlon(easting: float, northing: float, zone_number: int, zone_letter: str) -> tuple[float, float]:
-    lat, lon = utm.to_latlon(easting, northing, zone_number, zone_letter)
+    """Project a UTM coordinate back to WGS84 lat/lon.
+
+    Raises ``ValueError`` on anything unusable, matching ``_validate_latlon``
+    and ``dms_to_decimal`` so callers only ever need one except clause.
+
+    ``utm`` already raises ``OutOfRangeError`` (which *is* a ``ValueError``)
+    for an out-of-range easting, northing or zone. What it does not normalise
+    is non-numeric input: a string reaches numpy and raises ``UFuncTypeError``
+    and ``None`` raises ``TypeError``, neither of which is a ``ValueError``.
+    """
+    try:
+        e = float(easting)
+        n = float(northing)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"UTM easting/northing must be numbers; got {easting!r}, {northing!r}"
+        ) from exc
+    try:
+        lat, lon = utm.to_latlon(e, n, zone_number, zone_letter)
+    except Exception as exc:
+        raise ValueError(
+            f"Not a valid UTM coordinate: easting={e}, northing={n}, "
+            f"zone={zone_number}{zone_letter} ({exc})"
+        ) from exc
     return float(lat), float(lon)
 
 
