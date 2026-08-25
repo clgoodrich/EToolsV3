@@ -186,7 +186,7 @@ class WCRPdfService:
         # ---- Resolve output path & emit ----
         info = _info_from_pdf(pdf_data)
         out = Path(output_path) if output_path else _default_output_path(pdf_data)
-        casing_df, perf_date = _db_extras(pdf_data.api)
+        casing_df, perf_date = _db_extras(pdf_data.api, warnings=pdf_data.warnings)
         path = generate_wcr_excel(
             info=info,
             location_rows=location_rows,
@@ -267,7 +267,7 @@ class WCRPdfService:
         """Re-emit the Excel using current (possibly edited) location rows."""
         info = _info_from_pdf(pdf_data)
         out = Path(output_path) if output_path else _default_output_path(pdf_data)
-        casing_df, perf_date = _db_extras(pdf_data.api)
+        casing_df, perf_date = _db_extras(pdf_data.api, warnings=pdf_data.warnings)
         path = generate_wcr_excel(
             info=info,
             location_rows=location_rows,
@@ -306,11 +306,15 @@ class WCRPdfService:
 # ---------------------------------------------------------------------------
 
 
-def _db_extras(api: str | None) -> tuple[pd.DataFrame | None, str | None]:
+def _db_extras(
+    api: str | None, *, warnings: list[str] | None = None
+) -> tuple[pd.DataFrame | None, str | None]:
     """Casing table + latest perf date from the DB, when reachable.
 
     The PDF pipeline must keep working without SQL Server, so any failure
-    here degrades to (None, None) — the workbook simply omits those cells.
+    here degrades to (None, None) — but it is NOT invisible. Omitting the
+    casing table changes what gets submitted, and the same button pressed
+    twice must not quietly produce two different workbooks.
     """
     if not api:
         return None, None
@@ -320,7 +324,15 @@ def _db_extras(api: str | None) -> tuple[pd.DataFrame | None, str | None]:
 
         bundle = WCRRepository().get_bundle(api[:10])
     except Exception as exc:
-        log.info("wcr_pdf_service.db_extras.unavailable", error=str(exc))
+        log.warning(
+            "wcr_pdf_service.db_extras.unavailable", api=api, error=str(exc)
+        )
+        if warnings is not None:
+            warnings.append(
+                "Could not reach the database, so the casing table and "
+                "perforation date were left out of this workbook. Fix the "
+                "connection and generate again if you need them."
+            )
         return None, None
     casing = bundle.casing if bundle.casing is not None and not bundle.casing.empty else None
     _, _, perf_date = _perf_summary(bundle.perforations)
