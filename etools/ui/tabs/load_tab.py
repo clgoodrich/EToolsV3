@@ -288,6 +288,12 @@ def render_load_tab(
             )
         except Exception as exc:
             log.warning("load_tab.apd_db_survey_failed", error=str(exc))
+            ui.notify(
+                "Couldn't reach the database to look up this well's survey. "
+                "Casing TVDs will fall back to a straight-hole estimate "
+                "unless you load a survey PDF.",
+                type="warning",
+            )
             return
         chosen = next(
             (c for c in ("AsDrilled", "Planned") if c in results and not results[c].empty),
@@ -414,6 +420,11 @@ def render_load_tab(
             )
         except Exception as exc:
             log.warning("load_tab.wcr_db_survey_failed", error=str(exc))
+            ui.notify(
+                "Couldn't reach the database to look up this well's survey. "
+                "Load one from a PDF if you need survey-derived values.",
+                type="warning",
+            )
             return
         chosen = next(
             (c for c in ("AsDrilled", "Planned") if c in results and not results[c].empty),

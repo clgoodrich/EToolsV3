@@ -448,6 +448,12 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
             )
         except Exception as exc:
             log.warning("casing_review.db_lookup_failed", error=str(exc))
+            ui.notify(
+                "Couldn't reach the database to look up this well's survey. "
+                "Casing TVDs will fall back to a straight-hole estimate "
+                "unless you load a survey PDF.",
+                type="warning",
+            )
             return
         chosen = next(
             (c for c in ("AsDrilled", "Planned") if c in results and not results[c].empty),
