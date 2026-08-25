@@ -428,8 +428,13 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
                 sections=result.sections,
                 elevation_ft=result.elevation_ft,
             )
+            # The recompute succeeded, so the data model advances. What used
+            # to be silent is the DISPLAY falling behind it: a disposed widget
+            # skipped its row, leaving the visible grid disagreeing with the
+            # values that will actually be exported.
             result.location_rows = new_rows
             inputs = cache.get("edit_inputs") or {}
+            stale = 0
             for r in new_rows:
                 w = inputs.get(r.name)
                 if w is None:
@@ -448,7 +453,20 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
                     w["base_label"].text = r.baseline or "—"
                 except Exception:
                     # Widget may have been disposed (page disconnect / rerender).
+                    stale += 1
                     log.debug("wcr.recompute.label_update_skipped", row=r.name)
+            if stale:
+                log.warning(
+                    "wcr.recompute.rows_not_repainted",
+                    rows=stale,
+                    total=len(new_rows),
+                )
+                ui.notify(
+                    f"{stale} of {len(new_rows)} rows could not be redrawn. "
+                    "The recalculated values are saved and will be used in "
+                    "the export - switch tabs and back to see them.",
+                    type="warning",
+                )
         except Exception as exc:
             log.exception("wcr.recompute_failed")
             try:
