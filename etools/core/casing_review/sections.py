@@ -25,6 +25,10 @@ from typing import Iterable
 
 from shapely.geometry import Polygon
 from shapely.geometry.base import BaseGeometry
+from etools.core.casing_review.footages import (
+    DegenerateGeometryError,
+    _checked_bounds,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -668,7 +672,23 @@ class SectionDefinition:
         ]
         poly = Polygon(ring)
         if not poly.is_valid:
-            poly = poly.buffer(0)
+            repaired = poly.buffer(0)
+            # buffer(0) is a repair trick, not a guarantee: on a
+            # self-intersecting or zero-length ring it returns an EMPTY
+            # geometry whose .bounds is (nan, nan, nan, nan). That unpacks
+            # without complaint, so letting it through produced NaN footages
+            # in the section sheets with no error raised anywhere.
+            if repaired.is_empty:
+                raise DegenerateGeometryError(
+                    "Section geometry collapsed while being repaired - the "
+                    "segment overrides do not describe a closed section."
+                )
+            log.warning(
+                "section.polygon_repaired",
+                area_before=poly.area,
+                area_after=repaired.area,
+            )
+            poly = repaired
         return poly
 
     # ------------------------------------------------------------------
@@ -692,7 +712,7 @@ class SectionDefinition:
         """
         if self.plat_polygon is None:
             raise ValueError("No plat_polygon to derive corners from")
-        minx, miny, maxx, maxy = self.plat_polygon.bounds
+        minx, miny, maxx, maxy = _checked_bounds(self.plat_polygon)
         midx = (minx + maxx) / 2.0
         midy = (miny + maxy) / 2.0
         return {

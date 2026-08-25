@@ -24,6 +24,7 @@ can project to the actual N/E/S/W edge segments via shapely.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from shapely.geometry.base import BaseGeometry
@@ -43,6 +44,40 @@ class SectionFootages:
     fwl: float
 
 
+class DegenerateGeometryError(ValueError):
+    """A section polygon has no usable extent.
+
+    Subclasses ``ValueError`` on purpose: ``sections.py``, ``writer.py`` and
+    ``build_section_definitions`` already catch ``ValueError`` and skip the
+    offending section, which is the behavior we want. Shapely returns
+    ``(nan, nan, nan, nan)`` from ``.bounds`` on an empty geometry and that
+    unpacks without complaint, so without this guard the NaN flowed straight
+    into the section-sheet footages -- a wrong answer rather than an error.
+    """
+
+
+def _checked_bounds(polygon: BaseGeometry) -> tuple[float, float, float, float]:
+    """Polygon bounds, or ``DegenerateGeometryError`` if they are unusable."""
+    if polygon is None:
+        raise DegenerateGeometryError("No polygon supplied.")
+    if getattr(polygon, "is_empty", False):
+        raise DegenerateGeometryError(
+            "Section polygon is empty - it most likely collapsed during "
+            "geometry repair. Check the section's segment overrides."
+        )
+    minx, miny, maxx, maxy = polygon.bounds
+    if not all(math.isfinite(v) for v in (minx, miny, maxx, maxy)):
+        raise DegenerateGeometryError(
+            f"Section polygon has non-finite bounds: {(minx, miny, maxx, maxy)!r}"
+        )
+    if maxx <= minx or maxy <= miny:
+        raise DegenerateGeometryError(
+            f"Section polygon has zero extent: width={maxx - minx}, "
+            f"height={maxy - miny}"
+        )
+    return minx, miny, maxx, maxy
+
+
 def polygon_footages(polygon: BaseGeometry, point_xy: tuple[float, float]) -> SectionFootages:
     """Compute (FNL, FSL, FEL, FWL) in feet for ``point_xy`` inside ``polygon``.
 
@@ -51,7 +86,7 @@ def polygon_footages(polygon: BaseGeometry, point_xy: tuple[float, float]) -> Se
     section has meander corrections; we don't clamp because the user's
     APD footages are the authoritative input we're recreating.
     """
-    minx, miny, maxx, maxy = polygon.bounds
+    minx, miny, maxx, maxy = _checked_bounds(polygon)
     px, py = point_xy
     return SectionFootages(
         fnl=(maxy - py) * _M_TO_FT,
@@ -76,7 +111,7 @@ def footages_to_xy(
         raise ValueError("Supply exactly one of fnl / fsl")
     if (fel is None) == (fwl is None):
         raise ValueError("Supply exactly one of fel / fwl")
-    minx, miny, maxx, maxy = polygon.bounds
+    minx, miny, maxx, maxy = _checked_bounds(polygon)
     if fnl is not None:
         y = maxy - (fnl / _M_TO_FT)
     else:
