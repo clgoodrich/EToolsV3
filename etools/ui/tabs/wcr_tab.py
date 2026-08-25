@@ -22,7 +22,7 @@ import traceback
 from pathlib import Path
 from typing import Callable
 
-from nicegui import app, events, ui
+from nicegui import events, ui
 
 from etools.config import settings
 from etools.core.pdf.parser import parse_survey_pdf
@@ -35,6 +35,7 @@ from etools.services.tracking_service import update_tracking_workbook
 from etools.services.wcr_pdf_service import WCRPdfResult, WCRPdfService
 from etools.ui.promote import promote_wcr_to_active
 from etools.ui.state import AppState
+from etools.ui.output_mount import serve_output_file as _serve_output_file
 
 log = get_logger(__name__)
 
@@ -1207,18 +1208,6 @@ async def _save_upload(upload, name: str) -> str:
     return tmp_path
 
 
-def _serve_output_file(path: Path) -> str:
-    out_dir = Path(settings.output_dir).resolve()
-    mount_path = "/output"
-    if not getattr(_serve_output_file, "_mounted", False):
-        try:
-            from starlette.staticfiles import StaticFiles
-
-            app.mount(mount_path, StaticFiles(directory=str(out_dir)), name="etools_output")
-        except Exception:
-            pass
-        _serve_output_file._mounted = True  # type: ignore[attr-defined]
-    return f"{mount_path}/{Path(path).name}"
 
 
 def _fmt_date(d) -> str:
@@ -1242,3 +1231,14 @@ def _refresh_llm_status(label: ui.label) -> None:
             label.text = "LLM: Ollama not running — WCR parse will use rules only"
     except Exception as exc:
         label.text = f"LLM: status check failed ({exc})"
+
+
+def _wcr_output_hint(cache: dict) -> str:
+    """Best-known output filename for a WCR write-error message.
+
+    ``generate`` can fail before it has a result, so there is no output path
+    in scope; fall back to the last generated one, then to a generic label.
+    """
+    last = cache.get("last_result")
+    output_path = getattr(last, "output_path", None) if last is not None else None
+    return str(output_path) if output_path else "the WCR workbook"

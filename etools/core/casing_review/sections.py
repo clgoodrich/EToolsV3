@@ -29,7 +29,9 @@ from etools.core.casing_review.footages import (
     DegenerateGeometryError,
     _checked_bounds,
 )
+from etools.logging_setup import get_logger
 
+log = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # PLSS key

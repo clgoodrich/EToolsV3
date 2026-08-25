@@ -27,9 +27,8 @@ import tempfile
 from pathlib import Path
 from typing import Callable
 
-from nicegui import app, events, ui
+from nicegui import events, ui
 
-from etools.config import settings
 from etools.core.casing_review.bope import BOPEOverrides, build_bope_review
 from etools.core.casing_review.domain import CasingDesign
 from etools.core.casing_review.engine import (
@@ -45,6 +44,7 @@ from etools.services import CasingReviewService
 from etools.ui.promote import promote_apd_to_active
 from etools.ui.state import AppState
 from etools.core.io_safety import describe_write_error
+from etools.ui.output_mount import serve_output_file as _serve_output_file
 
 log = get_logger(__name__)
 
@@ -2588,15 +2588,3 @@ async def _save_upload(upload, name: str) -> str:
     return tmp_path
 
 
-def _serve_output_file(path: Path) -> str:
-    out_dir = Path(settings.output_dir).resolve()
-    mount_path = "/output"
-    if not getattr(_serve_output_file, "_mounted", False):
-        try:
-            from starlette.staticfiles import StaticFiles
-
-            app.mount(mount_path, StaticFiles(directory=str(out_dir)), name="etools_output")
-        except Exception:
-            pass
-        _serve_output_file._mounted = True  # type: ignore[attr-defined]
-    return f"{mount_path}/{Path(path).name}"

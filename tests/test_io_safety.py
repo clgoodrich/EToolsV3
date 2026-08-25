@@ -102,3 +102,29 @@ def test_wcr_tab_also_uses_the_shared_write_error_message():
     from etools.ui.tabs import wcr_tab
 
     assert "describe_write_error" in inspect.getsource(wcr_tab)
+
+
+def test_wcr_output_hint_is_defined_and_total():
+    # Regression: this helper was referenced by the WCR generate error path
+    # but never actually defined -- a NameError that only fires when a write
+    # fails, which no other test exercises. Ruff caught it; this keeps it caught.
+    from etools.ui.tabs.wcr_tab import _wcr_output_hint
+
+    class _Result:
+        output_path = "C:/out/South Moon_WCR.xlsx"
+
+    assert _wcr_output_hint({}) == "the WCR workbook"
+    assert _wcr_output_hint({"last_result": None}) == "the WCR workbook"
+    assert _wcr_output_hint({"last_result": _Result()}).endswith("_WCR.xlsx")
+
+
+def test_every_ui_module_is_lint_clean_for_undefined_names():
+    # F821 would have caught the _wcr_output_hint bug at edit time.
+    import subprocess
+    import sys
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "ruff", "check", "--select", "F821", "etools/"],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
