@@ -6,6 +6,8 @@ WCR, Plat Searcher, and PDF Import are stubbed and arrive in later phases.
 
 from __future__ import annotations
 
+import asyncio
+
 from nicegui import ui
 
 from etools.logging_setup import get_logger, recent_errors
@@ -533,7 +535,12 @@ def build_app() -> None:
             with ui.tab_panel(tab_load):
                 async def load_handler(lookup: WellLookup) -> None:
                     try:
-                        bundle = service.load(lookup)
+                        # pyodbc's connect is blocking. On the event loop an
+                        # unreachable SQL Server froze the whole NiceGUI
+                        # server -- for every connected client -- for the full
+                        # ODBC timeout before the error toast could appear.
+                        # Every other DB call site in the UI already offloads.
+                        bundle = await asyncio.to_thread(service.load, lookup)
                     except WellNotFoundError as exc:
                         ui.notify(str(exc), type="warning")
                         return
