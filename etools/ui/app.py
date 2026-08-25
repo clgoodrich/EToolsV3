@@ -25,6 +25,7 @@ from etools.ui.tabs.plat_tab import render_plat_tab
 from etools.ui.tabs.viz_tab import render_viz_tab
 from etools.ui.tabs.casing_review_tab import render_casing_review_tab
 from etools.ui.tabs.wcr_tab import render_wcr_tab
+from etools.ui.tab_guard import safe_tab_render
 
 log = get_logger(__name__)
 
@@ -551,26 +552,46 @@ def build_app() -> None:
                 refresh_callbacks.append(load_refresh)
                 _ts = _tlog("load", _ts)
 
+            # Each tab renders behind safe_tab_render: a failure -- most
+            # realistically a missing gitignored data file raised eagerly by
+            # CasingReviewService() -- used to propagate out of root() and
+            # kill the whole page for every user.
             with ui.tab_panel(tab_survey):
-                refresh_callbacks.append(render_survey_tab(state))
+                refresh_callbacks.append(
+                    safe_tab_render("Survey", lambda: render_survey_tab(state))
+                )
                 _ts = _tlog("survey", _ts)
 
             with ui.tab_panel(tab_map):
-                _viz_refresh = render_viz_tab(state)
+                _viz_refresh = safe_tab_render(
+                    "Map & Viz", lambda: render_viz_tab(state)
+                )
                 refresh_callbacks.append(_viz_refresh)
                 state.viz_refresh = _viz_refresh
                 _ts = _tlog("viz", _ts)
             with ui.tab_panel(tab_clearance):
-                refresh_callbacks.append(render_clearance_tab(state))
+                refresh_callbacks.append(
+                    safe_tab_render(
+                        "Clearance", lambda: render_clearance_tab(state)
+                    )
+                )
                 _ts = _tlog("clearance", _ts)
             with ui.tab_panel(tab_wcr):
-                refresh_callbacks.append(render_wcr_tab(state))
+                refresh_callbacks.append(
+                    safe_tab_render("WCR", lambda: render_wcr_tab(state))
+                )
                 _ts = _tlog("wcr", _ts)
             with ui.tab_panel(tab_casing):
-                refresh_callbacks.append(render_casing_review_tab(state))
+                refresh_callbacks.append(
+                    safe_tab_render(
+                        "Casing Review", lambda: render_casing_review_tab(state)
+                    )
+                )
                 _ts = _tlog("casing", _ts)
             with ui.tab_panel(tab_plat):
-                refresh_callbacks.append(render_plat_tab())
+                refresh_callbacks.append(
+                    safe_tab_render("Plat Searcher", render_plat_tab)
+                )
                 _ts = _tlog("plat", _ts)
 
         # If the persistent_state already carries a loaded well (e.g. the
