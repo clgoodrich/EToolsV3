@@ -26,6 +26,7 @@ from etools.ui.tabs.viz_tab import render_viz_tab
 from etools.ui.tabs.casing_review_tab import render_casing_review_tab
 from etools.ui.tabs.wcr_tab import render_wcr_tab
 from etools.ui.tab_guard import safe_tab_render
+from etools.ui.state_staging import clear_group_on_failure
 
 log = get_logger(__name__)
 
@@ -171,6 +172,13 @@ def build_app() -> None:
             )
             busy_dialog.open()
             try:
+              # These three fields describe ONE well. A failure part-way
+              # through used to leave the new well's survey beside the
+              # previous well's clearances, invisibly -- every tab reads them
+              # independently, so different tabs showed different wells.
+              with clear_group_on_failure(
+                  state, ("processed", "clearances", "section_definitions")
+              ):
                 # ---- Step 1: process survey ----
                 if state.surveys and state.headers:
                     set_busy("Processing survey (KOP / landing detection)…")
@@ -294,6 +302,10 @@ def build_app() -> None:
                         log.exception("post_load.section_defs.failed")
                         # Non-fatal: section UI falls back to plat polygons
                         # and Map & Viz keeps working with raw clearance data.
+                        # Explicitly blank it: this step does not re-raise, so
+                        # without this the PREVIOUS well's PLSS sections stay
+                        # on screen next to the new well's survey.
+                        state.section_definitions = {}
 
                 # ---- Step 2c: register/update workspace buffer ----
                 # Snapshot the now-complete active well into its document
