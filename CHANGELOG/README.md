@@ -23,6 +23,7 @@ alters app behavior or output. Skip trivial edits (typos, formatting, one-line t
 ## Index
 
 <!-- newest first: - [YYYY-MM-DD Title](file.md) — one-line hook -->
+- [2026-08-25 Resource leaks](2026-08-25-resource-leaks.md) - Every PDF parse leaked a file handle (and kept the file locked on Windows); uploaded PDFs accumulated in temp forever. Both fixed, with a startup sweep.
 - [2026-08-25 Half-updated state](2026-08-25-half-updated-state.md) - A failed load left the new well's survey beside the old well's clearances; the well-state group is now all-or-nothing, and a saved edit that fails to repaint says so.
 - [2026-08-25 Coordinate guards and LLM transport](2026-08-25-coords-and-llm-transport.md) - Swapping lat/lon made Reprocess SHL silently do nothing; Ollama non-JSON bodies and num_predict truncation were reported as the wrong failure.
 - [2026-08-25 Mount latch, KOP guards, CRS](2026-08-25-latches-kop-crs.md) - A failed /output mount latched and killed every download link; KOP analysed zero-padded garbage on short surveys; an all-miss spatial join only logged at info.

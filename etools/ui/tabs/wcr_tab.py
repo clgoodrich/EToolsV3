@@ -17,7 +17,6 @@ The legacy "from DB bundle" flow stays at the bottom of the tab.
 from __future__ import annotations
 
 import asyncio
-import tempfile
 import traceback
 from pathlib import Path
 from typing import Callable
@@ -36,6 +35,7 @@ from etools.services.wcr_pdf_service import WCRPdfResult, WCRPdfService
 from etools.ui.promote import promote_wcr_to_active
 from etools.ui.state import AppState
 from etools.ui.output_mount import serve_output_file as _serve_output_file
+from etools.ui.upload_temp import save_upload as _save_upload
 
 log = get_logger(__name__)
 
@@ -1189,23 +1189,6 @@ def _pair_or_dash(a, b) -> str:
 # ---------------------------------------------------------------------------
 
 
-async def _save_upload(upload, name: str) -> str:
-    suffix = Path(name).suffix or ".pdf"
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    tmp_path = tmp.name
-    tmp.close()
-    if upload is not None and hasattr(upload, "save"):
-        await upload.save(tmp_path)
-    elif upload is not None and hasattr(upload, "read"):
-        read_result = upload.read()
-        if hasattr(read_result, "__await__"):
-            data = await read_result
-        else:
-            data = read_result
-        Path(tmp_path).write_bytes(data if isinstance(data, bytes) else bytes(data))
-    else:
-        raise RuntimeError(f"Don't know how to read upload object: {type(upload).__name__}")
-    return tmp_path
 
 
 

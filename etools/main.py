@@ -16,6 +16,7 @@ from nicegui import ui
 from etools.config import settings
 from etools.logging_setup import configure_logging, get_logger
 from etools.preflight import format_preflight_report, missing_data_files
+from etools.ui.upload_temp import sweep_stale_uploads
 from etools.ui.app import build_app
 
 
@@ -44,6 +45,12 @@ def run() -> None:
             files=[s.name for s in missing],
             paths=[str(s.path) for s in missing],
         )
+
+    # Uploaded PDFs used to accumulate in the temp directory forever --
+    # four tabs wrote them with delete=False and nothing removed them.
+    swept = sweep_stale_uploads()
+    if swept:
+        log.info("etools.startup.swept_uploads", removed=swept)
 
     build_app()
     _open_in_default_browser(f"http://127.0.0.1:{settings.port}/")

@@ -7,7 +7,6 @@ per-stage progress and keep the user oriented during the ~50-90 s run.
 from __future__ import annotations
 
 import asyncio
-import tempfile
 import traceback
 from functools import partial
 from pathlib import Path
@@ -31,6 +30,7 @@ from etools.core.pdf import (
 from etools.logging_setup import get_logger
 from etools.models import WellHeader
 from etools.ui.state import AppState, reset_survey_edits
+from etools.ui.upload_temp import save_upload as _save_upload
 
 log = get_logger(__name__)
 
@@ -664,23 +664,6 @@ def _safe_reset(widget) -> None:
         pass
 
 
-async def _save_upload(upload, name: str) -> str:
-    suffix = Path(name).suffix or ".pdf"
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    tmp_path = tmp.name
-    tmp.close()
-    if upload is not None and hasattr(upload, "save"):
-        await upload.save(tmp_path)
-    elif upload is not None and hasattr(upload, "read"):
-        read_result = upload.read()
-        if hasattr(read_result, "__await__"):
-            data = await read_result
-        else:
-            data = read_result
-        Path(tmp_path).write_bytes(data if isinstance(data, bytes) else bytes(data))
-    else:
-        raise RuntimeError(f"Don't know how to read upload object: {type(upload).__name__}")
-    return tmp_path
 
 
 def _refresh_llm_status(label: ui.label) -> None:

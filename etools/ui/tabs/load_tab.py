@@ -16,8 +16,6 @@ reconnects flows through ``AppState``.
 from __future__ import annotations
 
 import asyncio
-import tempfile
-from pathlib import Path
 from typing import Awaitable, Callable, Union
 
 from nicegui import events, ui
@@ -29,6 +27,7 @@ from etools.models import WellLookup
 from etools.repositories import SurveyRepository
 from etools.ui.promote import promote_apd_to_active, promote_wcr_to_active
 from etools.ui.state import AppState
+from etools.ui.upload_temp import save_upload as _save_upload
 
 LoadHandler = Callable[[WellLookup], Union[None, Awaitable[None]]]
 RouteHandler = Callable[[], None]
@@ -444,22 +443,3 @@ def render_load_tab(
 # ---------------------------------------------------------------------------
 
 
-async def _save_upload(upload, name: str) -> str:
-    suffix = Path(name).suffix or ".pdf"
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    tmp_path = tmp.name
-    tmp.close()
-    if upload is not None and hasattr(upload, "save"):
-        await upload.save(tmp_path)
-    elif upload is not None and hasattr(upload, "read"):
-        read_result = upload.read()
-        if hasattr(read_result, "__await__"):
-            data = await read_result
-        else:
-            data = read_result
-        Path(tmp_path).write_bytes(data if isinstance(data, bytes) else bytes(data))
-    else:
-        raise RuntimeError(
-            f"Don't know how to read upload object: {type(upload).__name__}"
-        )
-    return tmp_path
