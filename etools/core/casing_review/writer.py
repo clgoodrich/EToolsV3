@@ -13,6 +13,7 @@ from pathlib import Path
 
 import openpyxl
 
+from etools.core.io_safety import atomic_output
 from etools.core.casing_review.bope import BOPEOverrides, build_bope_review
 from etools.core.casing_review.domain import CasingDesign, CasingStringDesign
 from etools.core.casing_review.footages import (
@@ -32,6 +33,52 @@ _DATA_ROW_OFFSET = 2  # row 12 / 27 / 42 / 57
 
 
 def write_casing_review(
+    design: CasingDesign,
+    output_path: Path,
+    *,
+    template_path: Path | None = None,
+    surface_location=None,
+    producing_interval_location=None,
+    td_location=None,
+    intermediate_locations: list | None = None,
+    section_locations: list | None = None,
+    dx_survey_locations: list | None = None,
+    dx_survey_footages: list | None = None,
+    plat_repo=None,
+    bope_system_psi: float | None = None,
+    bope_overrides: BOPEOverrides | None = None,
+    formations: list | None = None,
+) -> Path:
+    """Fill the Casing Review xlsx, atomically.
+
+    The workbook is built at a sibling temp path and swapped into place only
+    once it is complete, so a failure part-way through leaves any previously
+    generated workbook at ``output_path`` untouched. Previously this function
+    copied the template straight over the destination as its first action,
+    which destroyed the prior workbook before a single value was written.
+    """
+    output_path = Path(output_path)
+    with atomic_output(output_path) as work_path:
+        _write_casing_review_to(
+            design,
+            work_path,
+            template_path=template_path,
+            surface_location=surface_location,
+            producing_interval_location=producing_interval_location,
+            td_location=td_location,
+            intermediate_locations=intermediate_locations,
+            section_locations=section_locations,
+            dx_survey_locations=dx_survey_locations,
+            dx_survey_footages=dx_survey_footages,
+            plat_repo=plat_repo,
+            bope_system_psi=bope_system_psi,
+            bope_overrides=bope_overrides,
+            formations=formations,
+        )
+    return output_path
+
+
+def _write_casing_review_to(
     design: CasingDesign,
     output_path: Path,
     *,

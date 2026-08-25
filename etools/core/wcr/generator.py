@@ -35,6 +35,7 @@ from typing import Iterable
 import pandas as pd
 from openpyxl import Workbook
 
+from etools.core.io_safety import atomic_output
 from etools.logging_setup import get_logger
 from etools.models import WCRLocationRow, WCRWellInfo
 
@@ -115,6 +116,37 @@ _CASING_HEADER_ROW = 16
 
 
 def generate_wcr_excel(
+    *,
+    info: WCRWellInfo,
+    location_rows: Iterable[WCRLocationRow],
+    output_path: str | Path,
+    perf_top_md: float | None = None,
+    perf_bottom_md: float | None = None,
+    perf_date: str | None = None,
+    casing: pd.DataFrame | None = None,
+) -> Path:
+    """Write the WCR workbook to ``output_path``, atomically.
+
+    The workbook is built in memory and saved to a sibling temp path, which is
+    swapped into place only on success -- so a failed save (most often the file
+    being open in Excel) leaves the previous workbook intact rather than
+    truncating it.
+    """
+    out_path = Path(output_path)
+    with atomic_output(out_path) as work_path:
+        _generate_wcr_excel_to(
+            info=info,
+            location_rows=location_rows,
+            output_path=work_path,
+            perf_top_md=perf_top_md,
+            perf_bottom_md=perf_bottom_md,
+            perf_date=perf_date,
+            casing=casing,
+        )
+    return out_path
+
+
+def _generate_wcr_excel_to(
     *,
     info: WCRWellInfo,
     location_rows: Iterable[WCRLocationRow],

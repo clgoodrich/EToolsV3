@@ -9,11 +9,14 @@ working — copy your old TrackingWCR.xlsx next to the app to keep history.
 
 from __future__ import annotations
 
+import shutil
+
 from datetime import date, datetime
 from pathlib import Path
 
 import openpyxl
 
+from etools.core.io_safety import atomic_output
 from etools.logging_setup import get_logger
 
 log = get_logger(__name__)
@@ -40,6 +43,54 @@ _HEADERS = (
 
 
 def update_tracking_workbook(
+    *,
+    path: str | Path,
+    api: str,
+    well_name: str | None,
+    operator: str | None,
+    sundry_no: str | int | None,
+    date_filed: datetime | None,
+    returns: int = 0,
+    action_taken: bool = False,
+    comp_sum: bool = False,
+    drill_sum: bool = False,
+    cement_log: bool = False,
+    logs_included: bool = False,
+    as_drilled_excel: bool = False,
+    edits: list[str] | None = None,
+) -> Path:
+    """Insert or update the row for ``api``. Returns the workbook path.
+
+    Raises PermissionError when the workbook is open in Excel -- but the
+    existing workbook survives it: the update is written to a sibling temp
+    file and swapped into place only on success.
+    """
+    path = Path(path)
+    with atomic_output(path) as work_path:
+        if path.exists() and not work_path.exists():
+            # The updater loads-or-creates from its target, so seed the temp
+            # file with the current workbook to preserve existing rows.
+            shutil.copyfile(path, work_path)
+        _update_tracking_workbook_to(
+            path=work_path,
+            api=api,
+            well_name=well_name,
+            operator=operator,
+            sundry_no=sundry_no,
+            date_filed=date_filed,
+            returns=returns,
+            action_taken=action_taken,
+            comp_sum=comp_sum,
+            drill_sum=drill_sum,
+            cement_log=cement_log,
+            logs_included=logs_included,
+            as_drilled_excel=as_drilled_excel,
+            edits=edits,
+        )
+    return path
+
+
+def _update_tracking_workbook_to(
     *,
     path: str | Path,
     api: str,

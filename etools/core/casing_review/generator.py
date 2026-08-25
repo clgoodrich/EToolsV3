@@ -12,6 +12,7 @@ lookups against the Casing Strengths sheet).
 
 from __future__ import annotations
 
+from etools.core.io_safety import atomic_output
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -88,6 +89,25 @@ _STRING_BLOCK_TOP_ROWS = (10, 25, 40, 55)
 
 
 def generate_casing_review(
+    inputs: CasingReviewInputs,
+    output_path: Path,
+    *,
+    template_path: Path | None = None,
+) -> Path:
+    """Fill the template with ``inputs`` and save to ``output_path``, atomically.
+
+    Built at a sibling temp path and swapped into place only on success, so a
+    failure part-way through cannot destroy a previously generated workbook.
+    """
+    output_path = Path(output_path)
+    with atomic_output(output_path) as work_path:
+        _generate_casing_review_to(
+            inputs, work_path, template_path=template_path
+        )
+    return output_path
+
+
+def _generate_casing_review_to(
     inputs: CasingReviewInputs,
     output_path: Path,
     *,
