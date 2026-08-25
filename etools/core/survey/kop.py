@@ -19,6 +19,10 @@ from scipy.stats import linregress
 from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import StandardScaler
 
+from etools.logging_setup import get_logger
+
+log = get_logger(__name__)
+
 
 @dataclass(slots=True)
 class KOPResult:
@@ -58,11 +62,33 @@ def detect_kop(
         return KOPResult(md=None, confidence=0.0, method="none", candidates={})
 
     df = survey.sort_values(md_col).reset_index(drop=True)
+
+    # Duplicate MDs make np.gradient divide by zero and emit NaN at those
+    # stations. Every candidate test is a `> threshold` comparison and
+    # `nan > x` is False, so the affected detection methods dropped out
+    # silently -- a survey with one duplicated station returned a KOP backed
+    # by 1 of 5 voters instead of 5, with nothing saying so.
+    before = len(df)
+    df = df.drop_duplicates(subset=md_col, keep="first").reset_index(drop=True)
+    if len(df) < before:
+        log.warning(
+            "kop.duplicate_md_dropped", dropped=before - len(df), kept=len(df)
+        )
+
+    # medfilt zero-pads (with a UserWarning) when the kernel exceeds the
+    # signal length, which silently produces garbage rather than raising.
+    kernel = max(3, window | 1)
+    if len(df) < kernel:
+        log.warning("kop.survey_too_short", stations=len(df), kernel=kernel)
+        return KOPResult(
+            md=None, confidence=0.0, method="insufficient_data", candidates={}
+        )
+
     inc = df[inc_col].to_numpy(dtype=float)
     md = df[md_col].to_numpy(dtype=float)
 
     # Median-filter to suppress single-point noise spikes; rolling stats for ROC.
-    smoothed = medfilt(inc, kernel_size=max(3, window | 1))
+    smoothed = medfilt(inc, kernel_size=kernel)
     grad = np.gradient(smoothed, md, edge_order=2)
     grad_roll = pd.Series(grad).rolling(window, center=True).mean().bfill().ffill().to_numpy()
     grad_std = pd.Series(grad).rolling(window, center=True).std().bfill().ffill().to_numpy()
@@ -397,7 +423,10 @@ def _kop_clustering(md, inc, grad) -> float | None:
         for i in range(1, len(labels)):
             if labels[i] != first and labels[i] != -1:
                 return float(md[max(0, i - 1)])
-    except Exception:
+    except Exception as exc:
+        # One of five consensus voters dropping out used to leave no trace at
+        # all, silently shifting the consensus KOP.
+        log.warning("kop.clustering_failed", error=str(exc))
         return None
     return None
 
