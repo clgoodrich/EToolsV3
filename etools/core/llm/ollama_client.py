@@ -93,9 +93,13 @@ class OllamaClient:
             r = httpx.get(f"{self.base_url}/api/tags", timeout=4.0)
             r.raise_for_status()
             names = [m["name"] for m in r.json().get("models", [])]
-            return (model or self.model) in names
-        except (httpx.HTTPError, KeyError):
+        except (httpx.HTTPError, KeyError, ValueError):
+            # ValueError covers json.JSONDecodeError: a proxy returning an
+            # HTML error page used to escape here and get reported several
+            # frames up as "LLM extraction failed", which pointed at the
+            # wrong thing entirely.
             return False
+        return (model or self.model) in names
 
     def warm(self, model: str | None = None) -> bool:
         """Block until ``model`` is loaded into memory.
@@ -186,7 +190,29 @@ class OllamaClient:
                 f"Ollama returned HTTP {r.status_code}: {r.text[:300]}"
             )
 
-        data = r.json()
+        try:
+            data = r.json()
+        except ValueError as exc:  # json.JSONDecodeError
+            raise OllamaUnavailableError(
+                f"Ollama returned a non-JSON body ({len(r.text)} chars): "
+                f"{r.text[:200]}"
+            ) from exc
+
+        if data.get("done_reason") == "length":
+            # num_predict cut the model off mid-object. Without this check a
+            # truncated response was indistinguishable from any other
+            # malformed one and the caller just reported an empty field.
+            log.warning(
+                "llm.response_truncated",
+                num_predict=body["options"]["num_predict"],
+                eval_count=data.get("eval_count"),
+            )
+            raise OllamaUnavailableError(
+                "Ollama response was truncated at the num_predict limit "
+                f"({body['options']['num_predict']} tokens); this extraction "
+                "layer was skipped."
+            )
+
         content = data.get("message", {}).get("content", "")
         has_images = bool(images)
         dump_path = _dump_raw(

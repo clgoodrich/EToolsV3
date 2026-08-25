@@ -23,6 +23,7 @@ alters app behavior or output. Skip trivial edits (typos, formatting, one-line t
 ## Index
 
 <!-- newest first: - [YYYY-MM-DD Title](file.md) — one-line hook -->
+- [2026-08-25 Coordinate guards and LLM transport](2026-08-25-coords-and-llm-transport.md) - Swapping lat/lon made Reprocess SHL silently do nothing; Ollama non-JSON bodies and num_predict truncation were reported as the wrong failure.
 - [2026-08-25 Mount latch, KOP guards, CRS](2026-08-25-latches-kop-crs.md) - A failed /output mount latched and killed every download link; KOP analysed zero-padded garbage on short surveys; an all-miss spatial join only logged at info.
 - [2026-08-25 Surface silent degradation](2026-08-25-surface-silent-degradation.md) - A DB blip silently dropped the casing table from a WCR and made a failed survey lookup look like a well with no survey; both now tell you.
 - [2026-08-25 Degenerate geometry guards](2026-08-25-degenerate-geometry-guards.md) - A collapsed section polygon silently produced NaN footages in the section sheets; it now raises and the section is skipped. Corrects audit finding #30.
