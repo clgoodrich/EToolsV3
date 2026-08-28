@@ -23,6 +23,7 @@ alters app behavior or output. Skip trivial edits (typos, formatting, one-line t
 ## Index
 
 <!-- newest first: - [YYYY-MM-DD Title](file.md) — one-line hook -->
+- [2026-08-28 Well path hover readout](2026-08-28-wellpath-hover-readout.md) - Hovering the trajectory on a section panel reports that station's MD/TVD/inc/azi and its FNL/FSL/FEL/FWL.
 - [2026-08-25 Event loop, WCR repaint, bearings](2026-08-25-event-loop-and-bearing-guards.md) - A DB outage froze the whole server on Load Well; a half-repainted WCR grid diverged from the export; zero-length boundaries reported a fake due-north bearing (25 real sections affected).
 - [2026-08-25 Resource leaks](2026-08-25-resource-leaks.md) - Every PDF parse leaked a file handle (and kept the file locked on Windows); uploaded PDFs accumulated in temp forever. Both fixed, with a startup sweep.
 - [2026-08-25 Half-updated state](2026-08-25-half-updated-state.md) - A failed load left the new well's survey beside the old well's clearances; the well-state group is now all-or-nothing, and a saved edit that fails to repaint says so.

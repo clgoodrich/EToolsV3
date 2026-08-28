@@ -23,10 +23,16 @@ User flow:
 from __future__ import annotations
 
 import asyncio
+import html
+import json
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from nicegui import events, ui
+
+if TYPE_CHECKING:  # pandas is only needed for type annotations here
+    import pandas as pd
 
 from etools.core.casing_review.bope import BOPEOverrides, build_bope_review
 from etools.core.casing_review.domain import CasingDesign
@@ -150,6 +156,41 @@ _PLAT_RUNTIME_JS = r"""
     });
   };
 
+  // Format one station's readout. Missing values are omitted, never shown
+  // as 0 -- a blank footage means "not computed", not "zero feet".
+  window.etoolsStationHtml = function(s, title) {
+    function num(v, d) {
+      if (v === undefined || v === null) return null;
+      return v.toLocaleString(undefined, {minimumFractionDigits: d,
+                                          maximumFractionDigits: d});
+    }
+    var rows = '';
+    function row(k, v, unit) {
+      if (v === null || v === undefined) return;
+      rows += '<span class="wt-k">' + k + '</span>' +
+              '<span class="wt-v">' + v + (unit || '') + '</span>';
+    }
+    row('MD',  num(s.md, 2),  ' ft');
+    row('TVD', num(s.tvd, 2), ' ft');
+    row('Inc', num(s.inc, 2), '°');
+    row('Azi (true)', num(s.azi, 2), '°');
+    var head = '';
+    if (title) head += '<div class="wt-title">' + title + '</div>';
+    if (s.sec) head += '<div class="wt-sub">' + s.sec + '</div>';
+    var foot = '';
+    if (s.fnl !== undefined) {
+      var f = '';
+      f += '<span class="wt-k">FNL</span><span class="wt-v">' + num(s.fnl, 0) + ' ft</span>';
+      f += '<span class="wt-k">FSL</span><span class="wt-v">' + num(s.fsl, 0) + ' ft</span>';
+      f += '<span class="wt-k">FEL</span><span class="wt-v">' + num(s.fel, 0) + ' ft</span>';
+      f += '<span class="wt-k">FWL</span><span class="wt-v">' + num(s.fwl, 0) + ' ft</span>';
+      foot = '<div class="wt-rule"></div><div class="wt-grid">' + f + '</div>';
+    } else {
+      foot = '<div class="wt-note">Run Calculate Clearances for footages</div>';
+    }
+    return head + '<div class="wt-grid">' + rows + '</div>' + foot;
+  };
+
   window.etoolsWireWellTips = function() {
     var tip = document.getElementById('etools-welltip');
     if (!tip) {
@@ -157,21 +198,87 @@ _PLAT_RUNTIME_JS = r"""
       tip.id = 'etools-welltip';
       document.body.appendChild(tip);
     }
+    // Keep the panel on screen: flip to the other side of the cursor when
+    // it would overflow. The readout is a block now, not a one-line label.
+    function place(e) {
+      tip.style.display = 'block';
+      var r = tip.getBoundingClientRect();
+      var x = e.clientX + 16, y = e.clientY + 16;
+      if (x + r.width  > window.innerWidth  - 8) x = e.clientX - r.width  - 16;
+      if (y + r.height > window.innerHeight - 8) y = e.clientY - r.height - 16;
+      tip.style.left = Math.max(8, x) + 'px';
+      tip.style.top  = Math.max(8, y) + 'px';
+    }
+    function hide() { tip.style.display = 'none'; }
+
+    // ---- the path itself: snap to the nearest survey station ----
+    document.querySelectorAll('polyline.well-hover').forEach(function(el){
+      if (el.__tipWired) return;
+      el.__tipWired = true;
+      var stations = [];
+      try { stations = JSON.parse(el.getAttribute('data-stations') || '[]'); }
+      catch (err) { stations = []; }
+      if (!stations.length) return;
+      var svg = el.ownerSVGElement;
+      var last = null;
+      function nearest(e) {
+        var ctm = svg.getScreenCTM();
+        if (!ctm) return null;
+        var pt = svg.createSVGPoint();
+        pt.x = e.clientX; pt.y = e.clientY;
+        var loc = pt.matrixTransform(ctm.inverse());
+        var best = null, bd = Infinity;
+        for (var i = 0; i < stations.length; i++) {
+          var dx = stations[i].x - loc.x, dy = stations[i].y - loc.y;
+          var d = dx * dx + dy * dy;
+          if (d < bd) { bd = d; best = stations[i]; }
+        }
+        return best;
+      }
+      el.addEventListener('mousemove', function(e){
+        var s = nearest(e);
+        if (!s) { hide(); return; }
+        if (s !== last) { tip.innerHTML = window.etoolsStationHtml(s, null); last = s; }
+        place(e);
+      });
+      el.addEventListener('mouseleave', function(){ last = null; hide(); });
+    });
+
+    // ---- named markers: the same readout, titled ----
     document.querySelectorAll('circle.well-marker').forEach(function(el){
       if (el.__tipWired) return;
       el.__tipWired = true;
       var label = el.getAttribute('data-welltip') || '';
-      function move(e){
-        tip.style.left = (e.clientX + 14) + 'px';
-        tip.style.top  = (e.clientY + 14) + 'px';
+      var svg = el.ownerSVGElement;
+      var html = null;
+      function build() {
+        if (html !== null) return html;
+        // Reuse the path's payload so a marker reports the same station the
+        // path would at that spot -- one source of truth per panel.
+        var ribbon = svg ? svg.querySelector('polyline.well-hover') : null;
+        var stations = [];
+        if (ribbon) {
+          try { stations = JSON.parse(ribbon.getAttribute('data-stations') || '[]'); }
+          catch (err) { stations = []; }
+        }
+        var cx = parseFloat(el.getAttribute('cx')),
+            cy = parseFloat(el.getAttribute('cy'));
+        var best = null, bd = Infinity;
+        for (var i = 0; i < stations.length; i++) {
+          var dx = stations[i].x - cx, dy = stations[i].y - cy;
+          var d = dx * dx + dy * dy;
+          if (d < bd) { bd = d; best = stations[i]; }
+        }
+        html = best ? window.etoolsStationHtml(best, label)
+                    : '<div class="wt-title">' + label + '</div>';
+        return html;
       }
       el.addEventListener('mouseenter', function(e){
-        tip.textContent = label;
-        tip.style.display = 'block';
-        move(e);
+        tip.innerHTML = build();
+        place(e);
       });
-      el.addEventListener('mousemove', move);
-      el.addEventListener('mouseleave', function(){ tip.style.display = 'none'; });
+      el.addEventListener('mousemove', place);
+      el.addEventListener('mouseleave', hide);
     });
   };
 
@@ -219,10 +326,27 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
           #etools-welltip { position: fixed; z-index: 99999;
                             pointer-events: none; display: none;
                             background: #0f172a; color: #fff;
-                            padding: 2px 8px; border-radius: 4px;
-                            font-size: 12px; font-weight: 600;
+                            padding: 7px 10px; border-radius: 5px;
+                            font-size: 12px; line-height: 1.45;
                             white-space: nowrap;
-                            box-shadow: 0 2px 6px rgba(0,0,0,.35); }
+                            box-shadow: 0 4px 14px rgba(0,0,0,.4); }
+          /* Station readout. tabular-nums keeps the digits from jittering
+             as the cursor slides along the path and the values update. */
+          #etools-welltip .wt-title { font-weight: 700; font-size: 12.5px;
+                            margin-bottom: 1px; }
+          #etools-welltip .wt-sub { color: #94a3b8; font-size: 11px;
+                            margin-bottom: 4px; }
+          #etools-welltip .wt-grid { display: grid;
+                            grid-template-columns: auto auto;
+                            column-gap: 12px; row-gap: 1px;
+                            font-variant-numeric: tabular-nums; }
+          #etools-welltip .wt-k { color: #94a3b8; font-size: 11px;
+                            letter-spacing: .04em; }
+          #etools-welltip .wt-v { text-align: right; font-weight: 600; }
+          #etools-welltip .wt-rule { height: 1px; margin: 5px 0;
+                            background: rgba(148,163,184,.3); }
+          #etools-welltip .wt-note { color: #fbbf24; font-size: 10.5px;
+                            margin-top: 5px; }
           /* BOPE tab — ui.html() strips inline <style>, so the BOPE review's
              styling lives here in the page head. */
           .bope-wrap { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -2125,7 +2249,8 @@ def _render_plat_svg(container, sd, state: AppState | None = None) -> None:
     all_xs = [p[0] for p in ring_pts]
     all_ys = [p[1] for p in ring_pts]
     # Include wellpath bounds (if any) so it's not clipped.
-    well_xy = _wellpath_xy_for_section(sd, state)
+    stations = _wellpath_stations(state)
+    well_xy = [(s.x, s.y) for s in stations]
     if well_xy:
         all_xs += [x for x, _ in well_xy]
         all_ys += [y for _, y in well_xy]
@@ -2205,10 +2330,24 @@ def _render_plat_svg(container, sd, state: AppState | None = None) -> None:
                 f'data-welltip="{label}" '
                 f'style="vector-effect:non-scaling-stroke; cursor:pointer;"></circle>'
             )
+        # A fat transparent copy of the path is the hover target: one element
+        # instead of a hit-circle per station, and it stays easy to mouse onto
+        # at any zoom because the stroke does not scale. The readout snaps to
+        # the nearest station in ``data-stations`` (plot coordinates, so the
+        # browser needs no knowledge of UTM or the y-flip).
+        hover_elem = (
+            f'<polyline class="well-hover" points="{wp}" fill="none" '
+            f'stroke="transparent" stroke-width="14" stroke-linejoin="round" '
+            f'stroke-linecap="round" '
+            f'data-stations="{_attr(_stations_payload(stations, project=lambda x, y: (x, _flip(y))))}" '
+            f'style="vector-effect:non-scaling-stroke; pointer-events:stroke; '
+            f'cursor:crosshair;"/>'
+        )
         well_elem = (
             f'<polyline points="{wp}" fill="none" stroke="#16a34a" '
             f'stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" '
             f'style="vector-effect:non-scaling-stroke; pointer-events:none;"/>'
+            f'{hover_elem}'
             f'<circle class="well-marker" cx="{sx:.2f}" cy="{_flip(sy):.2f}" '
             f'r="{qc_r:.3f}" fill="#16a34a" stroke="white" stroke-width="0.5" '
             f'data-welltip="SHL (Surface)" '
@@ -2317,54 +2456,228 @@ def _wellpath_markers(state) -> list[tuple[float, float, str]]:
         return []
 
 
-def _wellpath_xy_for_section(sd, state) -> list[tuple[float, float]]:
-    """Return (easting, northing) points in UTM-m for the well trajectory.
+@dataclass(frozen=True)
+class _WellStation:
+    """One survey station on the drawn trajectory, plus its hover readout.
 
-    Tries ``state.processed`` first (full processed survey from
-    SurveyService); falls back to ``state.clearances`` (which already
-    carries easting/northing columns) so the wellpath shows up even when
-    the user has parsed an APD but not yet promoted it.
+    ``md`` / ``inc`` / ``azi`` / ``tvd`` come from the survey itself. The
+    footages and ``conc`` come from the clearance frame, which assigns each
+    station to the section that geometrically *contains* it — so a station's
+    footages are the same no matter which section panel it is hovered in.
+    They are ``None`` until Calculate Clearances has been run.
+    """
+
+    x: float
+    y: float
+    md: float | None = None
+    inc: float | None = None
+    azi: float | None = None
+    tvd: float | None = None
+    conc: str | None = None
+    fnl: float | None = None
+    fsl: float | None = None
+    fel: float | None = None
+    fwl: float | None = None
+
+
+# Footages are joined onto a drawn station by measured depth. The clearance
+# frame is derived from the same survey, so an exact hit is the norm; the
+# tolerance only absorbs float round-tripping. Matches ``edits._MD_TOL_FT``.
+_STATION_MD_TOL_FT = 0.51
+
+# Cap on drawn stations. The path is downsampled to this many points for both
+# the polyline and the hover payload, so a hovered station is always one that
+# was actually drawn.
+_MAX_DRAWN_STATIONS = 600
+
+
+def _finite(value) -> float | None:
+    """Coerce to float, mapping None/NaN/non-numeric to None."""
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if out == out else None  # NaN != NaN
+
+
+def _first_result(mapping):
+    """Pick AsDrilled, else Planned, else whatever is there."""
+    if not mapping:
+        return None
+    return (
+        mapping.get("AsDrilled")
+        or mapping.get("Planned")
+        or next(iter(mapping.values()), None)
+    )
+
+
+def _survey_points(state) -> "pd.DataFrame | None":
+    """The frame that drives the drawn wellpath.
+
+    ``state.processed`` is preferred and ``state.clearances`` is the
+    fallback, so the path still appears when an APD has been parsed but the
+    survey not promoted. Unchanged from the original behaviour — the drawn
+    geometry must not move because of the hover work.
     """
     if state is None:
-        return []
+        return None
+    from etools.models import SurveyFrame
+
+    result = _first_result(getattr(state, "processed", None))
+    if result is not None:
+        proc = (
+            result.frames.get(SurveyFrame.TRUE)
+            or next(iter(result.frames.values()), None)
+        )
+        df = getattr(proc, "points", None)
+        if df is not None and {"easting", "northing"} <= set(df.columns) and len(df) > 1:
+            return df
+
+    cr = _first_result(getattr(state, "clearances", None))
+    df = getattr(cr, "points", None)
+    if df is not None and {"easting", "northing"} <= set(df.columns) and len(df) > 1:
+        return df
+    return None
+
+
+def _footage_lookup(state) -> dict[float, tuple]:
+    """``{measured_depth: (conc, fnl, fsl, fel, fwl)}`` from the clearance frame.
+
+    Empty when clearances have not been calculated, which is the ordinary
+    state right after an APD parse.
+    """
+    cr = _first_result(getattr(state, "clearances", None))
+    df = getattr(cr, "points", None)
+    if df is None or "measured_depth" not in getattr(df, "columns", ()):
+        return {}
+    if not {"FNL", "FSL", "FEL", "FWL"} <= set(df.columns):
+        return {}
+    out: dict[float, tuple] = {}
+    for r in df.itertuples():
+        md = _finite(getattr(r, "measured_depth", None))
+        if md is None:
+            continue
+        conc = getattr(r, "Conc", None)
+        out[round(md, 2)] = (
+            str(conc) if conc is not None and conc == conc else None,
+            _finite(getattr(r, "FNL", None)),
+            _finite(getattr(r, "FSL", None)),
+            _finite(getattr(r, "FEL", None)),
+            _finite(getattr(r, "FWL", None)),
+        )
+    return out
+
+
+def _wellpath_stations(state) -> list[_WellStation]:
+    """Survey stations along the drawn trajectory, with their hover readout.
+
+    One entry per *drawn* point, so hovering always snaps to a station that
+    is actually on screen rather than to an interpolated position.
+    """
     try:
-        # ---- preferred: state.processed (full processed survey) ----
-        if getattr(state, "processed", None):
-            from etools.models import SurveyFrame
-            result = (
-                state.processed.get("AsDrilled")
-                or state.processed.get("Planned")
-                or next(iter(state.processed.values()))
-            )
-            if result is not None:
-                proc = (
-                    result.frames.get(SurveyFrame.TRUE)
-                    or next(iter(result.frames.values()))
+        df = _survey_points(state)
+        if df is None:
+            return []
+        footages = _footage_lookup(state)
+        step = max(1, len(df) // _MAX_DRAWN_STATIONS)
+        cols = set(df.columns)
+        stations: list[_WellStation] = []
+        for r in df.iloc[::step].itertuples():
+            x, y = _finite(r.easting), _finite(r.northing)
+            if x is None or y is None:
+                continue
+            md = _finite(getattr(r, "measured_depth", None)) if "measured_depth" in cols else None
+            conc = fnl = fsl = fel = fwl = None
+            if md is not None and footages:
+                hit = footages.get(round(md, 2))
+                if hit is None:
+                    # Fall back to the nearest station within tolerance.
+                    near = min(footages, key=lambda k: abs(k - md), default=None)
+                    if near is not None and abs(near - md) <= _STATION_MD_TOL_FT:
+                        hit = footages[near]
+                if hit is not None:
+                    conc, fnl, fsl, fel, fwl = hit
+            stations.append(
+                _WellStation(
+                    x=x,
+                    y=y,
+                    md=md,
+                    inc=_finite(getattr(r, "inclination", None)) if "inclination" in cols else None,
+                    azi=_finite(getattr(r, "azimuth", None)) if "azimuth" in cols else None,
+                    tvd=_finite(getattr(r, "tvd", None)) if "tvd" in cols else None,
+                    conc=conc,
+                    fnl=fnl,
+                    fsl=fsl,
+                    fel=fel,
+                    fwl=fwl,
                 )
-                df = proc.points
-                if "easting" in df.columns and "northing" in df.columns and len(df) > 1:
-                    step = max(1, len(df) // 600)
-                    return [
-                        (float(r.easting), float(r.northing))
-                        for r in df.iloc[::step].itertuples()
-                    ]
-        # ---- fallback: state.clearances (post-clearance trajectory) ----
-        if getattr(state, "clearances", None):
-            cr = (
-                state.clearances.get("AsDrilled")
-                or state.clearances.get("Planned")
-                or next(iter(state.clearances.values()))
             )
-            df = getattr(cr, "points", None)
-            if df is not None and "easting" in df.columns and "northing" in df.columns and len(df) > 1:
-                step = max(1, len(df) // 600)
-                return [
-                    (float(r.easting), float(r.northing))
-                    for r in df.iloc[::step].itertuples()
-                ]
+        return stations
     except Exception as exc:
         log.warning("section_panel.wellpath.failed", error=str(exc))
-    return []
+        return []
+
+
+def _conc_label(conc: str | None) -> str | None:
+    """``"2303S02WU"`` -> ``"Sec 23  T3S R2W  (Uintah)"``, or None if unreadable."""
+    if not conc:
+        return None
+    try:
+        from etools.core.casing_review.sections import PLSSKey
+
+        k = PLSSKey.from_conc(conc)
+    except Exception:
+        return conc
+    twpd = "N" if k.township_dir == 1 else "S"
+    rngd = "E" if k.range_dir == 1 else "W"
+    mer = "Salt Lake" if k.baseline == 1 else "Uintah"
+    return f"Sec {k.section}  T{k.township}{twpd} R{k.range_}{rngd}  ({mer})"
+
+
+def _stations_payload(stations: list[_WellStation], *, project=None) -> str:
+    """Compact JSON for the hover payload, safe inside a ``data-*`` attribute.
+
+    Missing values are omitted rather than sent as ``0`` so the tooltip can
+    leave a line out instead of asserting a footage of zero feet. Returns
+    plain JSON; escaping for the ``data-*`` attribute is the caller's job
+    (see :func:`_attr`), which keeps this testable as JSON.
+
+    ``project`` maps a station's UTM ``(x, y)`` into the SVG's own plot
+    coordinates, so the browser can measure cursor-to-station distance
+    without knowing anything about UTM or the y-axis flip.
+    """
+    out = []
+    labels: dict[str, str | None] = {}
+    for s in stations:
+        px, py = project(s.x, s.y) if project else (s.x, s.y)
+        rec: dict[str, object] = {"x": round(px, 2), "y": round(py, 2)}
+        for key, val, nd in (
+            ("md", s.md, 2), ("inc", s.inc, 2), ("azi", s.azi, 2),
+            ("tvd", s.tvd, 2), ("fnl", s.fnl, 1), ("fsl", s.fsl, 1),
+            ("fel", s.fel, 1), ("fwl", s.fwl, 1),
+        ):
+            if val is not None:
+                rec[key] = round(val, nd)
+        if s.conc:
+            if s.conc not in labels:
+                labels[s.conc] = _conc_label(s.conc)
+            rec["sec"] = labels[s.conc]
+        out.append(rec)
+    return json.dumps(out, separators=(",", ":"))
+
+
+def _attr(text: str) -> str:
+    """Escape a string for use inside a double-quoted HTML attribute."""
+    return html.escape(text, quote=True)
+
+
+def _wellpath_xy_for_section(sd, state) -> list[tuple[float, float]]:
+    """(easting, northing) in UTM-m for the well trajectory.
+
+    Thin projection of :func:`_wellpath_stations` so the drawn polyline and
+    the hover targets can never disagree about where the path is.
+    """
+    return [(s.x, s.y) for s in _wellpath_stations(state)]
 
 
 def _render_wbd(card: ui.card, design: CasingDesign, data: APDPdfData) -> None:
