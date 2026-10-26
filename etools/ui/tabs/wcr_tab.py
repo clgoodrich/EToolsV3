@@ -32,6 +32,7 @@ from etools.services import WCRService
 from etools.core.io_safety import describe_write_error
 from etools.services.tracking_service import update_tracking_workbook
 from etools.services.wcr_pdf_service import WCRPdfResult, WCRPdfService
+from etools.ui.ops_viewer import HEAD_ASSETS as _OPS_HEAD, add_ops_viewer_button
 from etools.ui.promote import promote_wcr_to_active
 from etools.ui.state import AppState
 from etools.ui.output_mount import serve_output_file as _serve_output_file
@@ -41,6 +42,7 @@ log = get_logger(__name__)
 
 
 def render_wcr_tab(state: AppState) -> Callable[[], None]:
+    ui.add_head_html(_OPS_HEAD)  # operations viewer CSS + click/scroll JS
     wcr_service = WCRService()
     wcr_pdf_service = WCRPdfService()
     survey_repo = SurveyRepository()
@@ -737,7 +739,7 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
             wcr_meta_card.visible = True
             # Always render — the card itself says when the PDF has no
             # Operation Summary appendix at all.
-            _render_ddr_card(ddr_card, data)
+            _render_ddr_card(ddr_card, data, state.wcr_pdf_path)
             ddr_card.visible = True
 
         # ---- Legacy DB flow ----
@@ -848,11 +850,14 @@ def _render_wcr_metadata(card: ui.card, data: WCRPdfData) -> None:
             ).classes("text-xs p-2 rounded bg-slate-100 text-slate-700")
 
 
-def _render_ddr_card(card: ui.card, data: WCRPdfData) -> None:
+def _render_ddr_card(card: ui.card, data: WCRPdfData, pdf_path: str | None = None) -> None:
     """Show the Operation Summary Report (DDR) highlights for each job."""
     card.clear()
     with card:
-        ui.label("Operation Summary Reports (DDR)").classes("text-sm font-semibold")
+        with ui.row().classes("items-center gap-3"):
+            ui.label("Operation Summary Reports (DDR)").classes("text-sm font-semibold")
+            if data.ddrs:
+                add_ops_viewer_button(pdf_path, data.ddrs)
         if not data.ddrs:
             ui.label(
                 "No Operation Summary Report found in this PDF — it only "

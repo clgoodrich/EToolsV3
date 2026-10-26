@@ -165,6 +165,10 @@ flowchart TD
     W6 -- no --> W8 --> W8b --> W9
     W9 --> W10
 
+    W10 --> V1["Optional: Open operations log beside the PDF"]:::you
+    V1 --> V2["Left: the operations log grouped by day, wording unchanged, tidied layout. Right: the report's own pages"]:::auto
+    V2 --> V3["Click a day or an entry: the PDF scrolls there and highlights that row. Type in the filter box to narrow the list"]:::out
+
     W10 --> G1["Generate WCR Excel"]:::you
     G1 --> G2["Pick the five key depths: SHL, Control Point (KOP), Frac Start (first perf), Frac End (last perf), BHL (TD)"]:::auto
     G2 --> G3{"Where does the KOP come from?"}:::dec
@@ -231,7 +235,7 @@ flowchart TD
 |---|---|---|---|
 | **Load Well** | — | The only way to bring a well in | *From APD PDF* or *From WCR PDF*, a parse mode (Rules only / Rules + LLM / LLM only), then Parse |
 | **Casing Review** | A parsed APD | Casing design check → Casing Review workbook | Sub-tabs in section 2, *Use as active well*, *Generate Excel*, optional *Survey PDF* upload |
-| **WCR** | A parsed WCR | Completion-report check → WCR workbook | *Generate WCR Excel*, editable location rows + *Save updated Excel*, *Survey PDF* upload when the DB has none, the *Personal Record* checklist + *Update Personal Record*, *Legacy flow* |
+| **WCR** | A parsed WCR | Completion-report check → WCR workbook | *Generate WCR Excel*, editable location rows + *Save updated Excel*, *Survey PDF* upload when the DB has none, *Open operations log beside the PDF* (in the Operation Summary Reports section: click a day or entry to jump to it in the PDF; filter box), the *Personal Record* checklist + *Update Personal Record*, *Legacy flow* |
 | **Survey** | An active well | See and correct the survey | Citing (Planned / As-Drilled), Frame (True / Grid), *Process Survey*, *Interpolate + Add* (insert a station at an MD), *Delete selected station*, *Reprocess with new SHL*, *Apply convergence*, *Restore original survey*. Every edit re-runs section 4 |
 | **Map & Viz** | Clearances | See where the well goes | *2D Map*: sections, well path, 100 / 330 / 500 ft setback buffers, click a station or section for details, basemap choice, *Add point* / *Clear points*. *3D Trajectory*: the wellbore under the crossed sections (outlined at the surface); hover for MD, angles, section and footages |
 | **Clearance** | A processed survey | Footage tables | Summary (SHL · KOP · Landing · BHL) and every station's FNL / FSL / FEL / FWL; *Calculate Clearances* re-runs section 4 |
