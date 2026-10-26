@@ -380,7 +380,11 @@ def _merge_llm(into: WCRPdfData, llm) -> None:
             )
         into.perf_stages.sort(key=lambda x: x.stage)
 
-    # Casing — append by feature code where rules missed it.
+    # Casing — append by feature code where rules missed it. A rules row
+    # with no values doesn't count as "had it" (PyMuPDF splits Section 28
+    # one cell per line, so the rules often yield bare feature codes that
+    # used to block the LLM's real rows).
+    into.casing = [c for c in into.casing if _casing_row_has_data(c)]
     have_features = {c.feature.upper() for c in into.casing}
     for c in getattr(llm, "casing", []) or []:
         if c.feature and c.feature.upper() not in have_features:
@@ -618,10 +622,15 @@ def _extract_header(text: str, data: WCRPdfData) -> None:
         data.ground_elev_ft = float(m.group(1))
 
     # Total depth + PBTD: "24. TOTAL DEPTH\nMD 19263 TVD 8387"
-    m = re.search(r"24\.\s*TOTAL DEPTH\s*\n\s*MD\s*(\d+)\s*TVD\s*(\d+)", text, re.I)
+    # MD/TVD sit on one line, so match [ \t] rather than \s: with a blank TVD
+    # cell, \s* ran on into the next heading and read "26. CURRENT WELL
+    # STATUS" as TVD 26.
+    m = re.search(
+        r"24\.\s*TOTAL DEPTH\s*\n[ \t]*MD[ \t]*(\d+)[ \t]*TVD[ \t]*(\d+)?", text, re.I
+    )
     if m:
         md_val = float(m.group(1))
-        tvd_val = float(m.group(2))
+        tvd_val = float(m.group(2)) if m.group(2) else None
         # A 2 ft "total depth" is a mis-read form-field number, not a real well.
         if md_val >= 100.0:
             data.total_md_ft = md_val
@@ -632,11 +641,13 @@ def _extract_header(text: str, data: WCRPdfData) -> None:
                 "verify the report."
             )
     m = re.search(
-        r"25\.\s*PLUGGED BACK TOTAL DEPTH\s*\n\s*MD\s*(\d+)\s*TVD\s*(\d+)", text, re.I
+        r"25\.\s*PLUGGED BACK TOTAL DEPTH\s*\n[ \t]*MD[ \t]*(\d+)[ \t]*TVD[ \t]*(\d+)?",
+        text,
+        re.I,
     )
     if m:
         data.pbtd_md_ft = float(m.group(1))
-        data.pbtd_tvd_ft = float(m.group(2))
+        data.pbtd_tvd_ft = float(m.group(2)) if m.group(2) else None
 
 
 # ---------------------------------------------------------------------------
@@ -767,7 +778,15 @@ def _extract_casing(text: str, data: WCRPdfData) -> None:
             top_md=_find_first(nums, predicate=lambda v: 0 <= v < 30000, skip=3),
             bottom_md=_find_last(nums, predicate=lambda v: 100 <= v < 30000),
         )
-        data.casing.append(row)
+        if _casing_row_has_data(row):
+            data.casing.append(row)
+
+
+def _casing_row_has_data(row: CasingRow) -> bool:
+    return any(
+        getattr(row, f, None) is not None
+        for f in ("diameter", "weight", "grade", "top_md", "bottom_md")
+    )
 
 
 def _floats_in(toks: list[str]) -> list[float]:

@@ -208,8 +208,12 @@ def _rules_extract(markdown: str) -> ParsedSurvey:
     return out
 
 
-_LAT_DEC_RE = re.compile(r"(?:surface\s+)?lat(?:itude)?\s*[:=]?\s*(-?\d+\.\d+)", re.I)
-_LON_DEC_RE = re.compile(r"(?:surface\s+)?lon(?:gitude)?\s*[:=]?\s*(-?\d+\.\d+)", re.I)
+# Label and value on the SAME line ([ \t], not \s). Survey reports print
+# "Latitude / Longitude" as column headers with the values elsewhere, and
+# \s* ran across newlines into whatever came next: a "+N/-S" 0.0, or the
+# PBHL target's coordinates ~1.8 km from the surface location.
+_LAT_DEC_RE = re.compile(r"(?:surface[ \t]+)?lat(?:itude)?[ \t]*[:=]?[ \t]*(-?\d+\.\d+)", re.I)
+_LON_DEC_RE = re.compile(r"(?:surface[ \t]+)?lon(?:gitude)?[ \t]*[:=]?[ \t]*(-?\d+\.\d+)", re.I)
 _LAT_DMS_RE = re.compile(r"\bN\s*(\d{1,3})\s+(\d{1,2})\s+(\d{1,2}(?:\.\d+)?)", re.I)
 _LON_DMS_RE = re.compile(r"\bW\s*(\d{1,3})\s+(\d{1,2})\s+(\d{1,2}(?:\.\d+)?)", re.I)
 _ELEV_RE = re.compile(r"\b(?:KB|GLE|GL|elev(?:ation)?)\s*[:=]?\s*(\d{3,5}(?:\.\d+)?)", re.I)
@@ -236,7 +240,7 @@ def _extract_lat(text: str) -> float | None:
     if m:
         try:
             v = float(m.group(1))
-            if -90 <= v <= 90:
+            if -90 <= v <= 90 and v != 0.0:
                 return v
         except ValueError:
             pass
@@ -252,7 +256,7 @@ def _extract_lon(text: str) -> float | None:
     if m:
         try:
             v = float(m.group(1))
-            if -180 <= v <= 180:
+            if -180 <= v <= 180 and v != 0.0:
                 return v
         except ValueError:
             pass
@@ -735,6 +739,8 @@ def vision_transcribe_page(
             )
         pix = doc.load_page(page - 1).get_pixmap(dpi=dpi)
         img_bytes = pix.tobytes("png")
+        # Read now: the document is closed once the with-block exits.
+        total_pages = len(doc)
 
     client = OllamaClient()
     if not client.health():
@@ -765,7 +771,7 @@ def vision_transcribe_page(
         "dpi": dpi,
         "image_bytes": len(img_bytes),
         "elapsed_s": round(elapsed, 1),
-        "total_pages": len(doc),
+        "total_pages": total_pages,
     }
     log.info("pdf.vision_transcribe", **meta, response_chars=len(raw))
     return raw, meta

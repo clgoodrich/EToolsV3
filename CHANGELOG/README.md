@@ -23,6 +23,7 @@ alters app behavior or output. Skip trivial edits (typos, formatting, one-line t
 ## Index
 
 <!-- newest first: - [YYYY-MM-DD Title](file.md) — one-line hook -->
+- [2026-10-26 PDF field extraction](2026-10-26-pdf-field-extraction.md) - APD slant from the ticked radio, formation tops by position, frac gradient from the permit (not "4 1/2"), STC/LTC collars, WCR blank-TVD, survey lat/lon, vision crash.
 - [2026-10-26 WCR tab stale survey + blocking](2026-10-26-wcr-tab-stale-survey-and-blocking.md) - A new WCR no longer reuses the previous well's survey; the legacy DB bundle loads off the event loop; tracking logs the WCR on screen.
 - [2026-10-26 Casing Review template parity](2026-10-26-casing-review-template-parity.md) - Burst load, buoyed tension/DF, neutral point, cement height/TOC and liner TOL now equal the template formulas they overwrite.
 - [2026-10-26 Survey true-north lat/lon](2026-10-26-survey-true-north-latlon.md) - Station lat/lon/UTM/footages were rotated about the SHL by the grid convergence (up to ~140 ft); WCR/promote now use the survey's own north reference.

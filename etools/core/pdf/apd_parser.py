@@ -38,7 +38,24 @@ _STRING_LINE_RE = re.compile(
     re.MULTILINE,
 )
 _LENGTH_RE = re.compile(r"(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)")
-_GRADE_THREAD_RE = re.compile(r"\s*([A-Z][A-Z0-9\-]*(?:\s*-\s*\d+)?)\s+([A-Z]{2,6})\s*")
+# Collar allows "&"/"-" and mixed case: "ST&C" used to be cut to "ST" (which
+# then took the 1.5 premium tension threshold instead of STC's 1.8) and
+# "Buttress" didn't match at all, leaving the grade as "N-80 Buttress".
+_GRADE_THREAD_RE = re.compile(
+    r"\s*([A-Z][A-Z0-9\-]*(?:\s*-\s*\d+)?)\s+([A-Z][A-Za-z&\-]{1,8})\s*"
+)
+_COLLAR_ALIASES = {
+    "ST&C": "STC",
+    "LT&C": "LTC",
+    "BT&C": "BTC",
+    "BUTTRESS": "BTC",
+    "OTHER": None,
+}
+
+
+def _normalize_collar(raw: str) -> str | None:
+    c = raw.strip()
+    return _COLLAR_ALIASES.get(c.upper(), c)
 
 
 def parse_apd_pdf(
@@ -73,9 +90,10 @@ def parse_apd_pdf(
 
     if mode != "llm":
         _extract_header(text, data)
+        _extract_slant_radio(path, data)
         _extract_locations(text, data)
         _extract_casing_table(text, data)
-        _extract_formations(text, data)
+        _extract_formations(text, data, path)
         _extract_frac_gradient(text, data)
         _extract_bope(text, data)
 
@@ -187,6 +205,55 @@ def _extract_text(path: Path) -> str:
     return "\n\n<<<PAGE>>>\n\n".join(pages)
 
 
+_SLANT_LABELS = ("VERTICAL", "DIRECTIONAL", "HORIZONTAL")
+
+
+def _extract_slant_radio(path: Path, data: APDPdfData) -> None:
+    """Read Box 19 (slant) from the radio button that is actually filled.
+
+    Form 3 prints all three labels as text and marks the choice only with a
+    small filled dot drawn just right of it, so the text regex always
+    returned the first label ("VERTICAL") — even for horizontal wells. When
+    the labels are present but no single dot can be matched, the slant is
+    left unset rather than guessed.
+    """
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        return
+    try:
+        with fitz.open(str(path)) as doc:
+            if len(doc) == 0:
+                return
+            page = doc[0]
+            labels: dict[str, tuple] = {}
+            for block in page.get_text("dict")["blocks"]:
+                for line in block.get("lines", []):
+                    for span in line["spans"]:
+                        t = span["text"].strip()
+                        if t in _SLANT_LABELS and t not in labels:
+                            labels[t] = tuple(span["bbox"])
+            if len(labels) < len(_SLANT_LABELS):
+                return  # not the radio layout; keep whatever the text gave
+            dots = [
+                d["rect"]
+                for d in page.get_drawings()
+                if d.get("fill") is not None
+                and min(d["fill"]) < 0.5
+                and d["rect"].width < 8
+                and d["rect"].height < 8
+            ]
+    except Exception as exc:
+        log.warning("apd_pdf.slant_radio_failed", error=str(exc))
+        return
+    chosen = []
+    for name, (x0, y0, x1, y1) in labels.items():
+        cy = (y0 + y1) / 2
+        if any(x1 - 2 < r.x0 < x1 + 20 and r.y0 - 4 < cy < r.y1 + 4 for r in dots):
+            chosen.append(name)
+    data.slant = chosen[0] if len(chosen) == 1 else None
+
+
 # ---------------------------------------------------------------------------
 # Header (sections 1-29)
 # ---------------------------------------------------------------------------
@@ -215,7 +282,8 @@ def _extract_header(text: str, data: APDPdfData) -> None:
         data.api = m.group(1)
 
     # Proposed depth: "26. PROPOSED DEPTH\nMD: 18592     TVD: 7650"
-    m = re.search(r"MD:\s*(\d+)\s+TVD:\s*(\d+)", text)
+    # Same line only: a blank cell must not borrow the next section number.
+    m = re.search(r"MD:[ \t]*(\d+)[ \t]+TVD:[ \t]*(\d+)", text)
     if m:
         data.proposed_md_ft = float(m.group(1))
         data.proposed_tvd_ft = float(m.group(2))
@@ -402,7 +470,7 @@ def _build_string_from_cells(tag: str, cells: list[str]) -> APDCasingString | No
     gm = _GRADE_THREAD_RE.search(cells[4])
     if gm:
         s.grade = gm.group(1).strip()
-        s.collar = gm.group(2).strip()
+        s.collar = _normalize_collar(gm.group(2))
     elif cells[4].strip():
         # No collar — conductor pipe often ships as just "UKN" or "WELD".
         s.grade = cells[4].strip()
@@ -663,7 +731,113 @@ def _extract_bmsgw_ft(text: str) -> float | None:
     return v if 0 < v < 20000 else None
 
 
-def _extract_formations(text: str, data: APDPdfData) -> None:
+_POS_DEPTH_RE = re.compile(r"^(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?['’\"]?$")
+_POS_SECTION_RE = re.compile(r"^\d+\.$")
+_POS_LABELS = {"md": "md", "(md)": "md", "tvd": "tvd", "(tvd)": "tvd"}
+
+
+def _pos_depth(tok: str) -> float | None:
+    if tok.lower() == "surface":
+        return 0.0
+    if _POS_DEPTH_RE.match(tok):
+        return float(tok.rstrip("'’\"").replace(",", ""))
+    return None
+
+
+def _formations_by_position(path: str | Path) -> list[APDFormationTop]:
+    """Read the Drilling Program "1. Formation Tops" table by word position.
+
+    Each row is one visual line: the name on the left, then one or two
+    depths ("Surface" = 0, ``3,135'``, ``2,770.99'``). A depth is MD or TVD
+    by the label printed right after it ("2,770.99' MD / 2,750' TVD") or by
+    the nearest MD/TVD column header; a lone unlabelled depth is what the
+    reviewers record and is used as both. Rows end at the next numbered
+    section ("2. Depth to Oil, Gas, …"); "TD" rows are skipped.
+    """
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        return []
+    try:
+        with fitz.open(str(path)) as doc:
+            pages = [doc.load_page(i).get_text("words") for i in range(min(len(doc), 4))]
+    except Exception as exc:
+        log.warning("apd_pdf.formations_by_position_failed", error=str(exc))
+        return []
+    for words in pages:
+        lines: dict[int, list] = {}
+        for w in words:
+            lines.setdefault(round((w[1] + w[3]) / 2 / 4), []).append(w)
+        ordered = [sorted(lines[k], key=lambda w: w[0]) for k in sorted(lines)]
+        start = next(
+            (
+                i
+                for i, ln in enumerate(ordered)
+                if [w[4].lower() for w in ln if not _POS_SECTION_RE.match(w[4])][:2]
+                == ["formation", "tops"]
+            ),
+            None,
+        )
+        if start is None:
+            continue
+        # Column headers: MD/TVD words on the heading line or a header row
+        # just below it (one with no depths), keyed by x-centre.
+        columns: list[tuple[float, str]] = []
+        for ln in ordered[start : start + 3]:
+            if any(_pos_depth(w[4]) is not None for w in ln[1:]):
+                break
+            columns += [
+                ((w[0] + w[2]) / 2, _POS_LABELS[w[4].lower()])
+                for w in ln
+                if w[4].lower() in _POS_LABELS
+            ]
+        out: list[APDFormationTop] = []
+        for ln in ordered[start + 1 :]:
+            ln = [w for w in ln if w[4].upper() != "CONFIDENTIAL"]  # watermark
+            if not ln:
+                continue
+            toks = [w[4] for w in ln]
+            if _POS_SECTION_RE.match(toks[0]):
+                break  # next numbered section
+            idx = next(
+                (i for i, t in enumerate(toks) if i > 0 and _pos_depth(t) is not None),
+                None,
+            )
+            if idx is None:
+                continue  # prose, a column-header row, or a wrapped label
+            name = " ".join(toks[:idx])
+            name = re.sub(r"\s+member$", "", name, flags=re.I).strip().rstrip("*").strip()
+            if re.search(r"\bTD\b", name):
+                continue
+            md = tvd = None
+            loose: list[float] = []
+            for i in range(idx, len(ln)):
+                d = _pos_depth(toks[i])
+                if d is None:
+                    continue
+                nxt = toks[i + 1].lower() if i + 1 < len(toks) else ""
+                kind = _POS_LABELS.get(nxt)
+                if kind is None and columns:
+                    cx = (ln[i][0] + ln[i][2]) / 2
+                    dist, label = min((abs(cx - x), lab) for x, lab in columns)
+                    kind = label if dist < 60 else None
+                if kind == "md" and md is None:
+                    md = d
+                elif kind == "tvd" and tvd is None:
+                    tvd = d
+                else:
+                    loose.append(d)
+            if md is None and tvd is None and loose:
+                md = tvd = loose[0]
+            elif md is None:
+                md = tvd
+            out.append(APDFormationTop(name=name, tvd_ft=tvd, md_ft=md))
+        if out:
+            return out
+    return []
+
+
+def _extract_formations(text: str, data: APDPdfData, path: str | Path | None = None) -> None:
     """Formation tops from the APD.
 
     We parse every table we know how to read — the page-2 "FORMATION TOPS"
@@ -676,12 +850,22 @@ def _extract_formations(text: str, data: APDPdfData) -> None:
     alongside the geologic tops — it drives surface-casing/cement protection.
     They omit it when a full geosteering list is present, so we mirror that.
     """
-    candidates = [
-        _finalize_formations(_extract_formations_geosteering(text)),
-        _finalize_formations(_extract_formations_tops_table(text)),
-        _finalize_formations(_extract_formations_known(text)),
-    ]
-    best = max(candidates, key=len)
+    geo = _finalize_formations(_extract_formations_geosteering(text))
+    # The Drilling Program "1. Formation Tops" table read by word position.
+    # Text order scatters it (names and depths interleave), so when it is
+    # present it beats the text-order readers below, which paired names with
+    # whatever numbers came next (e.g. "Uteland Butte" got the lateral TD).
+    positional = _finalize_formations(_formations_by_position(path)) if path else []
+    if geo or positional:
+        best = max((geo, positional), key=len)
+    else:
+        best = max(
+            (
+                _finalize_formations(_extract_formations_tops_table(text)),
+                _finalize_formations(_extract_formations_known(text)),
+            ),
+            key=len,
+        )
     data.bmsgw_depth_ft = _extract_bmsgw_ft(text)
     data.formations.extend(_with_bmsgw(best, data.bmsgw_depth_ft))
 
@@ -730,10 +914,36 @@ def _extract_frac_gradient(text: str, data: APDPdfData) -> None:
     a physically plausible frac-gradient band, then take the largest (the
     production shoe is deepest → highest gradient).
     """
-    m = re.search(r"Frac\s*\n?\s*Grad[^\n]*\n?\s*@?\s*Shoe[^\n]*\n", text, re.I)
+    # Prose form: "Frac gradient at intermediate casing shoe = 12 ppg". It is
+    # explicit, so it wins; the deepest shoe has the highest gradient.
+    stated = [
+        _frac_to_psi_per_ft(float(v))
+        for v in re.findall(
+            r"Frac\s+gradient\s+at\s+[A-Za-z ]*?casing\s+shoe\s*=\s*(\d+(?:\.\d+)?)\s*ppg",
+            text.replace("\xa0", " "),
+            re.I,
+        )
+    ]
+    stated = [c for c in stated if _FRAC_PLAUSIBLE_LO <= c <= _FRAC_PLAUSIBLE_HI]
+    if stated:
+        data.frac_gradient_psi_per_ft = max(stated)
+        return
+    # Table form. Anchor on the header ("Frac / Grad / @ Shoe" as bare
+    # cells), not on prose: "frac gradient of the casing shoe" used to match
+    # and read an unrelated "8" as 8 ppg.
+    m = re.search(
+        r"(?im)^[ \t]*Frac[ \t]*\n?[ \t]*Grad\.?[ \t]*\n?[ \t]*@?[ \t]*\n?[ \t]*Shoe[ \t]*$\n?",
+        text,
+    )
     if not m:
         return
     tail = text[m.end() : m.end() + 400]
+    # Drop tokens that can't be a gradient but whose pieces look like one:
+    # pipe sizes ("4 1/2"), thousands ("1,900"), and depths ("80'"). Their
+    # stray "1" used to be read as a 1.0 psi/ft frac gradient.
+    tail = re.sub(
+        r"\d+[ \t]+\d+/\d+|\d+/\d+|\d{1,3}(?:,\d{3})+'?|\d+(?:\.\d+)?'", " ", tail
+    )
     # Widen the collection window to ≤60 so casing weights are seen (and then
     # rejected by the plausibility filter) rather than sneaking in under ≤25.
     raw_nums = [
@@ -743,7 +953,9 @@ def _extract_frac_gradient(text: str, data: APDPdfData) -> None:
     ]
     if not raw_nums:
         return
-    candidates = [_frac_to_psi_per_ft(x) for x in raw_nums[:8]]
+    # The frac column's values follow its header directly; reaching further
+    # picks up the pore-pressure / mud-weight columns.
+    candidates = [_frac_to_psi_per_ft(x) for x in raw_nums[:4]]
     plausible = [c for c in candidates if _FRAC_PLAUSIBLE_LO <= c <= _FRAC_PLAUSIBLE_HI]
     if plausible:
         data.frac_gradient_psi_per_ft = max(plausible)
