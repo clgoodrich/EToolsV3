@@ -19,6 +19,7 @@ from nicegui import ui
 from shapely.geometry import Point as ShpPoint
 
 from etools.core.coordinates import dms_to_decimal, latlon_to_utm, utm_to_latlon
+from etools.core.survey.processor import latlon_to_offsets
 from etools.models import SurveyFrame
 from etools.ui.state import AppState
 
@@ -416,7 +417,19 @@ def render_viz_tab(state: AppState) -> Callable[[], None]:
             map_widget.set_zoom(13)
 
         # ----- 3D Plotly -----
-        plot_widget.update_figure(_make_3d_figure(points, sr, cr))
+        # Same SHL the survey was processed from (the Survey tab's override
+        # wins over the header), so the section outlines share its origin.
+        origin = state.shl_override or (sr.header.surface_lat, sr.header.surface_lon)
+        plot_widget.update_figure(
+            _make_3d_figure(
+                points,
+                sr,
+                cr,
+                sections=_sections_crossed(sections_wgs84, cr),
+                origin=origin,
+                convergence=ps.convergence_angle,
+            )
+        )
         status.text = (
             f"{len(points)} pts · {points['Conc'].nunique() if 'Conc' in points else cr.points['Conc'].nunique()} sections"
         )
@@ -501,6 +514,61 @@ def _polygon_rings_of_frame(gdf: gpd.GeoDataFrame) -> list[list[tuple[float, flo
     return rings
 
 
+def _sections_crossed(sections, cr):
+    """Only the sections the well passes through. The clearance search
+    returns every section within ~2 km (17 on a two-mile lateral), which on
+    the 3-D plot stretches the footprint until the well looks flat."""
+    crp = getattr(cr, "points", None)
+    if sections is None or sections.empty or crp is None or "Conc" not in crp:
+        return sections
+    crossed = set(crp["Conc"].dropna())
+    picked = sections[sections["Conc"].isin(crossed)]
+    return picked if not picked.empty else sections
+
+
+def _add_surface_sections(fig: go.Figure, sections, origin, convergence) -> None:
+    """Outline each PLSS section at depth 0, labelled at its centre."""
+    if sections is None or getattr(sections, "empty", True) or not origin:
+        return
+    lat0, lon0 = origin
+    if lat0 is None or lon0 is None:
+        return
+    first = True
+    for i, (_, sec) in enumerate(sections.iterrows()):
+        color = _SECTION_COLORS[i % len(_SECTION_COLORS)]
+        label = str(sec.get("label") or sec.get("Conc") or "")
+        for ring in _polygon_rings(sec.geometry):
+            lats = [p[0] for p in ring]
+            lons = [p[1] for p in ring]
+            n, e = latlon_to_offsets(lats, lons, lat0, lon0, convergence)
+            fig.add_trace(
+                go.Scatter3d(
+                    x=e, y=n, z=np.zeros(len(n)),
+                    mode="lines",
+                    line=dict(color=color, width=3),
+                    name="Sections",
+                    legendgroup="sections",
+                    showlegend=first,
+                    hovertemplate=f"Sec {label}<extra></extra>",
+                )
+            )
+            first = False
+        c = sec.geometry.centroid if sec.geometry is not None and not sec.geometry.is_empty else None
+        if c is not None:
+            cn, ce = latlon_to_offsets([c.y], [c.x], lat0, lon0, convergence)
+            fig.add_trace(
+                go.Scatter3d(
+                    x=ce, y=cn, z=[0.0],
+                    mode="text",
+                    text=[label],
+                    textfont=dict(color=color, size=12),
+                    legendgroup="sections",
+                    showlegend=False,
+                    hoverinfo="skip",
+                )
+            )
+
+
 def _significant_mds(sr) -> dict[str, float]:
     out: dict[str, float] = {"SHL": float(sr.frames[SurveyFrame.TRUE].points["measured_depth"].iloc[0])}
     if sr.kop.md is not None:
@@ -511,13 +579,28 @@ def _significant_mds(sr) -> dict[str, float]:
     return out
 
 
-def _make_3d_figure(points: pd.DataFrame, sr, cr=None) -> go.Figure:
+def _make_3d_figure(
+    points: pd.DataFrame,
+    sr,
+    cr=None,
+    *,
+    sections: gpd.GeoDataFrame | None = None,
+    origin: tuple[float | None, float | None] | None = None,
+    convergence: float | None = None,
+) -> go.Figure:
     """3D wellbore in NEV (north / east / depth) space.
 
     When the clearance result aligns with the trajectory, the hover box also
     reports the PLSS section each station sits in and its FNL/FSL/FEL/FWL.
+
+    ``sections`` (WGS84 polygons, as drawn on the 2D map) are outlined at the
+    surface (depth 0) above the well, in the 2D map's colours. ``origin`` is
+    the SHL lat/lon the trajectory was processed from and ``convergence``
+    its grid convergence; both are needed to place the outlines in the
+    trajectory's grid-north offset frame.
     """
     fig = go.Figure()
+    _add_surface_sections(fig, sections, origin, convergence)
     base_cols = [points["measured_depth"], points["inclination"], points["azimuth"], points["tvd"]]
     hover = (
         "MD: %{customdata[0]:.1f} ft<br>"

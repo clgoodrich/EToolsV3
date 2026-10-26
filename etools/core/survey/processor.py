@@ -274,3 +274,22 @@ def _nev_to_latlon(
     proj = Proj(proj="aeqd", datum="WGS84", lat_0=lat0, lon_0=lon0, units="us-ft")
     lon, lat = proj(e, n, inverse=True)
     return np.asarray(lat, dtype=float), np.asarray(lon, dtype=float)
+
+
+def latlon_to_offsets(
+    lat, lon, lat0: float, lon0: float, convergence_deg: float | None
+) -> tuple[np.ndarray, np.ndarray]:
+    """Inverse of the station placement in :func:`process_survey`.
+
+    Maps lat/lon to the ``(n_offset, e_offset)`` frame (grid-north feet from
+    the SHL), so anything drawn beside a processed trajectory (e.g. section
+    outlines on the 3-D plot) lines up with it exactly.
+    """
+    from pyproj import Proj
+
+    proj = Proj(proj="aeqd", datum="WGS84", lat_0=lat0, lon_0=lon0, units="us-ft")
+    e_true, n_true = proj(np.asarray(lon, dtype=float), np.asarray(lat, dtype=float))
+    g = np.radians(convergence_deg or 0.0)
+    n = n_true * np.cos(g) + e_true * np.sin(g)
+    e = e_true * np.cos(g) - n_true * np.sin(g)
+    return np.asarray(n, dtype=float), np.asarray(e, dtype=float)
