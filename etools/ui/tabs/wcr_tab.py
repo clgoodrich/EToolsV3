@@ -21,7 +21,7 @@ import traceback
 from pathlib import Path
 from typing import Callable
 
-from nicegui import events, ui
+from nicegui import background_tasks, events, ui
 
 from etools.config import settings
 from etools.core.pdf.parser import parse_survey_pdf
@@ -500,27 +500,57 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
     # ----------------------------------------------------------------------
     # Legacy DB flow (kept for backwards compatibility)
     # ----------------------------------------------------------------------
-    def load_legacy_bundle() -> None:
-        if state.primary is None:
+    def _bundle_is_current() -> bool:
+        p = state.primary
+        return (
+            p is not None
+            and cache.get("api") == p.api
+            and cache.get("lateral") == p.lateral
+        )
+
+    async def load_legacy_bundle() -> None:
+        """Fetch the legacy DB bundle for the active well, off the event loop.
+
+        This used to run synchronously from ``refresh()`` — on every tab
+        refresh, since refresh also discarded the cached bundle — so each
+        post-load froze the server for three DB round trips, and for the
+        full ODBC timeout (~20 s per refresh) when the DB was unreachable.
+        """
+        if state.primary is None or _bundle_is_current():
             return
         api = state.primary.api
         lateral = state.primary.lateral
-        if cache.get("api") == api and cache.get("lateral") == lateral and cache.get("bundle") is not None:
-            return
         try:
-            cache["bundle"] = wcr_service.load_bundle(api, lateral)
-            cache["api"] = api
-            cache["lateral"] = lateral
+            bundle = await asyncio.to_thread(wcr_service.load_bundle, api, lateral)
         except Exception as exc:  # pragma: no cover
             ui.notify(f"WCR data fetch failed: {exc}", type="negative")
-            cache["bundle"] = None
+            bundle = None
+        # Cache under the well it was fetched for (a failure is cached too,
+        # so an outage costs one timeout per well, not one per refresh).
+        cache["bundle"] = bundle
+        cache["api"] = api
+        cache["lateral"] = lateral
+
+    async def _load_then_rerender() -> None:
+        try:
+            await load_legacy_bundle()
+        finally:
+            cache["bundle_loading"] = False
+        rerender_legacy()
 
     def rerender_legacy() -> None:
         if state.primary is None:
             legacy_controls.set_visibility(False)
             legacy_header_label.visible = True
             return
-        load_legacy_bundle()
+        if not _bundle_is_current():
+            legacy_header_label.text = "Loading WCR data from the database…"
+            legacy_header_label.visible = True
+            legacy_controls.set_visibility(False)
+            if not cache.get("bundle_loading"):
+                cache["bundle_loading"] = True
+                background_tasks.create(_load_then_rerender())
+            return
         bundle = cache.get("bundle")
         if bundle is None or bundle.info is None:
             legacy_header_label.text = "No WCR data found for this well."
@@ -548,7 +578,7 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
                     ui.label(label).classes("text-gray-500")
                     ui.label(str(value) if value not in (None, "") else "—")
 
-    def generate_legacy() -> None:
+    async def generate_legacy() -> None:
         if not state.clearances:
             ui.notify("Calculate clearances first.", type="warning")
             return
@@ -557,7 +587,7 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
             ui.notify("No clearance data for selected citing.", type="warning")
             return
         clearance = state.clearances[citing]
-        load_legacy_bundle()
+        await load_legacy_bundle()
         bundle = cache.get("bundle")
         if bundle is None or bundle.info is None:
             ui.notify("No WCR info available for this well.", type="negative")
@@ -577,26 +607,29 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
         legacy_status.text = f"Saved {rel}"
         ui.notify(f"WCR generated: {rel}", type="positive")
 
-    def update_personal_record() -> None:
-        # Resolve the well from whichever flow is active (DB load or WCR PDF).
+    async def update_personal_record() -> None:
+        # The record is about the WCR on screen, so a parsed WCR wins; the
+        # active well only fills in when no WCR is parsed. Preferring
+        # state.primary logged a WCR that couldn't auto-promote under
+        # whichever DB well happened to be active.
         api = well_name = operator = None
-        if state.primary is not None:
-            api = state.primary.api
-            well_name = state.primary.well_name
-            operator = state.primary.operator
         data = cache.get("wcr_data")
-        if not api and data is not None and data.api:
+        if data is not None and data.api:
             api = data.api[:10]
-        if data is not None:
-            well_name = well_name or data.well_name
-            operator = operator or data.operator
+            well_name = data.well_name
+            operator = data.operator
+        p = state.primary
+        if p is not None and (api is None or p.api == api):
+            api = api or p.api
+            well_name = well_name or p.well_name
+            operator = operator or p.operator
         if not api:
             ui.notify("Load a well or parse a WCR PDF first.", type="warning")
             return
 
         sundry_no = date_filed = None
         try:
-            sub = wcr_service.repo.get_latest_wcr_submission(api)
+            sub = await asyncio.to_thread(wcr_service.repo.get_latest_wcr_submission, api)
         except Exception as exc:
             sub = None
             log.warning("tracking.sundry_lookup_failed", api=api, error=str(exc))
@@ -619,7 +652,8 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
             edits.append(trk_other.value.strip())
 
         try:
-            path = update_tracking_workbook(
+            path = await asyncio.to_thread(
+                update_tracking_workbook,
                 path=settings.tracking_workbook,
                 api=api,
                 well_name=well_name,
@@ -651,6 +685,16 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
     def refresh() -> None:
         # ---- Sync WCR data from state into local cache (used by the
         # generate / promote handlers above and the survey helpers).
+        if cache.get("wcr_data") is not state.wcr_data:
+            # A different WCR (new parse, other well, Clear All): the survey
+            # this tab resolved belonged to the previous one. Keeping it let
+            # Generate build well B's workbook from well A's trajectory.
+            for k in (
+                "surveys", "surveys_label", "survey_source", "survey_pdf_lat",
+                "survey_pdf_lon", "survey_pdf_elev", "survey_pdf_north_ref",
+                "last_result",
+            ):
+                cache[k] = None
         cache["wcr_data"] = state.wcr_data
         cache["wcr_pdf_path"] = state.wcr_pdf_path
         cache["wcr_pdf_name"] = state.wcr_pdf_name
@@ -708,7 +752,8 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
             legacy_header_label.visible = True
             legacy_controls.set_visibility(False)
         else:
-            cache["bundle"] = None  # invalidate so we reload for the new well
+            # The cache is keyed by api/lateral, so a new well reloads and
+            # the same well reuses it.
             rerender_legacy()
 
     return refresh

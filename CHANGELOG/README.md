@@ -23,6 +23,10 @@ alters app behavior or output. Skip trivial edits (typos, formatting, one-line t
 ## Index
 
 <!-- newest first: - [YYYY-MM-DD Title](file.md) — one-line hook -->
+- [2026-10-26 WCR tab stale survey + blocking](2026-10-26-wcr-tab-stale-survey-and-blocking.md) - A new WCR no longer reuses the previous well's survey; the legacy DB bundle loads off the event loop; tracking logs the WCR on screen.
+- [2026-10-26 Casing Review template parity](2026-10-26-casing-review-template-parity.md) - Burst load, buoyed tension/DF, neutral point, cement height/TOC and liner TOL now equal the template formulas they overwrite.
+- [2026-10-26 Survey true-north lat/lon](2026-10-26-survey-true-north-latlon.md) - Station lat/lon/UTM/footages were rotated about the SHL by the grid convergence (up to ~140 ft); WCR/promote now use the survey's own north reference.
+- [2026-10-26 DB survey correctness](2026-10-26-survey-db-correctness.md) - ASDRILLED/PLANNED spellings, re-uploaded headers interleaving, drilled primary header, TrackingWCR sundry date join.
 - [2026-10-26 Per-well state reset](2026-10-26-per-well-state-reset.md) - Loading/parsing a new well, Clear All, Process Survey and Calculate Clearances no longer leave the previous well's APD/WCR/casing/survey data mixed into the new one.
 - [2026-08-28 Well path hover readout](2026-08-28-wellpath-hover-readout.md) - Hovering the trajectory on a section panel reports that station's MD/TVD/inc/azi and its FNL/FSL/FEL/FWL.
 - [2026-08-25 Event loop, WCR repaint, bearings](2026-08-25-event-loop-and-bearing-guards.md) - A DB outage froze the whole server on Load Well; a half-repainted WCR grid diverged from the export; zero-length boundaries reported a fake due-north bearing (25 real sections affected).
