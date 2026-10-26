@@ -6,7 +6,6 @@ from openpyxl import load_workbook
 
 from etools.core.wcr import generate_wcr_excel
 from etools.models import WCRLocationRow, WCRWellInfo
-from etools.services.wcr_service import _parse_label, _perf_summary
 
 
 def _info() -> WCRWellInfo:
@@ -59,26 +58,3 @@ def test_blocks_omitted_when_no_data(tmp_path) -> None:
     ws = load_workbook(out)["Sheet"]
     assert ws.cell(1, 5).value is None
     assert ws.cell(16, 1).value is None
-
-
-def test_parse_label() -> None:
-    assert _parse_label("14 2S 5W U") == {
-        "section": "14", "township": "2", "township_dir": "S",
-        "range": "5", "range_dir": "W", "baseline": "U",
-    }
-    assert _parse_label(None) == {}
-    assert _parse_label("garbage") == {}
-
-
-def test_perf_summary() -> None:
-    perfs = pd.DataFrame(
-        {
-            "Top_MD": [10283.0, 12000.0],
-            "Bottom_MD": [11000.0, 20704.0],
-            "PerfDate": ["2024-10-01", "2024-10-27"],
-        }
-    )
-    top, bottom, date = _perf_summary(perfs)
-    assert top == 10283 and bottom == 20704
-    assert date == "10/27/2024"
-    assert _perf_summary(pd.DataFrame()) == (None, None, None)

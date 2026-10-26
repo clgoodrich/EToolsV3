@@ -2,7 +2,7 @@
 original (hand-made) Casing Review Excel, run the real generate pipeline and
 diff the generated workbook against the original.
 
-Mirrors the Casing Review tab's generate() path (APD parse -> DB survey ->
+Mirrors the Casing Review tab's generate() path (APD parse -> APD's own survey ->
 promote/process -> clearance -> traversal + dx offsets -> svc.generate),
 then recalculates both workbooks with LibreOffice (openpyxl can't evaluate
 formulas) and compares the section sheets' meaningful cells.
@@ -34,7 +34,7 @@ from etools.core.casing_review.sections import (
     survey_kop_footages,
 )
 from etools.models.survey import SurveyFrame
-from etools.repositories import SurveyRepository
+from etools.core.pdf.survey_table import survey_from_pdf
 from etools.services import CasingReviewService
 from etools.services.survey_service import SurveyService
 from etools.services.clearance_service import ClearanceService
@@ -166,10 +166,9 @@ def run_one(api, pdf, xls, log):
     apd = parse_apd_pdf(Path(pdf))
     log(f"  well={apd.well_name!r} locations={len(apd.locations)}")
 
-    repo = SurveyRepository()
-    results = repo.get_points_by_api_lateral(api[:10], "0000")
-    chosen = next((c for c in ("AsDrilled", "Planned") if c in results and not results[c].empty), None)
-    survey_df = results[chosen] if chosen else None
+    _pdf_survey = survey_from_pdf(pdf)  # the APD's own directional plan
+    chosen = "Planned" if not _pdf_survey.empty else None
+    survey_df = _pdf_survey if chosen else None
     log(f"  survey={chosen or 'NONE (synthetic fallback)'}")
 
     section_locations = dx = None

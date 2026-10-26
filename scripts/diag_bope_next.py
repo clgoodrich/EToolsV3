@@ -11,7 +11,7 @@ from etools.core.casing_review.sections import (
     apd_summary_footages, build_section_traversal, dx_survey_path_offsets, survey_kop_footages,
 )
 from etools.models.survey import SurveyFrame
-from etools.repositories import SurveyRepository
+from etools.core.pdf.survey_table import survey_from_pdf
 from etools.services import CasingReviewService
 from etools.services.survey_service import SurveyService
 from etools.services.clearance_service import ClearanceService
@@ -19,10 +19,9 @@ from etools.services.clearance_service import ClearanceService
 
 def gen(api, pdf):
     apd = parse_apd_pdf(Path(pdf))
-    repo = SurveyRepository()
-    results = repo.get_points_by_api_lateral(api[:10], "0000")
-    chosen = next((c for c in ("AsDrilled", "Planned") if c in results and not results[c].empty), None)
-    survey_df = results[chosen] if chosen else None
+    _pdf_survey = survey_from_pdf(pdf)  # the APD's own directional plan
+    chosen = "Planned" if not _pdf_survey.empty else None
+    survey_df = _pdf_survey if chosen else None
     section_locations = dx = None
     clearance = sr = None
     if survey_df is not None:

@@ -146,7 +146,7 @@ def _adopt_survey_north_reference(header, survey_df) -> None:
     """Use the survey's own azimuth reference when it carries one.
 
     The APD/WCR header builders assume "grid"; a DB survey knows its real
-    reference (``attrs["north_reference"]``, set by SurveyRepository).
+    reference (``attrs["north_reference"]``, set by ``survey_table``).
     """
     nref = getattr(survey_df, "attrs", {}).get("north_reference")
     if nref:

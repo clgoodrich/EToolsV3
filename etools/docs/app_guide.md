@@ -12,9 +12,9 @@ that.
 |---|---|
 | Blue box | Something you provide (a PDF, a click, a typed value) |
 | Grey box | Something ETools does for you automatically |
-| Amber diamond | A decision ETools makes ("is there a survey in the database?") |
+| Amber diamond | A decision ETools makes ("does the PDF carry a survey table?") |
 | Green box | Something you get out (a workbook, a map, a number) |
-| Purple box | A data source ETools reads (database or bundled file) |
+| Purple box | A data source ETools reads (a bundled file) |
 
 ---
 
@@ -30,15 +30,13 @@ flowchart TD
     APD["APD PDF (Form 3 permit)"]:::you
     WCR["WCR PDF (Form 8 completion report)"]:::you
     LOAD["Load Well tab: read the PDF"]:::auto
-    SURVEY["Find the directional survey"]:::auto
+    SURVEY["Find the directional survey: in the PDF itself, or a survey PDF you upload"]:::auto
     PIPE["Locate the well: process survey, footages, sections"]:::auto
-    DB[("DOGM database: surveys, WCR records")]:::data
     FILES[("Bundled files: PLSS sections, Grid Numbers, casing strengths")]:::data
 
     APD --> LOAD
     WCR --> LOAD
     LOAD --> SURVEY
-    DB --> SURVEY
     SURVEY --> PIPE
     FILES --> PIPE
 
@@ -62,7 +60,9 @@ flowchart TD
 ```
 
 There are only **two ways in**: an APD or a WCR. Everything else follows
-from the well that PDF describes. The **Plat Searcher** is a separate lookup
+from the well that PDF describes. ETools has **no database server**: every
+well value comes from the PDFs, and the reference data (PLSS sections, Grid
+Numbers, casing strengths) is bundled with the app. The **Plat Searcher** is a separate lookup
 tool that doesn't need a loaded well.
 
 ---
@@ -84,9 +84,8 @@ flowchart TD
     A3["Read the permit: well name, API, operator, locations, casing table, cement, mud weights, frac gradient, BOPE, formation tops, slant"]:::auto
     A4{"Is this a different well from the one on screen?"}:::dec
     A5["Set the previous well aside in the well switcher; start this one with a clean slate"]:::auto
-    A6{"Does the database have a survey for this API?"}:::dec
-    DB[("DOGM database")]:::data
-    A7["Use the As-Drilled survey (or Planned if that's all there is)"]:::auto
+    A6{"Does the APD carry its directional plan (a survey table)?"}:::dec
+    A7["Use the plan as the survey, with the north reference it prints"]:::auto
     A8["No survey yet: TVDs use a straight-line estimate from the permit's MD/TVD. You can upload a survey PDF on the Casing Review tab"]:::auto
     A9{"Can the surface location be placed on the map? (needs a PLSS section or UTM)"}:::dec
     A10["Make it the active well and run the well pipeline (section 4)"]:::auto
@@ -96,7 +95,6 @@ flowchart TD
     A1 --> A2 --> A3 --> A4
     A4 -- yes --> A5 --> A6
     A4 -- no, same well --> A6
-    DB --> A6
     A6 -- yes --> A7 --> A9
     A6 -- no --> A8 --> A9
     A9 -- yes --> A10 --> A12
@@ -149,9 +147,8 @@ flowchart TD
     W3["Read the report: well info, depths (TD, PBTD), elevations, surface / producing interval / TD positions, perforation stages, formations"]:::auto
     W4{"Different well from the one on screen?"}:::dec
     W5["Set the previous well aside; start clean"]:::auto
-    W6{"Survey in the database for this API?"}:::dec
-    DB[("DOGM database")]:::data
-    W7["Use the As-Drilled survey and its own north reference"]:::auto
+    W6{"Does the WCR carry the as-drilled survey report?"}:::dec
+    W7["Use it, with the north reference it prints"]:::auto
     W8["WCR tab asks for a survey PDF"]:::you
     W8b["Read the survey PDF: text first, then OCR, then the vision AI if needed"]:::auto
     W9["Make it the active well if it can be placed; run the well pipeline (section 4)"]:::auto
@@ -160,7 +157,6 @@ flowchart TD
     W1 --> W2 --> W3 --> W4
     W4 -- yes --> W5 --> W6
     W4 -- no --> W6
-    DB --> W6
     W6 -- yes --> W7 --> W9
     W6 -- no --> W8 --> W8b --> W9
     W9 --> W10
@@ -178,16 +174,15 @@ flowchart TD
     K1 --> G4
     K2 --> G4
     K3 --> G4
-    G4["For each depth: TVD, easting / northing, PLSS section, footages"]:::auto
+    G4["For each depth: TVD, easting / northing, PLSS section, footages. Casing table from Sections 28-29, perforation date from Section 35"]:::auto
     G4 --> G5["Well-Name_API_WCR.xlsx in the output folder"]:::out
     G5 --> G6["Optional: edit MD / easting / northing in the rows → Save updated Excel"]:::you
     G5 --> G7["Optional: tick what was checked → Update Personal Record"]:::you
-    G7 --> G8["Adds or updates the row in TrackingWCR.xlsx, with the sundry number and date filed from the database"]:::out
+    G7 --> G8["Adds or updates the row in TrackingWCR.xlsx: sundry number from the WCR's page stamp, date filed pre-filled from its RECEIVED stamp (editable)"]:::out
 ```
 
-The **Legacy flow** expansion at the bottom of the WCR tab builds the same
-workbook from the database's WCR records instead of the PDF. It loads in the
-background and is only there for older wells.
+The RECEIVED stamp is DOGM's received date, usually a few days after the
+operator submitted; correct the date-filed box if you know the submit date.
 
 ---
 
@@ -211,7 +206,7 @@ flowchart TD
     P4["2. Clearances: which PLSS section each station is in, and its distance to each section line (FNL / FSL / FEL / FWL)"]:::auto
     S1[("PLSS section polygons")]:::data
     P5["3. Section geometry: bearing grid for each crossed section. Your edits on the Sections sub-tab are kept"]:::auto
-    S2[("Grid Numbers database")]:::data
+    S2[("Grid Numbers file")]:::data
     P6["4. Save this well in the well switcher"]:::auto
     P7["5. Refresh every tab"]:::out
     F{"Did a step fail?"}:::dec
@@ -235,7 +230,7 @@ flowchart TD
 |---|---|---|---|
 | **Load Well** | — | The only way to bring a well in | *From APD PDF* or *From WCR PDF*, a parse mode (Rules only / Rules + LLM / LLM only), then Parse |
 | **Casing Review** | A parsed APD | Casing design check → Casing Review workbook | Sub-tabs in section 2, *Use as active well*, *Generate Excel*, optional *Survey PDF* upload |
-| **WCR** | A parsed WCR | Completion-report check → WCR workbook | *Generate WCR Excel*, editable location rows + *Save updated Excel*, *Survey PDF* upload when the DB has none, *Open operations log beside the PDF* (in the Operation Summary Reports section: click a day or entry to jump to it in the PDF; filter box), the *Personal Record* checklist + *Update Personal Record*, *Legacy flow* |
+| **WCR** | A parsed WCR | Completion-report check → WCR workbook | *Generate WCR Excel*, editable location rows + *Save updated Excel*, *Survey PDF* upload when the WCR has no survey, *Open operations log beside the PDF* (in the Operation Summary Reports section: click a day or entry to jump to it in the PDF; filter box), the *Personal Record* checklist, *Date filed* + *Update Personal Record* |
 | **Survey** | An active well | See and correct the survey | Citing (Planned / As-Drilled), Frame (True / Grid), *Process Survey*, *Interpolate + Add* (insert a station at an MD), *Delete selected station*, *Reprocess with new SHL*, *Apply convergence*, *Restore original survey*. Every edit re-runs section 4 |
 | **Map & Viz** | Clearances | See where the well goes | *2D Map*: sections, well path, 100 / 330 / 500 ft setback buffers, click a station or section for details, basemap choice, *Add point* / *Clear points*. *3D Trajectory*: the wellbore under the crossed sections (outlined at the surface); hover for MD, angles, section and footages |
 | **Clearance** | A processed survey | Footage tables | Summary (SHL · KOP · Landing · BHL) and every station's FNL / FSL / FEL / FWL; *Calculate Clearances* re-runs section 4 |
@@ -292,7 +287,7 @@ flowchart LR
     classDef data fill:#ede9fe,stroke:#6d28d9,color:#0f172a
     classDef auto fill:#f1f5f9,stroke:#64748b,color:#0f172a
 
-    D1[("DOGM SQL Server UTRBDMSNET")]:::data -->|"directional surveys, WCR well info, casing, perforations, sundry dates"| E["ETools"]:::auto
+    D1[("The PDFs you load: APD, WCR, survey")]:::data -->|"well info, locations, casing, cement, perforations, formation tops, surveys, operations log, sundry stamp"| E["ETools"]:::auto
     D2[("Board_DB_Plss_Sections.db")]:::data -->|"PLSS section outlines"| E
     D3[("grid_numbers.sqlite")]:::data -->|"quarter-side bearings and distances"| E
     D4[("casing_catalog.sqlite")]:::data -->|"collapse / burst / tension strengths"| E
@@ -300,8 +295,8 @@ flowchart LR
     D6[("Casing Review template")]:::data -->|"workbook layout and formulas"| E
 ```
 
-- **No database connection?** The PDF routes still work. You'll see a warning
-  that no survey was found, and you can upload a survey PDF instead.
+- **A PDF without a survey?** Many WCRs don't attach the survey report.
+  You'll see that no survey was found; upload the survey PDF instead.
 - **No AI engine?** Pick *Rules only*. Everything except the AI backfill and
   scanned-page reading works.
 
@@ -311,8 +306,7 @@ flowchart LR
 
 | You see | It usually means | Do this |
 |---|---|---|
-| "Couldn't reach the database…" | SQL Server is unreachable | Check the network / VPN, or upload a survey PDF |
-| "No directional survey in DB" | The well has no uploaded survey yet | Upload the survey PDF on the WCR or Casing Review tab |
+| "No survey loaded — upload one below" / "No directional survey table found in this APD" | The PDF doesn't carry a survey table | Upload the survey PDF on the WCR or Casing Review tab |
 | "APD has no PLSS section we can geolocate" | The surface location couldn't be placed | Load a survey PDF, or set the surface location on the Survey tab |
 | A value parsed wrong | The PDF layout confused the reader | Fix it in the tab (Casing inputs, Formations, Sections, WCR rows) before generating |
 | "…is open in Excel" | The workbook is locked | Close it in Excel and click again |

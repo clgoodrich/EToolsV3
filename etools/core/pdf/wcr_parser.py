@@ -152,7 +152,17 @@ def parse_wcr_pdf(
         _p("Extracting form fields (rules)…")
         _extract_header(combined, data)
         _extract_positions(combined, data)
-        _extract_casing(combined, data)
+        # Section 28/29 by word position (the text-order reader returned
+        # rows with every value empty), plus the page stamp and Section 35.
+        from etools.core.pdf.wcr_form import (
+            extract_casing,
+            extract_stamp,
+            extract_treatment_start,
+        )
+
+        data.casing = extract_casing(path)
+        data.sundry_no, data.received_date = extract_stamp(combined)
+        data.treatment_start_date = extract_treatment_start(combined)
         _extract_formations(combined, data)
         _extract_perf_stages(combined, data)
         _extract_section_33_intervals(combined, data)
@@ -491,7 +501,13 @@ _HEADER_PATTERNS: dict[str, re.Pattern[str]] = {
 
 # PyMuPDF sometimes renders form-field text with a space between every glyph
 # ("0 3 / 0 1 / 2 0 2 3"). Collapse those padded date sequences before regex.
-_PADDED_DATE_RE = re.compile(r"(?:\d\s){1,2}\d\s*/\s*(?:\d\s){1,2}\d\s*/\s*(?:\d\s){1,4}\d")
+# Spaces only (``[ \t]``, not ``\s``): a date sits on one line. With ``\s``
+# the pattern reached across newlines and glued neighbouring cells into the
+# date ("1 9 2 0 2" + newline + "0 7 / 0 4 / 2 0 2 4" became
+# "1920 207/04/20240 7 / …").
+_PADDED_DATE_RE = re.compile(
+    r"(?<!\d)(?:\d[ \t]){1,2}\d[ \t]*/[ \t]*(?:\d[ \t]){1,2}\d[ \t]*/[ \t]*(?:\d[ \t]){1,4}\d(?!\d)"
+)
 # Same problem for long numerics: "8 8 1 0" → "8810" (perf MDs, casing
 # weights, sacks). Trigger only on runs of 4+ digits separated by a
 # *single space* (not newline) so we don't collapse section + township
@@ -749,37 +765,12 @@ def _extract_positions(text: str, data: WCRPdfData) -> None:
 # numerical fields. PyMuPDF text extraction collapses tabs to spaces, so we
 # split on whitespace and use the row's STRING token as the anchor.
 
-_CASING_STRINGS = ("COND", "SURF", "INT", "LINER", "PROD", "PROD1", "PROD2")
-_CASING_BLOCK_RE = re.compile(
-    r"28\.\s*HOLE, CASING AND CEMENT INFORMATION(.*?)(?:29\.\s*TUBING|$)",
-    re.I | re.DOTALL,
-)
-
-
 def _extract_casing(text: str, data: WCRPdfData) -> None:
-    m = _CASING_BLOCK_RE.search(text)
-    if not m:
-        return
-    block = m.group(1)
-    for line in block.splitlines():
-        toks = line.split()
-        if not toks:
-            continue
-        if toks[0].upper() not in _CASING_STRINGS:
-            continue
-        # Pull only what's immediately useful for the Excel output;
-        # we don't need to parse every column perfectly.
-        feature = toks[0]
-        nums = _floats_in(toks[1:])
-        row = CasingRow(
-            feature=feature,
-            diameter=nums[1] if len(nums) > 1 else None,
-            weight=nums[2] if len(nums) > 2 else None,
-            top_md=_find_first(nums, predicate=lambda v: 0 <= v < 30000, skip=3),
-            bottom_md=_find_last(nums, predicate=lambda v: 100 <= v < 30000),
-        )
-        if _casing_row_has_data(row):
-            data.casing.append(row)
+    """Section 28/29, read by word position from the parsed PDF itself."""
+    from etools.core.pdf.wcr_form import extract_casing
+
+    if data.source_pdf:
+        data.casing = extract_casing(data.source_pdf)
 
 
 def _casing_row_has_data(row: CasingRow) -> bool:
@@ -787,32 +778,6 @@ def _casing_row_has_data(row: CasingRow) -> bool:
         getattr(row, f, None) is not None
         for f in ("diameter", "weight", "grade", "top_md", "bottom_md")
     )
-
-
-def _floats_in(toks: list[str]) -> list[float]:
-    out: list[float] = []
-    for t in toks:
-        try:
-            out.append(float(t.replace(",", "")))
-        except ValueError:
-            continue
-    return out
-
-
-def _find_first(values: list[float], *, predicate, skip: int = 0) -> float | None:
-    for i, v in enumerate(values):
-        if i < skip:
-            continue
-        if predicate(v):
-            return v
-    return None
-
-
-def _find_last(values: list[float], *, predicate) -> float | None:
-    for v in reversed(values):
-        if predicate(v):
-            return v
-    return None
 
 
 # ---------------------------------------------------------------------------

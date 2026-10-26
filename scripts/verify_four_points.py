@@ -21,7 +21,7 @@ from etools.core.casing_review.sections import (
     dx_survey_path_offsets,
 )
 from etools.models.survey import SurveyFrame
-from etools.repositories import SurveyRepository
+from etools.core.pdf.survey_table import survey_from_pdf
 from etools.services import CasingReviewService
 from etools.services.survey_service import SurveyService
 from etools.services.clearance_service import ClearanceService
@@ -33,14 +33,13 @@ def main(api: str) -> None:
     apd = parse_apd_pdf(pdf)
     print(f"   well={apd.well_name!r} api={apd.api!r} locations={len(apd.locations)}")
 
-    # Survey from DB (Planned), like _try_db_survey.
-    repo = SurveyRepository()
-    results = repo.get_points_by_api_lateral(api[:10], "0000")
-    chosen = next((c for c in ("AsDrilled", "Planned") if c in results and not results[c].empty), None)
+    # Survey from the APD itself (its directional plan).
+    _pdf_survey = survey_from_pdf(pdf)  # the APD's own directional plan
+    chosen = "Planned" if not _pdf_survey.empty else None
     if chosen is None:
-        print("   !! no DB survey")
+        print("   !! no survey table in the APD")
         return
-    survey_df = results[chosen]
+    survey_df = _pdf_survey
     print(f"   survey={chosen} stations={len(survey_df)}")
 
     # Promote: header + normalized survey.

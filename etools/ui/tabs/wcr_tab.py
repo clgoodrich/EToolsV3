@@ -11,24 +11,22 @@ Flow:
        pipeline the regular PDF import uses (Docling → rules → LLM →
        vision). The extracted MD/INC/AZI rows feed the generator.
 
-The legacy "from DB bundle" flow stays at the bottom of the tab.
 """
 
 from __future__ import annotations
 
 import asyncio
 import traceback
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from nicegui import background_tasks, events, ui
+from nicegui import events, ui
 
 from etools.config import settings
 from etools.core.pdf.parser import parse_survey_pdf
 from etools.logging_setup import get_logger
 from etools.models import WCRPdfData
-from etools.repositories import SurveyRepository
-from etools.services import WCRService
 from etools.core.io_safety import describe_write_error
 from etools.services.tracking_service import update_tracking_workbook
 from etools.services.wcr_pdf_service import WCRPdfResult, WCRPdfService
@@ -43,9 +41,7 @@ log = get_logger(__name__)
 
 def render_wcr_tab(state: AppState) -> Callable[[], None]:
     ui.add_head_html(_OPS_HEAD)  # operations viewer CSS + click/scroll JS
-    wcr_service = WCRService()
     wcr_pdf_service = WCRPdfService()
-    survey_repo = SurveyRepository()
     cache: dict = {
         "bundle": None,
         "api": None,
@@ -139,32 +135,16 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
         ).classes("w-full")
         results_card.visible = False
 
-        # Legacy DB flow stays inside its own expansion at the bottom.
-        with ui.expansion("Legacy flow — generate from DB bundle", value=False).classes("w-full"):
-            legacy_header_label = ui.label("Calculate clearances first.").classes("text-gray-500 italic")
-            legacy_controls = ui.row().classes("gap-3 items-center")
-            with legacy_controls:
-                ui.label("Citing:").classes("text-sm")
-                citing_select = (
-                    ui.select(options=[], on_change=lambda _: rerender_legacy())
-                    .props("dense outlined")
-                    .classes("w-44")
-                )
-                ui.button(
-                    "Generate from DB", icon="description", on_click=lambda: generate_legacy()
-                ).props("color=primary")
-                legacy_status = ui.label("").classes("text-sm text-gray-500 ml-2")
-            legacy_controls.set_visibility(False)
-
-            legacy_info_card = ui.card().classes("w-full")
-
         # Personal processing tracker (V2's "Update Personal Record").
         with ui.expansion(
             "Personal record — TrackingWCR.xlsx", icon="fact_check", value=False
         ).classes("w-full"):
             ui.label(
-                "Logs this WCR review into your tracking workbook — one row per API, "
-                "date filed pulled from the latest sundry, date processed = today."
+                "Logs this WCR review into your tracking workbook — one row per API. "
+                "Sundry number comes from the WCR's page stamp; date filed starts as the "
+                "RECEIVED stamp (DOGM's received date, often a few days after the "
+                "operator submitted) — correct it if you know the submit date. "
+                "Date processed = today."
             ).classes("text-xs text-gray-500")
             with ui.row().classes("gap-4 items-center flex-wrap"):
                 ui.label("Submission included:").classes("text-sm text-gray-600")
@@ -184,6 +164,11 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
                     "dense outlined type=number"
                 ).classes("w-24").tooltip("How many times this WCR was returned to the operator")
             with ui.row().classes("gap-3 items-center"):
+                trk_filed = ui.input("Date filed (m/d/yyyy)").props(
+                    "dense outlined"
+                ).classes("w-44").tooltip(
+                    "Pre-filled from the WCR's RECEIVED stamp; edit if needed"
+                )
                 ui.button(
                     "Update Personal Record",
                     icon="fact_check",
@@ -194,46 +179,6 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
     # ----------------------------------------------------------------------
     # Upload + parse moved to the Load Well tab → From WCR PDF.
     # This tab now reads state.wcr_data and renders it.
-    # ----------------------------------------------------------------------
-    async def _try_db_survey_lookup() -> None:
-        data: WCRPdfData | None = cache.get("wcr_data")
-        if data is None or not data.api:
-            survey_status.text = "WCR PDF has no API — cannot search DB. Upload a survey PDF below."
-            survey_upload_row.visible = True
-            return
-        api10 = data.api[:10]
-        try:
-            results = await asyncio.to_thread(survey_repo.get_points_by_api_lateral, api10, "0000")
-        except Exception as exc:
-            log.warning("wcr.db_survey_lookup_failed", error=str(exc))
-            survey_status.text = (
-                f"DB lookup failed for API {api10} ({exc}). Upload a survey PDF below."
-            )
-            survey_upload_row.visible = True
-            return
-
-        # Prefer As-Drilled if both planned and as-drilled exist.
-        preference = ("AsDrilled", "Planned")
-        chosen_citing = next((c for c in preference if c in results and not results[c].empty), None)
-        if chosen_citing is None:
-            survey_status.text = (
-                f"No directional survey in DB for API {api10}. Upload a survey PDF below."
-            )
-            survey_upload_row.visible = True
-            return
-
-        df = results[chosen_citing]
-        cache["surveys"] = df
-        cache["surveys_label"] = f"DB / {chosen_citing} ({len(df)} stations)"
-        cache["survey_source"] = "db"
-        survey_status.text = f"Found {chosen_citing} survey in DB for API {api10}: {len(df)} stations."
-        survey_status.classes(
-            replace="text-sm px-3 py-2 rounded bg-green-100 text-green-800"
-        )
-        survey_upload_row.visible = False
-
-    # ----------------------------------------------------------------------
-    # Step 2 — survey PDF fallback
     # ----------------------------------------------------------------------
     async def handle_survey_upload(e: events.UploadEventArguments) -> None:
         upload = getattr(e, "file", None) or getattr(e, "content", None)
@@ -499,116 +444,6 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
         generate_status.text = f"Saved {Path(path).name}"
         ui.notify(f"WCR updated: {Path(path).name}", type="positive")
 
-    # ----------------------------------------------------------------------
-    # Legacy DB flow (kept for backwards compatibility)
-    # ----------------------------------------------------------------------
-    def _bundle_is_current() -> bool:
-        p = state.primary
-        return (
-            p is not None
-            and cache.get("api") == p.api
-            and cache.get("lateral") == p.lateral
-        )
-
-    async def load_legacy_bundle() -> None:
-        """Fetch the legacy DB bundle for the active well, off the event loop.
-
-        This used to run synchronously from ``refresh()`` — on every tab
-        refresh, since refresh also discarded the cached bundle — so each
-        post-load froze the server for three DB round trips, and for the
-        full ODBC timeout (~20 s per refresh) when the DB was unreachable.
-        """
-        if state.primary is None or _bundle_is_current():
-            return
-        api = state.primary.api
-        lateral = state.primary.lateral
-        try:
-            bundle = await asyncio.to_thread(wcr_service.load_bundle, api, lateral)
-        except Exception as exc:  # pragma: no cover
-            ui.notify(f"WCR data fetch failed: {exc}", type="negative")
-            bundle = None
-        # Cache under the well it was fetched for (a failure is cached too,
-        # so an outage costs one timeout per well, not one per refresh).
-        cache["bundle"] = bundle
-        cache["api"] = api
-        cache["lateral"] = lateral
-
-    async def _load_then_rerender() -> None:
-        try:
-            await load_legacy_bundle()
-        finally:
-            cache["bundle_loading"] = False
-        rerender_legacy()
-
-    def rerender_legacy() -> None:
-        if state.primary is None:
-            legacy_controls.set_visibility(False)
-            legacy_header_label.visible = True
-            return
-        if not _bundle_is_current():
-            legacy_header_label.text = "Loading WCR data from the database…"
-            legacy_header_label.visible = True
-            legacy_controls.set_visibility(False)
-            if not cache.get("bundle_loading"):
-                cache["bundle_loading"] = True
-                background_tasks.create(_load_then_rerender())
-            return
-        bundle = cache.get("bundle")
-        if bundle is None or bundle.info is None:
-            legacy_header_label.text = "No WCR data found for this well."
-            legacy_header_label.visible = True
-            legacy_controls.set_visibility(False)
-            return
-        legacy_header_label.visible = False
-        legacy_controls.set_visibility(True)
-
-        info = bundle.info
-        legacy_info_card.clear()
-        with legacy_info_card:
-            with ui.grid(columns=4).classes("gap-x-6 gap-y-1 text-sm"):
-                pairs = [
-                    ("Well", info.well_name),
-                    ("Operator", info.operator),
-                    ("API / Lateral", f"{info.api_well_no[:10]} / {info.api_well_no[10:]}"),
-                    ("Type", info.well_type),
-                    ("Status", info.well_status),
-                    ("Spud", _fmt_date(info.spud_date)),
-                    ("Completed", _fmt_date(info.completion_date)),
-                    ("Elevation (ft)", info.elevation_ft),
-                ]
-                for label, value in pairs:
-                    ui.label(label).classes("text-gray-500")
-                    ui.label(str(value) if value not in (None, "") else "—")
-
-    async def generate_legacy() -> None:
-        if not state.clearances:
-            ui.notify("Calculate clearances first.", type="warning")
-            return
-        citing = citing_select.value or next(iter(state.clearances), None)
-        if citing not in state.clearances:
-            ui.notify("No clearance data for selected citing.", type="warning")
-            return
-        clearance = state.clearances[citing]
-        await load_legacy_bundle()
-        bundle = cache.get("bundle")
-        if bundle is None or bundle.info is None:
-            ui.notify("No WCR info available for this well.", type="negative")
-            return
-        try:
-            path = wcr_service.generate(
-                api=state.primary.api,
-                lateral=state.primary.lateral,
-                summary_footages=clearance.summary,
-                bundle=bundle,
-                points=clearance.points,
-            )
-        except Exception as exc:  # pragma: no cover
-            ui.notify(f"WCR generation failed: {exc}", type="negative")
-            raise
-        rel = Path(path).name
-        legacy_status.text = f"Saved {rel}"
-        ui.notify(f"WCR generated: {rel}", type="positive")
-
     async def update_personal_record() -> None:
         # The record is about the WCR on screen, so a parsed WCR wins; the
         # active well only fills in when no WCR is parsed. Preferring
@@ -629,16 +464,15 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
             ui.notify("Load a well or parse a WCR PDF first.", type="warning")
             return
 
-        sundry_no = date_filed = None
-        try:
-            sub = await asyncio.to_thread(wcr_service.repo.get_latest_wcr_submission, api)
-        except Exception as exc:
-            sub = None
-            log.warning("tracking.sundry_lookup_failed", api=api, error=str(exc))
-        if sub:
-            sundry_no = sub.get("sundry_no")
-            date_filed = sub.get("submit_date")
-            well_name = well_name or sub.get("well_name")
+        sundry_no = data.sundry_no if data is not None else None
+        date_filed = None
+        filed_text = (trk_filed.value or "").strip()
+        if filed_text:
+            try:
+                date_filed = datetime.strptime(filed_text, "%m/%d/%Y")
+            except ValueError:
+                ui.notify("Date filed must look like 9/18/2024.", type="warning")
+                return
 
         edits = [
             label
@@ -697,6 +531,7 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
                 "last_result",
             ):
                 cache[k] = None
+            trk_filed.value = (state.wcr_data.received_date or "") if state.wcr_data else ""
         cache["wcr_data"] = state.wcr_data
         cache["wcr_pdf_path"] = state.wcr_pdf_path
         cache["wcr_pdf_name"] = state.wcr_pdf_name
@@ -741,22 +576,6 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
             # Operation Summary appendix at all.
             _render_ddr_card(ddr_card, data, state.wcr_pdf_path)
             ddr_card.visible = True
-
-        # ---- Legacy DB flow ----
-        if state.clearances:
-            opts = sorted(state.clearances.keys())
-            citing_select.options = opts
-            if not citing_select.value or citing_select.value not in opts:
-                citing_select.value = opts[0]
-            citing_select.update()
-        if state.primary is None:
-            legacy_header_label.text = "Load a well first."
-            legacy_header_label.visible = True
-            legacy_controls.set_visibility(False)
-        else:
-            # The cache is keyed by api/lateral, so a new well reloads and
-            # the same well reuses it.
-            rerender_legacy()
 
     return refresh
 

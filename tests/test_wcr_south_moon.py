@@ -2,7 +2,7 @@
 
 This is the acceptance test for the WCR-from-PDF pipeline. It loads the
 real WCR Form 8 for South Moon 5-31-32-C4-3H, runs it through the
-service against the corresponding survey from the local SQL Server, and
+service against the well's As-Drilled survey (``fixtures/surveys``), and
 diffs the generated workbook against the reference output cell-by-cell.
 
 The Sec 36 T3S R5W polygon in the local PLSS database has a known
@@ -22,19 +22,21 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 REF_XLSX = FIXTURES / "reference" / "South_Moon_5-31-32-C4-3H_4301353996_WCR.xlsx"
 PDF = FIXTURES / "wcr" / "WCR 43013539960000.pdf"
 API = "4301353996"
+SURVEY_CSV = FIXTURES / "surveys" / "4301353996_AsDrilled_True.csv"
 
 
 @pytest.fixture(scope="module")
 def generated_path(tmp_path_factory) -> Path:
     """Run the full pipeline once per test module."""
     pytest.importorskip("welleng")
-    from etools.repositories import SurveyRepository
+    import pandas as pd
+
     from etools.services.wcr_pdf_service import WCRPdfService
 
-    try:
-        surveys = SurveyRepository().get_points_by_api_lateral(API, "0000")["AsDrilled"]
-    except Exception as exc:
-        pytest.skip(f"DB unavailable for {API}: {exc}")
+    # This WCR doesn't carry its survey, so the As-Drilled stations are kept
+    # as a fixture (exported from DOGM's record; True north reference).
+    surveys = pd.read_csv(SURVEY_CSV)
+    surveys.attrs["north_reference"] = "True"
     out = tmp_path_factory.mktemp("wcr") / "south_moon.xlsx"
     result = WCRPdfService().generate(
         wcr_pdf_path=PDF,

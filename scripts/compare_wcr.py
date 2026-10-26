@@ -1,20 +1,16 @@
 """Compare generated WCR workbooks against the hand-made originals.
 
-Two wells in the repo have a hand-made WCR Excel to compare against:
-
-  * South Moon 5-31-32-C4-3H (4301353996) — reference workbook in
-    tests/fixtures/reference, WCR PDF in tests/fixtures/wcr. Regenerated
-    through the primary WCRPdfService pipeline (PDF + DB survey).
-  * Reay 16-29-30-B4-2H (4301354722) — hand-made workbook in archive/misc.
-    No WCR PDF exists on disk, so it runs through the legacy From-Database
-    flow (WellService -> SurveyService -> ClearanceService -> WCRService).
+South Moon 5-31-32-C4-3H (4301353996) has a hand-made WCR Excel to compare
+against (tests/fixtures/reference) and its WCR PDF (tests/fixtures/wcr). It is
+regenerated through WCRPdfService with the survey from tests/fixtures/surveys.
+(Reay 16-29-30-B4-2H used to be compared via the database flow, which ETools no
+longer has; it has no WCR PDF on disk.)
 
 The diff aligns rows by label (info-block labels, location-row names)
 rather than by position, because the hand-made workbooks shift rows
 around (extra lateral row, header on row 10 vs 9, missing BHL row).
 
-Usage:  python scripts/compare_wcr.py [south_moon] [reay]
-        (no args = both)
+Usage:  python scripts/compare_wcr.py [south_moon]
 """
 
 from __future__ import annotations
@@ -33,8 +29,6 @@ SOUTH_MOON_API = "4301353996"
 SOUTH_MOON_PDF = ROOT / "tests/fixtures/wcr/WCR 43013539960000.pdf"
 SOUTH_MOON_REF = ROOT / "tests/fixtures/reference/South_Moon_5-31-32-C4-3H_4301353996_WCR.xlsx"
 
-REAY_API = "4301354722"
-REAY_REF = ROOT / "archive/misc/Reay_16-29-30-B4-2H_4301354722_WCR.xlsx"
 
 INFO_LABELS = (
     "WellName", "API", "Operator", "Lateral", "ConstructKeyWellType",
@@ -54,38 +48,18 @@ LOCATION_COLS = (
 
 
 def generate_south_moon() -> Path:
-    from etools.repositories import SurveyRepository
+    import pandas as pd
+
     from etools.services.wcr_pdf_service import WCRPdfService
 
-    surveys = SurveyRepository().get_points_by_api_lateral(SOUTH_MOON_API, "0000")["AsDrilled"]
+    # This WCR doesn't carry its survey; the As-Drilled stations are a fixture.
+    surveys = pd.read_csv(ROOT / "tests/fixtures/surveys/4301353996_AsDrilled_True.csv")
+    surveys.attrs["north_reference"] = "True"
     out = OUT_DIR / "South_Moon_4301353996_generated.xlsx"
     result = WCRPdfService().generate(
         wcr_pdf_path=SOUTH_MOON_PDF, surveys=surveys, output_path=out
     )
     return result.output_path
-
-
-def generate_reay() -> Path:
-    from etools.models import SurveyFrame, WellLookup
-    from etools.services import WCRService
-    from etools.services.clearance_service import ClearanceService
-    from etools.services.survey_service import SurveyService
-    from etools.services.well_service import WellService
-
-    bundle = WellService().load(WellLookup(api=REAY_API, lateral="0000"))
-    processed = SurveyService().process(bundle.headers, bundle.surveys)
-    citing = "AsDrilled" if "AsDrilled" in processed else next(iter(processed))
-    sr = processed[citing]
-    clearance = ClearanceService().calculate(
-        sr.frames[SurveyFrame.TRUE], kop_md=sr.kop.md, landing_md=sr.landing_md
-    )
-    return WCRService().generate(
-        api=REAY_API,
-        lateral="0000",
-        summary_footages=clearance.summary,
-        points=clearance.points,
-        output_dir=OUT_DIR,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -207,17 +181,13 @@ def diff(ref_path: Path, gen_path: Path, label: str) -> None:
 
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    which = set(a.lower() for a in sys.argv[1:]) or {"south_moon", "reay"}
+    which = set(a.lower() for a in sys.argv[1:]) or {"south_moon"}
 
     if "south_moon" in which:
         print("Generating South Moon via WCR-PDF pipeline (Docling ~60s)...")
         path = generate_south_moon()
         diff(SOUTH_MOON_REF, path, "South Moon 5-31-32-C4-3H (4301353996) — PDF pipeline")
 
-    if "reay" in which:
-        print("\nGenerating Reay via From-Database pipeline...")
-        path = generate_reay()
-        diff(REAY_REF, path, "Reay 16-29-30-B4-2H (4301354722) — legacy DB pipeline")
 
 
 if __name__ == "__main__":

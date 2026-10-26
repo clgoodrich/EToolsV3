@@ -16,21 +16,19 @@ reconnects flows through ``AppState``.
 from __future__ import annotations
 
 import asyncio
-from typing import Awaitable, Callable, Union
+from typing import Callable
 
 from nicegui import events, ui
 
 from etools.core.pdf.apd_parser import parse_apd_pdf
 from etools.core.pdf.wcr_parser import parse_wcr_pdf
 from etools.logging_setup import get_logger
-from etools.models import WellLookup
-from etools.repositories import SurveyRepository
+from etools.core.pdf.survey_table import survey_from_pdf
 from etools.ui.promote import promote_apd_to_active, promote_wcr_to_active
 from etools.ui.state import AppState
 from etools.ui.upload_temp import save_upload as _save_upload
 from etools.ui.workspace import begin_document, document_id_for
 
-LoadHandler = Callable[[WellLookup], Union[None, Awaitable[None]]]
 RouteHandler = Callable[[], None]
 
 log = get_logger(__name__)
@@ -38,7 +36,6 @@ log = get_logger(__name__)
 
 def render_load_tab(
     state: AppState,
-    on_load: LoadHandler | None = None,
     on_route_to_casing: RouteHandler | None = None,
     on_route_to_wcr: RouteHandler | None = None,
 ) -> Callable[[], None]:
@@ -48,7 +45,6 @@ def render_load_tab(
     successful APD / WCR parse so the user lands directly in the tab
     that's ready to work with the parsed data.
     """
-    survey_repo = SurveyRepository()
     cache: dict = {}
 
     with ui.column().classes("p-6 gap-4 w-full max-w-4xl"):
@@ -230,6 +226,20 @@ def render_load_tab(
         cache["apd_status"].text = f"Loaded {name}. Click 'Parse APD' to extract."
         cache["apd_parse_btn"].enable()
 
+    async def _pdf_survey(path: str | None):
+        """Survey stations read from ``path`` (None when it has none).
+
+        Surveys come only from the PDFs themselves: there is no database.
+        """
+        if not path:
+            return None
+        try:
+            df = await asyncio.to_thread(survey_from_pdf, path)
+        except Exception as exc:
+            log.warning("load_tab.pdf_survey_failed", error=str(exc))
+            return None
+        return None if df.empty else df
+
     async def _parse_apd_now() -> None:
         tmp_path = state.apd_pdf_path
         if not tmp_path:
@@ -260,7 +270,7 @@ def render_load_tab(
         ):
             state.casing_frac_gradient_psi_per_ft = data.frac_gradient_psi_per_ft
         # Look up a survey from the DB by API if possible.
-        await _try_db_survey_for_apd()
+        await _survey_from_apd_pdf()
         cache["apd_status"].text = (
             f"Parsed {state.apd_pdf_name}: "
             f"{data.well_name or '(unnamed)'}  API {data.api or '—'}"
@@ -284,32 +294,19 @@ def render_load_tab(
                 "APD parsed — review on the Casing Review tab.", type="positive"
             )
 
-    async def _try_db_survey_for_apd() -> None:
-        data = state.apd_data
-        if data is None or not data.api:
-            return
-        api10 = data.api[:10]
-        try:
-            results = await asyncio.to_thread(
-                survey_repo.get_points_by_api_lateral, api10, "0000"
-            )
-        except Exception as exc:
-            log.warning("load_tab.apd_db_survey_failed", error=str(exc))
+    async def _survey_from_apd_pdf() -> None:
+        """The directional plan carried inside the APD itself."""
+        df = await _pdf_survey(state.apd_pdf_path)
+        if df is None:
             ui.notify(
-                "Couldn't reach the database to look up this well's survey. "
-                "Casing TVDs will fall back to a straight-hole estimate "
-                "unless you load a survey PDF.",
+                "No directional survey table found in this APD. Casing TVDs "
+                "use a straight-hole estimate unless you upload a survey PDF "
+                "on the Casing Review tab.",
                 type="warning",
             )
             return
-        chosen = next(
-            (c for c in ("AsDrilled", "Planned") if c in results and not results[c].empty),
-            None,
-        )
-        if chosen is None:
-            return
-        state.casing_survey_df = results[chosen]
-        state.casing_survey_label = f"DB / {chosen} ({len(results[chosen])} stations)"
+        state.casing_survey_df = df
+        state.casing_survey_label = f"APD PDF / Planned ({len(df)} stations)"
 
     # ------------------------------------------------------------------
     # WCR upload + parse handlers
@@ -400,7 +397,7 @@ def render_load_tab(
             document_id_for((data.api or "")[:10] or "0000000000", "0000"),
             keep=("wcr_data", "wcr_pdf_path", "wcr_pdf_name"),
         )
-        await _try_db_survey_for_wcr()
+        await _survey_from_wcr_pdf()
         cache["wcr_status"].text = (
             f"Parsed {state.wcr_pdf_name}: "
             f"{data.well_name or '(unnamed)'}  API {data.api or '—'}"
@@ -421,32 +418,14 @@ def render_load_tab(
                     log.warning("load_tab.wcr_fire_refresh.failed", error=str(exc))
             ui.notify("WCR parsed — review on the WCR tab.", type="positive")
 
-    async def _try_db_survey_for_wcr() -> None:
-        data = state.wcr_data
-        if data is None or not data.api:
-            return
-        api10 = data.api[:10]
-        try:
-            results = await asyncio.to_thread(
-                survey_repo.get_points_by_api_lateral, api10, "0000"
-            )
-        except Exception as exc:
-            log.warning("load_tab.wcr_db_survey_failed", error=str(exc))
-            ui.notify(
-                "Couldn't reach the database to look up this well's survey. "
-                "Load one from a PDF if you need survey-derived values.",
-                type="warning",
-            )
-            return
-        chosen = next(
-            (c for c in ("AsDrilled", "Planned") if c in results and not results[c].empty),
-            None,
-        )
-        if chosen is None:
-            return
-        state.wcr_survey_df = results[chosen]
-        state.wcr_survey_label = f"DB / {chosen} ({len(results[chosen])} stations)"
-        state.wcr_survey_source = "db"
+    async def _survey_from_wcr_pdf() -> None:
+        """The as-drilled survey report attached inside the WCR, if any."""
+        df = await _pdf_survey(state.wcr_pdf_path)
+        if df is None:
+            return  # the WCR tab asks for a survey PDF
+        state.wcr_survey_df = df
+        state.wcr_survey_label = f"WCR PDF / As-Drilled ({len(df)} stations)"
+        state.wcr_survey_source = "pdf"
 
     return summary.refresh
 

@@ -9,17 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from etools.repositories import PlatRepository, SurveyRepository, WellRepository
-
-
-@pytest.fixture(scope="session")
-def well_repo() -> WellRepository:
-    return WellRepository()
-
-
-@pytest.fixture(scope="session")
-def survey_repo() -> SurveyRepository:
-    return SurveyRepository()
+from etools.repositories import PlatRepository
 
 
 @pytest.fixture(scope="session")

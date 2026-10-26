@@ -158,7 +158,7 @@ def _generate_wcr_excel_to(
 ) -> Path:
     """Write the WCR workbook to ``output_path``. Overwrites if it exists.
 
-    ``casing`` takes the WCRRepository frame shape (Feature/Top_MD/.../CementWeight).
+    ``casing`` takes the ``wcr_form.casing_frame`` shape (Feature/Top_MD/.../CementWeight).
     Perf values and casing rows are optional — omitted blocks leave those
     cells blank, matching the South Moon reference layout.
     """

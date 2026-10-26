@@ -1,7 +1,8 @@
 # ETools
 
-Local web app for the Utah Division of Oil, Gas & Mining (DOGM): load directional
-surveys (from the state SQL Server **or** an operator-submitted PDF), recompute
+Local web app for the Utah Division of Oil, Gas & Mining (DOGM): read an APD or
+WCR PDF (and the directional survey carried inside it, or a separate survey PDF),
+recompute
 the trajectory, locate it inside Utah's PLSS sections, calculate FNL/FSL/FEL/FWL
 footages, and emit a Well Completion Report (WCR) Excel file.
 
@@ -28,8 +29,8 @@ footages, and emit a Well Completion Report (WCR) Excel file.
                              │
         ┌────────────────────┼────────────────────┐
         │                    │                    │
-   SQL Server         SQLite (PLSS)         Ollama (LLM)
-   UTRBDMSNET        Board_DB_Plss…       :11434 / qwen3.5:9b
+   Uploaded PDFs      SQLite (PLSS,        Ollama (LLM)
+   APD / WCR / survey  casing, grid nos.)   :11434 / qwen3.5:9b
 ```
 
 ## Quick start
@@ -52,14 +53,12 @@ The browser opens to `http://localhost:8080/` automatically.
    pip install -e .
    ```
 
-2. **SQL Server**: a local SQL Express instance on `CGDESKTOP\SQLEXPRESS`
-   serving the `UTRBDMSNET` database via Windows Authentication. Adjust
-   `.env` (copy from `.env.example`) if your server is named differently.
+2. **No database server.** Well data comes only from the uploaded PDFs; the
+   reference data is in local SQLite files (below and `etools/data/`).
 
 3. **PLSS plat databases** (≈250 MB each, gitignored): drop these files in
    `data/`:
    - `Board_DB_Plss_Sections.db`
-   - `location_data.db`
 
 4. **Ollama** (optional but recommended) for LLM PDF extraction:
 
@@ -89,9 +88,9 @@ EToolsV3/
 │   │   ├── casing_review/          # Casing Review generator + template
 │   │   ├── pdf/                    # Docling + LLM-backed PDF parsers
 │   │   └── llm/                    # Ollama JSON-schema client
-│   ├── db/                         # SQLAlchemy engine factories
+│   ├── db/                         # SQLite engine factory
 │   ├── models/                     # Pydantic DTOs
-│   ├── repositories/               # parameterized SQL access
+│   ├── repositories/               # PLSS plat lookups (SQLite)
 │   ├── services/                   # workflow orchestration
 │   └── ui/                         # NiceGUI tabs + state
 │
@@ -158,10 +157,6 @@ llm-text` when the LLM contributed).
 Copy `.env.example` to `.env` and adjust if needed. Common knobs:
 
 ```env
-ETOOLS_DB__SERVER=CGDESKTOP\SQLEXPRESS    # SQL Server host
-ETOOLS_DB__DATABASE=UTRBDMSNET
-ETOOLS_DB__TRUSTED=true                    # Windows Auth
-
 ETOOLS_LLM__ENABLED=true                   # set false to skip Ollama entirely
 ETOOLS_LLM__MODEL=qwen3.5:9b
 ETOOLS_LLM__VISION_MODEL=qwen3.5:9b        # qwen3.5 is multimodal — same model

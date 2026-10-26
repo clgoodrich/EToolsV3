@@ -38,6 +38,9 @@ class WCRWellInfo(BaseModel):
 
 class CasingRow(BaseModel):
     feature: str
+    hole_size: float | None = None
+    # "L" / "T" (lead / tail) when the form lists several cement stages.
+    cement_stage: str | None = None
     top_md: float | None = None
     bottom_md: float | None = None
     diameter: float | None = None
@@ -289,8 +292,18 @@ class WCRPdfData(BaseModel):
     # Section 27 — well position rows
     positions: list[WellPositionRow] = []
 
-    # Section 28 — casing
+    # Section 28 — casing (one row per cement stage, as printed)
     casing: list[CasingRow] = []
+
+    # Form header stamp: "Sundry Number: 133008 … RECEIVED: Oct. 08, 2024".
+    # RECEIVED is DOGM's stamp, usually a few days after the operator's
+    # submit date.
+    sundry_no: str | None = None
+    received_date: str | None = None  # "m/d/YYYY"
+
+    # Section 35 — latest treatment START DATE ("m/d/YYYY"): the
+    # perforation/stimulation date written to the WCR workbook.
+    treatment_start_date: str | None = None
 
     # Section 32 — formation tops
     formations: list[FormationTop] = []

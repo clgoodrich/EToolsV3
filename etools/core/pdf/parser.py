@@ -83,6 +83,28 @@ def parse_survey_pdf(path: str | Path) -> ParsedSurvey:
 
     result = ParsedSurvey(surveys=pd.DataFrame(), source_file=str(path))
 
+    # ---- Layer 0: survey table by word position (fast, exact) ----
+    # Text-based survey reports read cleanly this way (and carry their own
+    # north reference); only when it finds nothing do the slower Docling /
+    # OCR / LLM layers run.
+    from etools.core.pdf.survey_table import extract_survey_table
+
+    positional = extract_survey_table(path)
+    if not positional.empty:
+        text = _pymupdf_extract_text(path)
+        meta = _rules_extract(text) if text else None
+        if meta is not None:
+            _merge(result, meta)
+        result.surveys = positional
+        if positional.attrs.get("north_reference"):
+            result.north_reference = positional.attrs["north_reference"]
+            result.field_sources["north_reference"] = "survey-table"
+        result.field_sources["surveys"] = "survey-table"
+        result.layers_used.append("survey-table")
+        log.info("pdf.parse.done", path=str(path), survey_rows=len(positional),
+                 layers=result.layers_used)
+        return result
+
     # ---- Layer 1: Docling ----
     try:
         markdown, doc_meta = pdf_to_markdown(path, with_ocr=False)

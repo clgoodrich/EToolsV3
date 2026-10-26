@@ -27,8 +27,6 @@ def run() -> None:
     log.info(
         "etools.start",
         port=settings.port,
-        db_server=settings.db.server,
-        db_database=settings.db.database,
         log_level=settings.log_level,
         log_file=str(log_file),
     )

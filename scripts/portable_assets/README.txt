@@ -37,7 +37,9 @@ other and on their relative locations.
 
 WHAT WORKS OFFLINE
 ------------------
-Everything except the live SQL Server connection:
+Everything. ETools needs no database server: well data comes from the
+PDFs you load, and the reference data (PLSS sections, Grid Numbers,
+casing strengths) is bundled:
 
   - Survey processing, editing, KOP/landing detection
   - Clearances and PLSS section geometry
@@ -46,9 +48,9 @@ Everything except the live SQL Server connection:
   - WCR generation and Casing Review
   - PDF -> WCR auto-extraction (Docling + the local AI model)
 
-The legacy "load a well straight from the State database" path needs a
-reachable SQL Server (UTRBDMSNET); it will be unavailable on a machine
-that has none. All the tools above work without it.
+Directional surveys are read from the PDF itself (an APD's directional
+plan, or the survey report attached to a WCR). When a PDF doesn't carry
+one, upload the survey PDF on the WCR or Casing Review tab.
 
 
 ==============================================================
@@ -75,29 +77,23 @@ loaded well: it builds the well header, cleans up the survey, then
 runs the full pipeline - process survey, calculate clearances, build
 the section geometry, refresh every tab. Promotion only fully
 succeeds if the well can be placed on the map (from its PLSS section
-or a surface location); if it cannot, upload a survey PDF or load the
-well from the database.
+or a surface location); if it cannot, upload a survey PDF.
 
 
 1. LOAD WELL  (start here)
 --------------------------
-The single front door. Load a well one of three ways, then it routes
+The single front door. Load a well one of two ways, then it routes
 you to the right tab.
 
-  A) From Database
-     Type a 10-digit API and a 4-character Lateral (default 0000),
-     click "Load Well". Pulls the survey straight from the State
-     SQL Server. Needs a reachable database.
-
-  B) From APD PDF
+  A) From APD PDF
      Drag in a drilling-permit (APD) PDF. Pick a parse mode
      (Rules only / Rules + AI backfill / AI only), click "Parse APD".
      On success it jumps you to the CASING REVIEW tab and, when it
-     can locate the well, promotes it automatically. It also tries to
-     find a matching survey in the database and grabs the frac
+     can locate the well, promotes it automatically. It reads the
+     permit's own directional plan as the survey and grabs the frac
      gradient if the permit lists one.
 
-  C) From WCR PDF
+  B) From WCR PDF
      Drag in a DOGM Form 8 (Well Completion Report) PDF. Pick a
      parse mode and a scope:
         - First 5 pages   (just the Form 8 fields - fastest)
@@ -188,8 +184,8 @@ the parsed data, and log your review to a personal tracker. You are
 routed here after parsing a WCR PDF.
 
   Action bar:
-    - Survey status pill: green if a survey was found (database or
-      PDF), amber if not. When amber, an upload box appears - drop a
+    - Survey status pill: green if a survey was found (in the WCR
+      itself or an uploaded survey PDF), amber if not. When amber, an upload box appears - drop a
       survey PDF and it extracts the stations and surface location.
     - "Use as active well" to promote.
     - "Generate WCR Excel" - enabled once both the WCR data and a
@@ -282,8 +278,9 @@ A standalone PLSS section lookup - no well needs to be loaded.
 
 WHAT NEEDS WHAT (quick reference)
 ---------------------------------
-  - State SQL Server database: loading a well by API, database survey
-    lookups, WCR tracking sundries, and plat / grid-corner data.
+  - No database server. Surveys, casing, perforation dates and the
+    tracking sundry number all come from the PDFs; plat / grid-corner
+    and casing-strength data are bundled files.
   - Local AI engine (bundled): AI-backfill parse modes and the
     plain-English drilling-report summaries. Optional - parsing falls
     back to rules if it is off.

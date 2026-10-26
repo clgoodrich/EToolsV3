@@ -13,7 +13,8 @@ User flow:
 
     Step 1  Upload APD PDF
     Step 2  Parse it (rules / rules+LLM / LLM)  → state.apd_data
-    Step 3  Survey source: DB lookup OR upload PDF  → state.casing_survey_df
+    Step 3  Survey source: the APD's own plan, or an uploaded survey PDF
+            → state.casing_survey_df
     Step 4  Frac gradient input
     Step 5  Promote to active well  → fires post_load orchestration
     Step 6  Edit casing inputs inline — recomputes design + WBD in place
@@ -44,7 +45,6 @@ from etools.core.casing_review.engine import (
 from etools.core.pdf.parser import parse_survey_pdf
 from etools.logging_setup import get_logger
 from etools.models import APDFormationTop, APDPdfData
-from etools.repositories import SurveyRepository
 from etools.services import CasingReviewService
 from etools.ui.promote import promote_apd_to_active
 from etools.ui.state import AppState
@@ -300,7 +300,6 @@ _PLAT_RUNTIME_JS = r"""
 def render_casing_review_tab(state: AppState) -> Callable[[], None]:
     svc = CasingReviewService()
     engine = CasingDesignEngine()
-    survey_repo = SurveyRepository()
 
     # Inject the segment-hover + pan/zoom CSS via add_head_html (this
     # part is purely declarative and always runs at page load). The
@@ -561,33 +560,6 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
     # Event handlers — they write to ``state`` (not cache) so reconnects
     # preserve everything. Upload + parse moved to the Load Well tab.
     # ----------------------------------------------------------------------
-    async def _try_db_survey() -> None:
-        data = state.apd_data
-        if data is None or not data.api:
-            return
-        api10 = data.api[:10]
-        try:
-            results = await asyncio.to_thread(
-                survey_repo.get_points_by_api_lateral, api10, "0000"
-            )
-        except Exception as exc:
-            log.warning("casing_review.db_lookup_failed", error=str(exc))
-            ui.notify(
-                "Couldn't reach the database to look up this well's survey. "
-                "Casing TVDs will fall back to a straight-hole estimate "
-                "unless you load a survey PDF.",
-                type="warning",
-            )
-            return
-        chosen = next(
-            (c for c in ("AsDrilled", "Planned") if c in results and not results[c].empty),
-            None,
-        )
-        if chosen is None:
-            return
-        state.casing_survey_df = results[chosen]
-        state.casing_survey_label = f"DB / {chosen} ({len(results[chosen])} stations)"
-
     async def handle_survey_upload(e: events.UploadEventArguments) -> None:
         upload = getattr(e, "file", None) or getattr(e, "content", None)
         name = getattr(upload, "name", None) or getattr(e, "name", "uploaded.pdf")

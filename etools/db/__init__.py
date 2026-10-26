@@ -1,5 +1,5 @@
-"""Database access layer."""
+"""Database access layer: the bundled read-only SQLite reference files."""
 
-from etools.db.session import get_engine, get_sqlite_engine, sql_session
+from etools.db.session import get_sqlite_engine
 
-__all__ = ["get_engine", "get_sqlite_engine", "sql_session"]
+__all__ = ["get_sqlite_engine"]

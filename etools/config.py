@@ -1,8 +1,11 @@
 """Centralized configuration via pydantic-settings.
 
-Reads .env if present. Environment variables override .env. The default
-configuration assumes a local SQL Server Express with trusted connection,
-matching the dev setup.
+Reads .env if present. Environment variables override .env.
+
+ETools has no server database: well data comes from the uploaded PDFs, and
+reference data from the bundled SQLite files (``plats_db`` plus the casing
+catalog and Grid Numbers under ``etools/data``). Old ``ETOOLS_DB__*`` settings
+are ignored.
 """
 
 from __future__ import annotations
@@ -13,31 +16,6 @@ from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-
-
-class DatabaseConfig(BaseModel):
-    server: str = r"CGDESKTOP\SQLEXPRESS"
-    database: str = "UTRBDMSNET"
-    trusted: bool = True
-    user: str | None = None
-    password: str | None = None
-    driver: str = "SQL Server"
-    pool_recycle: int = 3600
-
-    def odbc_connection_string(self) -> str:
-        parts = [
-            f"Driver={{{self.driver}}}",
-            f"Server={self.server}",
-            f"Database={self.database}",
-        ]
-        if self.trusted:
-            parts.append("Trusted_Connection=yes")
-        else:
-            if not self.user or not self.password:
-                raise ValueError("DB credentials required when trusted=false")
-            parts.append(f"UID={self.user}")
-            parts.append(f"PWD={self.password}")
-        return ";".join(parts) + ";"
 
 
 class LLMConfig(BaseModel):
@@ -76,7 +54,6 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    db: DatabaseConfig = Field(default_factory=DatabaseConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
 
     plats_db: Path = REPO_ROOT / "data" / "Board_DB_Plss_Sections.db"

@@ -6,19 +6,15 @@ WCR, Plat Searcher, and PDF Import are stubbed and arrive in later phases.
 
 from __future__ import annotations
 
-import asyncio
 
 from nicegui import ui
 
 from etools.logging_setup import get_logger, recent_errors
-from etools.models import SurveyFrame, WellLookup
-from etools.services import ClearanceService, SurveyService, WellService
-from etools.services.well_service import WellNotFoundError
-from etools.ui.state import AppState, reset_survey_edits
+from etools.models import SurveyFrame
+from etools.services import ClearanceService, SurveyService
+from etools.ui.state import AppState
 from etools.ui.workspace import (
     apply_document_data,
-    begin_document,
-    document_id_for,
     empty_document_data,
     remove_document,
     switch_document,
@@ -51,7 +47,6 @@ def build_app() -> None:
     # causes NiceGUI to re-run @ui.page) doesn't wipe the user's loaded well,
     # processed survey, or clearance results. Services are also long-lived.
     persistent_state = AppState()
-    service = WellService()
     survey_service = SurveyService()
     clearance_service = ClearanceService()
 
@@ -525,42 +520,8 @@ def build_app() -> None:
         with ui.tab_panels(tabs, value=tab_load).classes("w-full"):
             _ts = _tt.monotonic()
             with ui.tab_panel(tab_load):
-                async def load_handler(lookup: WellLookup) -> None:
-                    try:
-                        # pyodbc's connect is blocking. On the event loop an
-                        # unreachable SQL Server froze the whole NiceGUI
-                        # server -- for every connected client -- for the full
-                        # ODBC timeout before the error toast could appear.
-                        # Every other DB call site in the UI already offloads.
-                        bundle = await asyncio.to_thread(service.load, lookup)
-                    except WellNotFoundError as exc:
-                        ui.notify(str(exc), type="warning")
-                        return
-                    except Exception as exc:  # pragma: no cover - bubble up to user
-                        log.exception("well.load.failed", error=str(exc))
-                        ui.notify(f"Load failed: {exc}", type="negative")
-                        return
-                    begin_document(
-                        state,
-                        document_id_for(bundle.primary.api, bundle.primary.lateral),
-                    )
-                    state.headers = bundle.headers
-                    state.primary = bundle.primary
-                    state.surveys = bundle.surveys
-                    state.selected_citing = next(iter(bundle.surveys), None)
-                    state.processed = {}
-                    state.clearances = {}
-                    reset_survey_edits(state)
-                    ui.notify(
-                        f"Loaded {bundle.primary.well_name or bundle.primary.api} "
-                        f"({sum(len(d) for d in bundle.surveys.values())} survey points)",
-                        type="positive",
-                    )
-                    await post_load_orchestrate()
-
                 load_refresh = render_load_tab(
                     state,
-                    load_handler,
                     on_route_to_casing=lambda: tabs.set_value(tab_casing),
                     on_route_to_wcr=lambda: tabs.set_value(tab_wcr),
                 )

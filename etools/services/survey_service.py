@@ -1,6 +1,6 @@
 """SurveyService — orchestrates the survey-processing workflow.
 
-Takes the raw surveys and well headers loaded by ``WellService`` and produces
+Takes the raw surveys and well headers of the active well and produces
 a processed-survey set keyed by ``(citing_type, frame)`` — the same surface
 shape the legacy ``drl_df_true_dx`` etc. dictionary exposed.
 """
