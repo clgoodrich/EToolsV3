@@ -153,6 +153,11 @@ class CasingDesignEngine:
             grade=cs.grade or "",
             collar=cs.collar,
             top_depth_ft=cs.length_top_ft,
+            top_depth_tvd_ft=(
+                _interpolate_tvd(welltrack, cs.length_top_ft)
+                if welltrack and cs.length_top_ft
+                else cs.length_top_ft
+            ),
             cement_lead_sacks=cs.cement_lead_sacks,
             cement_lead_yield=cs.cement_lead_yield,
             cement_lead_weight_ppg=cs.cement_lead_weight_ppg,

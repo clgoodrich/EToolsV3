@@ -50,7 +50,7 @@ def render_wellbore_figure(
         return fig
 
     deepest_md = max(s.set_depth_md_ft or 0 for s in design.strings)
-    widest_hole = max(s.hole_size_in for s in design.strings if s.hole_size_in)
+    widest_hole = max((s.hole_size_in for s in design.strings if s.hole_size_in), default=0.0)
 
     # Cement first so casing draws on top.
     for s in design.strings:

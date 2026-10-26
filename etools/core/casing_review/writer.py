@@ -946,6 +946,14 @@ def _write_footer_values(cr, design: CasingDesign) -> None:
             else:
                 for col in (2, 4, 6):
                     cr.cell(fr, col).value = None
+        else:
+            # Row 69: B = TOL (ft MD), D = TOL TVD. Left alone, B69 shipped
+            # the template well's 7896 and drove R57's "TOL" test and F69.
+            cr.cell(fr, 2).value = cur.top_depth_ft or 0
+            top_tvd = cur.top_depth_tvd_ft
+            if top_tvd is None:
+                top_tvd = cur.top_depth_ft or 0
+            put(fr, 4, top_tvd)
 
 
 def _write_bope(

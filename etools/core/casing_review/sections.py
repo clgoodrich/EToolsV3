@@ -617,11 +617,22 @@ class SectionDefinition:
     # ------------------------------------------------------------------
 
     def effective_segment(self, key: str) -> SegmentData:
-        """Return the override if present and non-blank, otherwise the default."""
+        """Return the default with any non-blank override fields laid over it.
+
+        The editor stores only the fields the user changed (the rest are
+        ``None``), so returning the override whole turned a bearing-only
+        edit into a 0-ft segment and collapsed that quarter-side.
+        """
+        default = self.segments.get(key, SegmentData())
         ov = self.segment_overrides.get(key)
-        if ov is not None and not ov.is_blank():
-            return ov
-        return self.segments.get(key, SegmentData())
+        if ov is None or ov.is_blank():
+            return default
+        return SegmentData(
+            **{
+                f: getattr(ov, f) if getattr(ov, f) is not None else getattr(default, f)
+                for f in SegmentData.__dataclass_fields__
+            }
+        )
 
     def has_overrides(self) -> bool:
         if any(
