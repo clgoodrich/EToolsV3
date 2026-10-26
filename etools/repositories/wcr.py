@@ -55,15 +55,19 @@ class WCRRepository:
 
         Feeds the personal tracking workbook (date-filed / days-to-process).
         Returns None when the well has no sundry records.
+
+        The sundry is joined on its own key (``idx = SundryNo``). Joining on
+        the API alone paired the WCR's SundryNo with the submit date of the
+        well's newest sundry of *any* type.
         """
         sql = text(
             """
             SELECT TOP 1 wi.SundryNo, tas.SubmitDate, ta.Well_Nm
             FROM tblAPDWCRWellInfo wi
             INNER JOIN tblAPD ta        ON wi.APDNo = ta.APDNo
-            INNER JOIN tblAPDSundry tas ON ta.API_WellNo = tas.APINO
+            INNER JOIN tblAPDSundry tas ON tas.idx = wi.SundryNo
             WHERE LEFT(ta.API_WellNo, 10) = :api
-            ORDER BY tas.SubmitDate DESC
+            ORDER BY tas.SubmitDate DESC, wi.PKey DESC
             """
         )
         with self.engine.connect() as cn:
@@ -101,13 +105,15 @@ class WCRRepository:
                 wi.MineralLeaseType,
                 wi.MineralLeaseNumber,
                 ta.Legal_Description,
-                wi.APDNo
+                wi.APDNo,
+                wi.PKey AS WellInfoPKey
             FROM tblAPDWCRWellInfo wi
             INNER JOIN tblAPD ta              ON wi.APDNo = ta.APDNo
             LEFT  JOIN DirectionalSurveyHeader dsh
                    ON LEFT(ta.API_WellNo, 10) = dsh.APINumber
                   AND dsh.LateralName = :lateral
             WHERE ta.API_WellNo = :full_api
+            ORDER BY wi.PKey DESC
             """
         )
         full_api = f"{api}{lateral}"
@@ -115,7 +121,9 @@ class WCRRepository:
             df = pd.read_sql_query(sql, cn, params={"full_api": full_api, "lateral": lateral})
         if df.empty:
             return None
-        row = df.drop_duplicates().iloc[0]
+        # Newest well-info row: an amended WCR supersedes the original (the
+        # unordered query used to pick one arbitrarily).
+        row = df.iloc[0]
         return WCRWellInfo(
             api_well_no=str(row["API_WellNo"]),
             well_name=row.get("Well_Nm"),

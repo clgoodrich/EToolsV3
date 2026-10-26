@@ -50,7 +50,7 @@ class WellService:
         # Prefer a "drilled" header as the primary if present; fall back to the
         # most recently uploaded one.
         primary = next(
-            (h for h in headers if (h.citing_type or "").lower().startswith("drill")),
+            (h for h in headers if "drill" in (h.citing_type or "").lower()),
             sorted(
                 headers,
                 key=lambda h: h.upload_datetime or 0,

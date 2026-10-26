@@ -14,6 +14,7 @@ from sqlalchemy import text
 from etools.db import get_engine
 from etools.logging_setup import get_logger
 from etools.models import WellHeader
+from etools.repositories.survey import canonical_citing_type, newest_header_pkey
 
 log = get_logger(__name__)
 
@@ -36,7 +37,7 @@ def _row_to_header(row: pd.Series) -> WellHeader:
         lateral=str(row["LateralName"]).strip(),
         well_name=row.get("WellNameNumber"),
         operator=row.get("OperatorName"),
-        citing_type=row.get("CitingType"),
+        citing_type=canonical_citing_type(row.get("CitingType")),
         survey_company=row.get("DirectionalSurveyCompany"),
         survey_type=row.get("DirectionalSurveyType"),
         surface_elevation=row.get("SurveySurfaceElevation"),
@@ -69,4 +70,14 @@ class WellRepository:
         with self.engine.connect() as cn:
             df = pd.read_sql_query(sql, cn, params={"api": api, "lateral": lateral})
         log.info("well.headers", api=api, lateral=lateral, rows=len(df))
-        return [_row_to_header(r) for _, r in df.iterrows()]
+        headers = [_row_to_header(r) for _, r in df.iterrows()]
+        # One header per citing type — the newest, matching the survey the
+        # SurveyRepository returns for it.
+        by_type: dict[str, list[WellHeader]] = {}
+        for h in headers:
+            by_type.setdefault(h.citing_type, []).append(h)
+        keep = {
+            newest_header_pkey((h.pkey, h.upload_datetime) for h in group)
+            for group in by_type.values()
+        }
+        return [h for h in headers if h.pkey in keep]
