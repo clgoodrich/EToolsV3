@@ -28,6 +28,12 @@ from nicegui import ui
 
 from etools.logging_setup import get_logger
 from etools.ui.state import AppState, reset_survey_edits
+from etools.ui.workspace import (
+    APD_FIELDS,
+    WCR_FIELDS,
+    begin_document,
+    document_id_for,
+)
 
 log = get_logger(__name__)
 
@@ -62,6 +68,7 @@ async def promote_apd_to_active(state: AppState, *, silent: bool = False) -> boo
             )
         return False
 
+    begin_document(state, document_id_for(header.api, header.lateral), keep=APD_FIELDS)
     state.headers = [header]
     state.primary = header
     if state.casing_survey_df is not None and not state.casing_survey_df.empty:
@@ -116,6 +123,7 @@ async def promote_wcr_to_active(
         return False
 
     survey_df = survey_df if survey_df is not None else state.wcr_survey_df
+    begin_document(state, document_id_for(header.api, header.lateral), keep=WCR_FIELDS)
     state.headers = [header]
     state.primary = header
     if survey_df is not None and not survey_df.empty:

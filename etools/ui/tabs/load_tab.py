@@ -28,6 +28,7 @@ from etools.repositories import SurveyRepository
 from etools.ui.promote import promote_apd_to_active, promote_wcr_to_active
 from etools.ui.state import AppState
 from etools.ui.upload_temp import save_upload as _save_upload
+from etools.ui.workspace import begin_document, document_id_for
 
 LoadHandler = Callable[[WellLookup], Union[None, Awaitable[None]]]
 RouteHandler = Callable[[], None]
@@ -246,6 +247,13 @@ def render_load_tab(
             cache["apd_parse_btn"].enable()
             return
         state.apd_data = data
+        # A permit for a different well must not inherit the previous
+        # well's casing knobs, BOPE edits, frac gradient or TVD survey.
+        begin_document(
+            state,
+            document_id_for((data.api or "")[:10] or "0000000000", "0000"),
+            keep=("apd_data", "apd_pdf_path", "apd_pdf_name"),
+        )
         if (
             state.casing_frac_gradient_psi_per_ft is None
             and data.frac_gradient_psi_per_ft is not None
@@ -387,6 +395,11 @@ def render_load_tab(
             timer.cancel()
             bar.visible = False
         state.wcr_data = data
+        begin_document(
+            state,
+            document_id_for((data.api or "")[:10] or "0000000000", "0000"),
+            keep=("wcr_data", "wcr_pdf_path", "wcr_pdf_name"),
+        )
         await _try_db_survey_for_wcr()
         cache["wcr_status"].text = (
             f"Parsed {state.wcr_pdf_name}: "

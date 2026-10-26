@@ -28,7 +28,6 @@ from etools.core.survey.edits import (
 )
 from etools.logging_setup import get_logger
 from etools.models import SurveyFrame
-from etools.services import SurveyService
 from etools.ui.state import AppState
 
 log = get_logger(__name__)
@@ -43,7 +42,6 @@ _EDITABLE_FIELDS = set(_MD_FIELDS) | set(_INC_FIELDS) | set(_AZI_FIELDS)
 
 def render_survey_tab(state: AppState) -> Callable[[], None]:
     """Returns a refresh callback the parent invokes after a well loads."""
-    survey_service = SurveyService()
     selected_frame: dict[str, SurveyFrame] = {"value": SurveyFrame.TRUE}
 
     with ui.column().classes("p-4 gap-3 w-full"):
@@ -465,33 +463,19 @@ def render_survey_tab(state: AppState) -> Callable[[], None]:
             if conv is not None:
                 conv_input.value = f"{conv:.4f}"
 
-    def process() -> None:
+    async def process() -> None:
+        # Route through the shared pipeline, like the edit path (_cascade).
+        # Processing here in isolation ran synchronously on the event loop
+        # (the spinner never painted, each click leaked a dialog) and
+        # replaced state.processed while clearances, section geometry and
+        # Map & Viz kept showing results from the previous survey.
         if not state.surveys or not state.headers:
             ui.notify("Load a well first.", type="warning")
             return
-        with ui.dialog() as wait_dialog, ui.card():
-            ui.label("Processing survey…")
-            ui.spinner(size="lg")
-        wait_dialog.open()
-        try:
-            results = survey_service.process(
-                state.headers,
-                state.surveys,
-                surface_override=state.shl_override,
-                convergence_override=state.convergence_override,
-            )
-        except Exception as exc:  # pragma: no cover
-            wait_dialog.close()
-            ui.notify(f"Processing failed: {exc}", type="negative")
-            raise
-        wait_dialog.close()
-        state.processed = results
-        ui.notify(
-            f"Processed {len(results)} survey(s) · "
-            + ", ".join(f"{k} (KOP {r.kop.md or '—'} ft)" for k, r in results.items()),
-            type="positive",
-        )
-        rerender()
+        if state.post_load is None:
+            ui.notify("Pipeline unavailable — reload the page.", type="negative")
+            return
+        await state.post_load(switch_to_survey=False)
 
     def refresh() -> None:
         if not state.surveys or state.primary is None:

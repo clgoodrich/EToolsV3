@@ -215,6 +215,97 @@ def switch_document(state: "AppState", new_id: str) -> bool:
     return True
 
 
+# Per-source field families. A well can be assembled from several sources
+# (DB + APD + WCR), so when the live state moves to a well, a family that
+# already belongs to *that* well (same API) is kept rather than wiped.
+APD_FIELDS: tuple[str, ...] = (
+    "apd_data",
+    "apd_pdf_path",
+    "apd_pdf_name",
+    "casing_survey_df",
+    "casing_survey_label",
+    "casing_overrides",
+    "casing_frac_gradient_psi_per_ft",
+    "bope_overrides",
+    "casing_last_output_path",
+)
+WCR_FIELDS: tuple[str, ...] = (
+    "wcr_data",
+    "wcr_pdf_path",
+    "wcr_pdf_name",
+    "wcr_survey_df",
+    "wcr_survey_label",
+    "wcr_survey_source",
+)
+
+
+def _api10(api: str | None) -> str:
+    return "".join(ch for ch in (api or "") if ch.isdigit())[:10]
+
+
+def begin_document(
+    state: "AppState", doc_id: str, *, keep: tuple[str, ...] = ()
+) -> None:
+    """Ready the live state to receive well ``doc_id`` before a load.
+
+    Every load path (DB, APD, WCR, survey PDF) used to overwrite only the
+    fields it knew about, so the rest of the previous well — its parsed
+    APD/WCR, casing knobs, BOPE edits, section overrides — stayed on screen
+    beside the new well with nothing marking the mix.
+
+    If ``doc_id`` is already the active buffer this is a no-op (same-well
+    merge). Otherwise the outgoing well is stashed into its buffer, then
+    the live state is rebuilt from ``doc_id``'s own buffer (or empty) with
+    two things carried over from the live state:
+
+    * ``keep`` — fields the caller has already filled for the incoming
+      well (e.g. a freshly parsed ``apd_data``). The outgoing buffer keeps
+      its own previous values for these.
+    * an APD/WCR family (not named in ``keep``) whose parsed API matches
+      the incoming well, so combining sources for one well still works.
+
+    ``active_doc_id`` is cleared; the post-load pipeline's
+    :func:`upsert_active_document` sets it once the load completes, so a
+    failed load can never be captured into the outgoing well's buffer.
+    """
+    if state.active_doc_id is not None and doc_id == state.active_doc_id:
+        return
+    live = capture_document_data(state)
+    if state.active_doc_id is not None:
+        cur = state.documents.get(state.active_doc_id)
+        if cur is not None:
+            stash = dict(live)
+            for f in keep:
+                if f in cur.data:
+                    stash[f] = cur.data[f]
+            cur.data = stash
+            cur.source = _source_for(_DataView(stash))
+    target = state.documents.get(doc_id)
+    data = dict(target.data) if target is not None else empty_document_data()
+    incoming_api = _api10(doc_id.split("|", 1)[0])
+    retained = set(keep)
+    for family, parsed in ((APD_FIELDS, "apd_data"), (WCR_FIELDS, "wcr_data")):
+        if parsed in keep:
+            # The caller just replaced this record, so the live one says
+            # nothing about who the rest of the family belongs to.
+            continue
+        obj = live.get(parsed)
+        if obj is not None and incoming_api and _api10(getattr(obj, "api", None)) == incoming_api:
+            retained.update(family)
+    for f in retained:
+        if f in live:
+            data[f] = live[f]
+    apply_document_data(state, data)
+    state.active_doc_id = None
+
+
+class _DataView:
+    """Attribute view over a snapshot dict, for :func:`_source_for`."""
+
+    def __init__(self, data: dict[str, Any]) -> None:
+        self.__dict__.update(data)
+
+
 def remove_document(state: "AppState", doc_id: str) -> str | None:
     """Close a buffer. If it was active, fall back to another (or empty).
 

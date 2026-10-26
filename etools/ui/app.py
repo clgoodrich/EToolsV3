@@ -16,6 +16,10 @@ from etools.services import ClearanceService, SurveyService, WellService
 from etools.services.well_service import WellNotFoundError
 from etools.ui.state import AppState, reset_survey_edits
 from etools.ui.workspace import (
+    apply_document_data,
+    begin_document,
+    document_id_for,
+    empty_document_data,
     remove_document,
     switch_document,
     upsert_active_document,
@@ -378,24 +382,10 @@ def build_app() -> None:
 
         async def clear_all_state() -> None:
             """Wipe all in-memory state and reset every tab back to its empty look."""
-            state.headers = []
-            state.primary = None
-            state.surveys = {}
-            state.processed = {}
-            state.clearances = {}
-            state.selected_citing = None
-            reset_survey_edits(state)
-            # Casing Review per-tab state
-            state.apd_data = None
-            state.apd_pdf_path = None
-            state.apd_pdf_name = None
-            state.casing_survey_df = None
-            state.casing_survey_label = None
-            state.casing_overrides = {}
-            state.casing_frac_gradient_psi_per_ft = None
-            state.bope_overrides = {}
-            state.casing_last_output_path = None
-            state.section_definitions = {}
+            # Derive from DOCUMENT_FIELDS: the hand-rolled list this replaced
+            # missed the whole WCR side and ``extra``, despite the dialog
+            # promising to wipe "any PDF-parsed data".
+            apply_document_data(state, empty_document_data())
             # Close every workspace buffer too — Clear All is the nuclear
             # reset, not just "close the active well".
             state.documents = {}
@@ -548,6 +538,10 @@ def build_app() -> None:
                         log.exception("well.load.failed", error=str(exc))
                         ui.notify(f"Load failed: {exc}", type="negative")
                         return
+                    begin_document(
+                        state,
+                        document_id_for(bundle.primary.api, bundle.primary.lateral),
+                    )
                     state.headers = bundle.headers
                     state.primary = bundle.primary
                     state.surveys = bundle.surveys

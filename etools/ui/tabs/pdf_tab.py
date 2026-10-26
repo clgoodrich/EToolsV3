@@ -31,6 +31,7 @@ from etools.logging_setup import get_logger
 from etools.models import WellHeader
 from etools.ui.state import AppState, reset_survey_edits
 from etools.ui.upload_temp import save_upload as _save_upload
+from etools.ui.workspace import begin_document, document_id_for
 
 log = get_logger(__name__)
 
@@ -556,6 +557,7 @@ def render_pdf_tab(
             upload_filename=result.source_file,
             upload_datetime=None,
         )
+        begin_document(state, document_id_for(synthetic.api, synthetic.lateral))
         state.headers = [synthetic]
         state.primary = synthetic
         state.surveys = {citing_type: result.surveys.copy()}

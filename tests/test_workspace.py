@@ -151,3 +151,94 @@ def test_upsert_without_primary_is_noop() -> None:
     assert w.upsert_active_document(s) is None
     assert s.documents == {}
     assert s.active_doc_id is None
+
+
+# ---------------------------------------------------------------------------
+# begin_document — loading a new well must not inherit the previous one's
+# per-well fields (the partial-reset defect).
+# ---------------------------------------------------------------------------
+class _Parsed:
+    def __init__(self, api: str) -> None:
+        self.api = api
+
+
+def _loaded_well_a() -> AppState:
+    s = AppState()
+    s.primary = _hdr("4301354722", name="Well A")
+    s.headers = [s.primary]
+    s.apd_data = _Parsed("43013547220000")
+    s.casing_overrides = {0: {"x": 1}}
+    s.casing_frac_gradient_psi_per_ft = 0.9
+    s.bope_overrides = {"op_max": 1.0}
+    s.casing_survey_df = "SURVEY_A"
+    s.wcr_data = _Parsed("4301354722")
+    s.section_definitions = {"conc": "A"}
+    s.extra = {"k": "A"}
+    w.upsert_active_document(s)
+    return s
+
+
+def test_begin_document_for_other_well_drops_previous_wells_fields() -> None:
+    s = _loaded_well_a()
+    s.casing_overrides[1] = {"late": "edit"}  # unsaved edit on A
+    w.begin_document(s, w.document_id_for("4301399999", "0000"))
+    empty = w.empty_document_data()
+    for f in w.DOCUMENT_FIELDS:
+        assert getattr(s, f) == empty[f], f
+    assert s.active_doc_id is None
+    # A's buffer kept everything, including the edit made after its upsert.
+    a = s.documents[w.document_id_for("4301354722", "0000")].data
+    assert a["casing_overrides"] == {0: {"x": 1}, 1: {"late": "edit"}}
+    assert a["wcr_data"].api == "4301354722"
+
+
+def test_begin_document_parse_keep_fields_stay_off_the_outgoing_buffer() -> None:
+    s = _loaded_well_a()
+    # A new permit for well B was just parsed into the live state.
+    s.apd_data = _Parsed("43013999990000")
+    s.apd_pdf_name = "b.pdf"
+    w.begin_document(
+        s,
+        w.document_id_for("4301399999", "0000"),
+        keep=("apd_data", "apd_pdf_path", "apd_pdf_name"),
+    )
+    assert s.apd_data.api == "43013999990000"
+    assert s.apd_pdf_name == "b.pdf"
+    # The rest of the APD family belonged to A and must not carry over.
+    assert s.casing_overrides == {}
+    assert s.casing_frac_gradient_psi_per_ft is None
+    assert s.casing_survey_df is None
+    assert s.wcr_data is None
+    a = s.documents[w.document_id_for("4301354722", "0000")].data
+    assert a["apd_data"].api == "43013547220000"
+    assert a["apd_pdf_name"] is None
+
+
+def test_begin_document_keeps_a_matching_source_family() -> None:
+    s = AppState()
+    s.wcr_data = _Parsed("43013999990000")
+    s.wcr_survey_label = "wcr survey"
+    s.apd_data = _Parsed("4301311111")  # some other well's permit
+    w.begin_document(s, w.document_id_for("4301399999", "0000"))
+    assert s.wcr_data.api == "43013999990000"
+    assert s.wcr_survey_label == "wcr survey"
+    assert s.apd_data is None
+
+
+def test_begin_document_same_active_well_is_a_noop() -> None:
+    s = _loaded_well_a()
+    w.begin_document(s, w.document_id_for("4301354722", "0000"))
+    assert s.casing_overrides == {0: {"x": 1}}
+    assert s.active_doc_id == w.document_id_for("4301354722", "0000")
+
+
+def test_begin_document_restores_incoming_wells_buffer() -> None:
+    s = _loaded_well_a()
+    id_a = s.active_doc_id
+    w.begin_document(s, w.document_id_for("4301399999", "0000"))
+    s.primary = _hdr("4301399999", name="Well B")
+    w.upsert_active_document(s)
+    # Re-load A: its section overrides/extras come back from its buffer.
+    w.begin_document(s, id_a)
+    assert s.section_definitions == {"conc": "A"}
+    assert s.extra == {"k": "A"}

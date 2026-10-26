@@ -7,13 +7,10 @@ from typing import Callable
 import pandas as pd
 from nicegui import ui
 
-from etools.models import SurveyFrame
-from etools.services import ClearanceService
 from etools.ui.state import AppState
 
 
 def render_clearance_tab(state: AppState) -> Callable[[], None]:
-    clearance_service = ClearanceService()
 
     with ui.column().classes("p-4 gap-3 w-full"):
         header_label = ui.label("Process the survey first.").classes("text-gray-500 italic")
@@ -54,32 +51,18 @@ def render_clearance_tab(state: AppState) -> Callable[[], None]:
         ).classes("w-full").style("height: 500px")
         full_grid.visible = False
 
-    def run() -> None:
+    async def run() -> None:
+        # Recalculate through the shared pipeline: it runs off the event
+        # loop behind one persistent busy dialog and rebuilds the section
+        # geometry + map alongside the clearances. The old in-place calc
+        # blocked the loop and leaked a new dialog on every click.
         if not state.processed:
             ui.notify("Process the survey first.", type="warning")
             return
-        with ui.dialog() as wait, ui.card():
-            ui.label("Calculating clearances…")
-            ui.spinner(size="lg")
-        wait.open()
-        try:
-            results = {}
-            for citing, sr in state.processed.items():
-                ps = sr.frames[SurveyFrame.TRUE]
-                results[citing] = clearance_service.calculate(
-                    ps, kop_md=sr.kop.md, landing_md=sr.landing_md
-                )
-        except Exception as exc:  # pragma: no cover
-            wait.close()
-            ui.notify(f"Clearance calc failed: {exc}", type="negative")
-            raise
-        wait.close()
-        state.clearances = results
-        ui.notify(
-            "Clearances ready: " + ", ".join(f"{k} ({len(r.points)} pts)" for k, r in results.items()),
-            type="positive",
-        )
-        rerender()
+        if state.post_load is None:
+            ui.notify("Pipeline unavailable — reload the page.", type="negative")
+            return
+        await state.post_load(switch_to_survey=False)
 
     def rerender() -> None:
         if not state.clearances:
