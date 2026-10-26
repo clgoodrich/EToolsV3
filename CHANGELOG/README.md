@@ -23,6 +23,7 @@ alters app behavior or output. Skip trivial edits (typos, formatting, one-line t
 ## Index
 
 <!-- newest first: - [YYYY-MM-DD Title](file.md) — one-line hook -->
+- [2026-10-26 Help tab](2026-10-26-help-tab-guide.md) - In-app Help tab: plain-language guide with six flow charts, tab-by-tab tables, file locations, troubleshooting and glossary (`etools/docs/app_guide.md`).
 - [2026-10-26 3-D trajectory sections](2026-10-26-3d-trajectory-sections.md) - The 3-D trajectory outlines the crossed PLSS sections at the surface, labelled, in the same frame as the wellbore.
 - [2026-10-26 PDF field extraction](2026-10-26-pdf-field-extraction.md) - APD slant from the ticked radio, formation tops by position, frac gradient from the permit (not "4 1/2"), STC/LTC collars, WCR blank-TVD, survey lat/lon, vision crash.
 - [2026-10-26 WCR tab stale survey + blocking](2026-10-26-wcr-tab-stale-survey-and-blocking.md) - A new WCR no longer reuses the previous well's survey; the legacy DB bundle loads off the event loop; tracking logs the WCR on screen.

@@ -31,6 +31,7 @@ from etools.ui.tabs.plat_tab import render_plat_tab
 from etools.ui.tabs.viz_tab import render_viz_tab
 from etools.ui.tabs.casing_review_tab import render_casing_review_tab
 from etools.ui.tabs.wcr_tab import render_wcr_tab
+from etools.ui.tabs.help_tab import render_help_tab
 from etools.ui.tab_guard import safe_tab_render
 from etools.ui.state_staging import clear_group_on_failure
 
@@ -512,6 +513,7 @@ def build_app() -> None:
             tab_map = ui.tab("Map & Viz", icon="map")
             tab_clearance = ui.tab("Clearance", icon="straighten")
             tab_plat = ui.tab("Plat Searcher", icon="grid_on")
+            tab_help = ui.tab("Help", icon="help_outline")
 
         import time as _tt
 
@@ -606,6 +608,9 @@ def build_app() -> None:
                     safe_tab_render("Plat Searcher", render_plat_tab)
                 )
                 _ts = _tlog("plat", _ts)
+            with ui.tab_panel(tab_help):
+                safe_tab_render("Help", render_help_tab)
+                _ts = _tlog("help", _ts)
 
         # If the persistent_state already carries a loaded well (e.g. the
         # user uploaded an APD, the WebSocket dropped during heavy refresh
