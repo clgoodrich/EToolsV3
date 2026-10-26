@@ -49,9 +49,13 @@ def grid_convergence(lat: float, lon: float, crs: str = "EPSG:32043") -> float:
 
 
 def latlon_to_utm(lat: float, lon: float) -> tuple[float, float, int, str]:
-    """Returns (easting, northing, zone_number, zone_letter)."""
+    """Returns (easting, northing, zone_number, zone_letter), always in zone 12.
+
+    The plat polygons and every caller work in UTM 12N (EPSG:32612); Utah's
+    western strip (west of -114 deg) would otherwise get zone-11 eastings.
+    """
     _validate_latlon(lat, lon)
-    e, n, zn, zl = utm.from_latlon(lat, lon)
+    e, n, zn, zl = utm.from_latlon(lat, lon, force_zone_number=12)
     return float(e), float(n), int(zn), str(zl)
 
 

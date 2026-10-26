@@ -217,15 +217,19 @@ def build_bope_review(
             r.required_test_pressure_psi = _min_skip_none(
                 r.bope_proposed_psi, r.setting_depth_tvd_ft, test_yield
             )
-        # *Max Pressure Allowed @ Previous Casing Shoe (C21): if full pressure
-        # can't be held, the smaller of {previous shoe, pressure at prev shoe};
-        # otherwise the previous-shoe depth.
+        # *Max Pressure Allowed @ Previous Casing Shoe (C21/C31): the smaller
+        # of {previous shoe, previous string's internal yield} (K19:K20, the
+        # yield being =C10 for the second string), plus the pressure at the
+        # previous shoe when full pressure can't be held (K21).
+        prev_yield = rows[i - 1].internal_yield_psi if i > 0 else None
         if r.hold_full_at_prev_shoe is False:
             r.max_pressure_allowed_prev_shoe_psi = _min_skip_none(
-                r.prev_shoe_tvd_ft, r.pressure_at_prev_shoe_psi
+                r.prev_shoe_tvd_ft, prev_yield, r.pressure_at_prev_shoe_psi
             )
         else:
-            r.max_pressure_allowed_prev_shoe_psi = r.prev_shoe_tvd_ft
+            r.max_pressure_allowed_prev_shoe_psi = _min_skip_none(
+                r.prev_shoe_tvd_ft, prev_yield
+            )
 
     if ov.op_max_pressure_psi is not None:
         op_max = ov.op_max_pressure_psi

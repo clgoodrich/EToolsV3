@@ -231,7 +231,8 @@ def _write_casing(ws, casing: pd.DataFrame) -> None:
             if value is None or pd.isna(value):
                 continue
             if isinstance(value, (int, float)):
-                value = round(float(value), 2)
+                # 3 places: casing / hole sizes are eighths (9.625, 6.125).
+                value = round(float(value), 3)
                 if value == int(value):
                     value = int(value)
             ws.cell(row=r, column=col, value=_serialize(value))

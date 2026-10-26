@@ -32,11 +32,13 @@ log = get_logger(__name__)
 _STRING_TAGS = ("Cond", "Surf", "I1", "I2", "I3", "Prod", "Prod1", "Prod2", "Liner")
 # Each string row in the PDF starts with a leading-space-padded tag on its
 # own line. Followed by 21 more lines: the data dump plus seven blanks for
-# the unused stage-2 columns.
+# the unused stage-2 columns. Some forms print the tags upper-case (COND,
+# SURF, PROD); ``_CANON_TAG`` maps them back.
 _STRING_LINE_RE = re.compile(
     r"^\s*(" + "|".join(re.escape(t) for t in _STRING_TAGS) + r")\s*$",
-    re.MULTILINE,
+    re.MULTILINE | re.I,
 )
+_CANON_TAG = {t.lower(): t for t in _STRING_TAGS}
 _LENGTH_RE = re.compile(r"(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)")
 # Collar allows "&"/"-" and mixed case: "ST&C" used to be cut to "ST" (which
 # then took the 1.5 premium tension threshold instead of STC's 1.8) and
@@ -277,7 +279,7 @@ def _extract_header(text: str, data: APDPdfData) -> None:
                 setattr(data, field_, val)
 
     # API is rendered as "API  43013537270000" on the proposed-wellbore line.
-    m = re.search(r"API\s+(\d{10,14})", text)
+    m = re.search(r"API(?:\s+Well\s+Number:)?\s+(\d{10,14})", text)
     if m:
         data.api = m.group(1)
 
@@ -335,7 +337,7 @@ def _extract_locations(text: str, data: APDPdfData) -> None:
     name_pat = re.compile(
         r"(" + "|".join(re.escape(n) for n in _LOCATION_NAMES) + r")\s*\n"
         r"\s*(\d{1,5})\s*(FNL|FSL)\s+(\d{1,5})\s*(FEL|FWL)\s*\n"
-        r"\s*([NS][EW][NS][EW]|LOT\s*\d{1,2})\s*\n"
+        r"\s*([NS][EW][NS][EW]|[NS][EW]|LO?T\s*\d{1,2})\s*\n"
         r"\s*(\d{1,2})\s*\n"
         r"\s*(\d+(?:\.\d+)?)\s*([NS])\s*\n"
         r"\s*(\d+(?:\.\d+)?)\s*([EW])\s*\n"
@@ -430,7 +432,7 @@ def _extract_casing_table(text: str, data: APDPdfData) -> None:
     for i, ln in enumerate(lines):
         m = _STRING_LINE_RE.match(ln)
         if m:
-            tag_positions.append((i, m.group(1)))
+            tag_positions.append((i, _CANON_TAG[m.group(1).lower()]))
 
     for k, (i, tag) in enumerate(tag_positions):
         # Slice from this tag up to (but not including) the next tag — the
@@ -737,11 +739,17 @@ _POS_LABELS = {"md": "md", "(md)": "md", "tvd": "tvd", "(tvd)": "tvd"}
 
 
 def _pos_depth(tok: str) -> float | None:
-    if tok.lower() == "surface":
+    if tok.lower() in ("surface", "surf"):
         return 0.0
     if _POS_DEPTH_RE.match(tok):
         return float(tok.rstrip("'’\"").replace(",", ""))
     return None
+
+
+def _is_tops_heading(words: list[str]) -> bool:
+    if words[:1] == ["geologic"]:
+        words = words[1:]
+    return words[:2] == ["formation", "tops"]
 
 
 def _formations_by_position(path: str | Path) -> list[APDFormationTop]:
@@ -773,13 +781,18 @@ def _formations_by_position(path: str | Path) -> list[APDFormationTop]:
             (
                 i
                 for i, ln in enumerate(ordered)
-                if [w[4].lower() for w in ln if not _POS_SECTION_RE.match(w[4])][:2]
-                == ["formation", "tops"]
+                if _is_tops_heading([w[4].lower() for w in ln if not _POS_SECTION_RE.match(w[4])])
             ),
             None,
         )
         if start is None:
             continue
+        # A heading in the right half ("Geologic Formation Tops" beside the
+        # casing program) heads a side column: read only the words in it,
+        # and the first line with nothing in the column ends the table.
+        col_x = ordered[start][0][0] - 15 if ordered[start][0][0] > 250 else None
+        if col_x is not None:
+            ordered = ordered[:start] + [[w for w in ln if w[0] >= col_x] for ln in ordered[start:]]
         # Column headers: MD/TVD words on the heading line or a header row
         # just below it (one with no depths), keyed by x-centre.
         columns: list[tuple[float, str]] = []
@@ -795,6 +808,8 @@ def _formations_by_position(path: str | Path) -> list[APDFormationTop]:
         for ln in ordered[start + 1 :]:
             ln = [w for w in ln if w[4].upper() != "CONFIDENTIAL"]  # watermark
             if not ln:
+                if col_x is not None and out:
+                    break
                 continue
             toks = [w[4] for w in ln]
             if _POS_SECTION_RE.match(toks[0]):
@@ -807,6 +822,7 @@ def _formations_by_position(path: str | Path) -> list[APDFormationTop]:
                 continue  # prose, a column-header row, or a wrapped label
             name = " ".join(toks[:idx])
             name = re.sub(r"\s+member$", "", name, flags=re.I).strip().rstrip("*").strip()
+            name = re.sub(r"\s*\([^)]*\)$", "", name).strip()  # "Garden Gulch (TGR3)"
             if re.search(r"\bTD\b", name):
                 continue
             md = tvd = None

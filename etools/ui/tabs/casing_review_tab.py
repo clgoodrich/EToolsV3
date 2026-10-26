@@ -785,8 +785,9 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
             cache["survey_upload_row"].visible = True
             cache["edit_survey_btn"].visible = False
 
-        if state.casing_frac_gradient_psi_per_ft is not None:
-            cache["frac_input"].value = f"{state.casing_frac_gradient_psi_per_ft:.4f}"
+        # Always set: Generate reads this input, so leaving the previous
+        # well's value in it built the next well's workbook with it.
+        cache["frac_input"].value = f"{state.casing_frac_gradient_psi_per_ft or 1.0:.4f}"
 
         cache["promote_btn"].enable()
         cache["gen_btn"].enable()
@@ -804,6 +805,10 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
                 _serve_output_file(state.casing_last_output_path),
             )
             cache["result_tab"].visible = True
+        else:  # this well has no workbook yet: drop the previous well's
+            cache["gen_status"].text = ""
+            cache["result_card"].clear()
+            cache["result_tab"].visible = False
 
     def _rebuild_design_and_wbd() -> None:
         """Recompute design from state + render inputs / design table / WBD.

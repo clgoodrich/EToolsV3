@@ -190,7 +190,8 @@ def process_survey(
     out: dict[SurveyFrame, ProcessedSurvey] = {}
     for frame in (SurveyFrame.TRUE, SurveyFrame.GRID):
         attr = _FRAME_TO_AZI_ATTR[frame]
-        azi_out = np.asarray(getattr(survey, attr), dtype=float)
+        # Wrapped to [0, 360): the frame rotation leaves -0.7 / 360.5.
+        azi_out = np.mod(np.asarray(getattr(survey, attr), dtype=float), 360.0)
         frame_df = base.copy()
         frame_df.insert(2, "azimuth", azi_out)
         out[frame] = ProcessedSurvey(

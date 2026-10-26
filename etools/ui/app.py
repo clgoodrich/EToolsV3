@@ -7,7 +7,7 @@ WCR, Plat Searcher, and PDF Import are stubbed and arrive in later phases.
 from __future__ import annotations
 
 
-from nicegui import ui
+from nicegui import Client, context, ui
 
 from etools.logging_setup import get_logger, recent_errors
 from etools.models import SurveyFrame
@@ -49,6 +49,52 @@ def build_app() -> None:
     persistent_state = AppState()
     survey_service = SurveyService()
     clearance_service = ClearanceService()
+
+    # One AppState, but one page per browser tab (Launch ETools.bat opens a
+    # new tab on every start). Each page registers its own callbacks here;
+    # the AppState ones dispatch to the calling tab, and a refresh reaches
+    # every open tab. Binding them straight onto the state left them pointing
+    # at whichever tab rendered last.
+    pages: dict[str, dict] = {}
+
+    def _live_pages() -> list[dict]:
+        for cid in [c for c in pages if c not in Client.instances]:
+            pages.pop(cid, None)
+        return list(pages.values())
+
+    def _caller_page() -> dict | None:
+        try:
+            cid = context.client.id
+        except Exception:
+            cid = None
+        live = _live_pages()
+        return pages.get(cid) or (live[-1] if live else None)
+
+    async def _dispatch_post_load(**kwargs) -> bool:
+        page = _caller_page()
+        return await page["post_load"](**kwargs) if page else False
+
+    async def _dispatch_fire_refresh() -> None:
+        caller = _caller_page()
+        if caller is not None:
+            await caller["fire_refresh"]()
+        for page in _live_pages():
+            if page is caller:
+                continue
+            try:
+                with page["client"]:
+                    await page["fire_refresh"]()
+            except Exception as exc:
+                log.warning("ui.refresh.other_tab_failed", error=str(exc))
+
+    def _dispatch_viz_refresh() -> None:
+        page = _caller_page()
+        if page is not None and page.get("viz_refresh") is not None:
+            page["viz_refresh"]()
+
+    persistent_state.post_load = _dispatch_post_load
+    persistent_state.fire_refresh = _dispatch_fire_refresh
+    persistent_state.viz_refresh = _dispatch_viz_refresh
 
     # response_timeout=30 — root() awaits fire_refresh inline when the
     # persistent state already carries a loaded well. Survey + clearance +
@@ -143,8 +189,10 @@ def build_app() -> None:
         def set_busy(msg: str) -> None:
             busy_status.text = msg
 
-        async def post_load_orchestrate(*, switch_to_survey: bool = True) -> None:
+        async def post_load_orchestrate(*, switch_to_survey: bool = True) -> bool:
             """Run after a well is loaded OR a PDF survey is injected.
+
+            Returns False when a step failed (already reported to the user).
 
             Processes the survey, calculates clearance, refreshes every tab,
             and (optionally) routes the user to the Survey tab. Wrapped in
@@ -328,7 +376,7 @@ def build_app() -> None:
                 set_busy("Refreshing UI…")
                 log.info("post_load.refresh.start")
                 try:
-                    await fire_refresh()
+                    await state.fire_refresh()
                     log.info("post_load.refresh.done")
                 except Exception:
                     log.exception("post_load.refresh.failed", traceback=traceback.format_exc())
@@ -345,6 +393,7 @@ def build_app() -> None:
                         raise
                 else:
                     log.info("post_load.tab_switch.skipped")
+                return True
 
             except Exception as exc:  # pragma: no cover
                 log.exception(
@@ -362,19 +411,16 @@ def build_app() -> None:
                     )
                 except Exception:
                     pass
+                return False
             finally:
                 busy_dialog.close()
                 log.info("post_load.end", elapsed_s=round(time.monotonic() - t0, 2))
 
-        # Expose the orchestrator on AppState so any tab can promote a
-        # freshly-loaded well into shared state and trigger the same
-        # pipeline the Load Well tab uses.
-        state.post_load = post_load_orchestrate
-        # Also expose fire_refresh so handlers that mutate state need to
-        # poke every tab into rebuilding from it (e.g. Load Well's PDF
-        # parse hands off to the Casing Review / WCR tab, which must
-        # refresh from the new state.apd_data / state.wcr_data).
-        state.fire_refresh = fire_refresh
+        # Register this tab's orchestrator and refresh: state.post_load /
+        # state.fire_refresh (dispatchers, see build_app) let any tab promote
+        # a freshly-loaded well and poke every tab into rebuilding from it.
+        page = pages.setdefault(context.client.id, {"client": context.client})
+        page.update(post_load=post_load_orchestrate, fire_refresh=fire_refresh)
 
         async def clear_all_state() -> None:
             """Wipe all in-memory state and reset every tab back to its empty look."""
@@ -386,7 +432,7 @@ def build_app() -> None:
             # reset, not just "close the active well".
             state.documents = {}
             state.active_doc_id = None
-            await fire_refresh()
+            await state.fire_refresh()
             ui.notify("All loaded data cleared.", type="info")
 
         # Confirmation dialog for the header Clear All button.
@@ -426,7 +472,7 @@ def build_app() -> None:
             try:
                 changed = switch_document(state, new_id)
                 if changed:
-                    await fire_refresh()
+                    await state.fire_refresh()
             except Exception as exc:
                 log.exception("workspace.switch.failed", new_id=new_id)
                 ui.notify(f"Switch failed: {exc}", type="negative")
@@ -448,7 +494,7 @@ def build_app() -> None:
             busy_dialog.open()
             try:
                 remove_document(state, state.active_doc_id)
-                await fire_refresh()
+                await state.fire_refresh()
             except Exception as exc:
                 log.exception("workspace.close.failed")
                 ui.notify(f"Close failed: {exc}", type="negative")
@@ -543,7 +589,7 @@ def build_app() -> None:
                     "Map & Viz", lambda: render_viz_tab(state)
                 )
                 refresh_callbacks.append(_viz_refresh)
-                state.viz_refresh = _viz_refresh
+                page["viz_refresh"] = _viz_refresh
                 _ts = _tlog("viz", _ts)
             with ui.tab_panel(tab_clearance):
                 refresh_callbacks.append(

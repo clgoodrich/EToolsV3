@@ -56,12 +56,13 @@ def render_wellbore_figure(
     for s in design.strings:
         if not s.od_in or not s.hole_size_in:
             continue
-        toc = (
-            s.top_of_cement_ft
-            if isinstance(s.top_of_cement_ft, (int, float))
-            else 0
-        )
-        cement_top = float(toc) if toc != "Surface" else 0.0
+        # A liner hangs from its top: cement "to TOL" and the pipe start there.
+        hang = float(s.top_depth_ft or 0)
+        toc = s.top_of_cement_ft
+        if isinstance(toc, (int, float)):
+            cement_top = max(float(toc), hang)
+        else:  # "Surface" / "TOL" / unknown
+            cement_top = hang
         cement_bottom = s.set_depth_md_ft
         if cement_top >= cement_bottom:
             continue
@@ -99,7 +100,7 @@ def render_wellbore_figure(
                 type="rect",
                 x0=min(x0, x1),
                 x1=max(x0, x1),
-                y0=0,
+                y0=float(s.top_depth_ft or 0),
                 y1=s.set_depth_md_ft,
                 fillcolor=_CASING_COLOR,
                 line=dict(color=_CASING_COLOR, width=0.5),

@@ -511,8 +511,9 @@ _PADDED_DATE_RE = re.compile(
 # Same problem for long numerics: "8 8 1 0" → "8810" (perf MDs, casing
 # weights, sacks). Trigger only on runs of 4+ digits separated by a
 # *single space* (not newline) so we don't collapse section + township
-# pairs like "3 1\n3.0 S" or row-spanning patterns.
-_PADDED_NUM_RE = re.compile(r"(?<!\d)(?:\d ){3,}\d(?!\d)")
+# pairs like "3 1\n3.0 S" or row-spanning patterns. A 3-digit run is
+# collapsed only when it is the whole line (shallow Section 32 tops, "3 8 8").
+_PADDED_NUM_RE = re.compile(r"(?<!\d)(?:\d ){3,}\d(?!\d)|(?m:^[ \t]*\d \d \d[ \t]*$)")
 
 
 # ---------------------------------------------------------------------------
@@ -691,9 +692,9 @@ _POSITION_RE = re.compile(
     r"(?P<d1>\d{1,5})\s+(?P<dir1>FNL|FSL)\s+"
     r"(?P<d2>\d{1,5})\s+(?P<dir2>FEL|FWL)\s+"
     # QQ can be a 4-letter quarter-of-quarter (SWNW / SENE / …) OR a
-    # Government-lot designation (LOT1, LOT2, …) when the section
-    # isn't a standard mile-square.
-    r"(?P<qq>[NS][EW][NS][EW]|LOT\s*\d{1,2})\s+"
+    # Government-lot designation (LOT1, LT12, …) when the section
+    # isn't a standard mile-square, or a plain quarter (NE).
+    r"(?P<qq>[NS][EW][NS][EW]|[NS][EW]|LO?T\s*\d{1,2})\s+"
     r"(?P<sec>\d{1,2}(?:\s\d)?)\s+"
     r"(?P<twp>\d+(?:\.\d+)?)\s*(?P<twpdir>[NS])\s+"
     r"(?P<rng>\d+(?:\.\d+)?)\s*(?P<rngdir>[EW])\s+"
@@ -790,8 +791,12 @@ _FORMATIONS_BLOCK_RE = re.compile(
 )
 # Each formation appears as "<index>\n<NAME>\n<TOP_MD>\n<TOP_TVD>\n<description>" or
 # "<NAME>  <TOP_MD>  <TOP_TVD>  <description>" depending on PyMuPDF flow.
+# TVD and the description are optional ("Oil/Gas", "Sandstone, Shale" or
+# blank); a blank description is followed by the "OIL SHOW?" checklist line,
+# which must not be taken for it.
 _FORMATION_ROW_RE = re.compile(
-    r"^\s*([A-Z][A-Z0-9 \-/]+?)\s+(\d{2,5})\s+(\d{2,5})\s+([A-Za-z ,]+)\s*$",
+    r"^\s*([A-Z][A-Z0-9 \-/]+?)\s+(\d{2,5})(?:\s+(\d{2,5}))?"
+    r"(?:\s+(?!OIL SHOW)([A-Za-z][^\n?]*?))?[ \t]*$",
     re.MULTILINE,
 )
 
@@ -809,8 +814,8 @@ def _extract_formations(text: str, data: WCRPdfData) -> None:
             FormationTop(
                 name=name,
                 top_md=float(fm.group(2)),
-                top_tvd=float(fm.group(3)),
-                description=fm.group(4).strip(),
+                top_tvd=float(fm.group(3)) if fm.group(3) else None,
+                description=(fm.group(4) or "").strip() or None,
             )
         )
 
@@ -855,10 +860,12 @@ def _extract_section_33_intervals(text: str, data: WCRPdfData) -> None:
     if not m:
         return
     block = m.group(1)
-    # Each row begins with a single FR digit, then 4 floats (top MD, bottom
-    # MD, top TVD, bottom TVD), then stim type + status.
+    # Each row begins with the FR number (a two-digit one can print spaced,
+    # "1 0"), then top MD, bottom MD, top/bottom TVD (often left blank), then
+    # stim type + status.
     row_re = re.compile(
-        r"^\s*(\d+)\s+(\d{3,5})\s+(\d{3,5})\s+(\d{3,5})\s+(\d{3,5})\s+(\S.*?)\s+([A-Z]+(?:\s+[A-Z]+)*)",
+        r"^\s*(\d(?: ?\d)?)\s+(\d{3,5})\s+(\d{3,5})(?:\s+(\d{3,5})\s+(\d{3,5}))?"
+        r"\s+(\S.*?)\s+([A-Z]+(?:\s+[A-Z]+)*)",
         re.MULTILINE,
     )
     stage_no = 1

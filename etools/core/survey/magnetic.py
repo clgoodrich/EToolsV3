@@ -65,7 +65,8 @@ def lookup_magnetic_field(
     else:
         when_dec = float(when)
 
-    res = _geomag().calculate(glat=lat, glon=lon, alt=altitude_m, time=when_dec)
+    # pygeomag takes the altitude in km.
+    res = _geomag().calculate(glat=lat, glon=lon, alt=altitude_m / 1000.0, time=when_dec)
     return MagneticField(
         declination=float(res.dec),
         inclination=float(res.inclination),

@@ -440,6 +440,13 @@ def render_viz_tab(state: AppState) -> Callable[[], None]:
             header_label.visible = True
             controls.set_visibility(False)
             clear_map()
+            # Also drop the previous well's 3-D figure and the stations the
+            # map-click readout tests against.
+            plot_widget.update_figure({"data": [], "layout": {}})
+            render_cache.update(
+                sections_wgs84=None, cr_points=None, frame_points=None,
+                stations=[], centered_key=None,
+            )
             return
         opts = sorted(state.clearances.keys())
         citing_select.options = opts

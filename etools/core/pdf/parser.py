@@ -434,6 +434,7 @@ def _extract_survey_rows(markdown: str) -> pd.DataFrame:
         return pd.DataFrame()
     df = pd.DataFrame(all_rows, columns=["MeasuredDepth", "Inclination", "Azimuth"])
     df = df.sort_values("MeasuredDepth").reset_index(drop=True)
+    df = _drop_stray_end_blocks(df)
     # 1st pass — strip far-outside-the-bulk endpoint junk so it doesn't
     # poison the despike-by-median pass next.
     df = _trim_outlier_endpoints(df)
@@ -444,6 +445,33 @@ def _extract_survey_rows(markdown: str) -> pd.DataFrame:
     # 3rd pass — final endpoint clean now that interior despike may have
     # exposed a new boundary that needs trimming.
     return _trim_outlier_endpoints(df)
+
+
+def _drop_stray_end_blocks(df: pd.DataFrame, *, gap_ft: float = 1500.0) -> pd.DataFrame:
+    """Drop a small block of rows cut off from the survey by a big MD gap.
+
+    Rows read from another table under an "MD (ft)" header (an
+    anti-collision listing: 47,164 / 10.00 / 27.00 ...) agree with each
+    other, so the endpoint trim, which compares each end row with its
+    neighbours, keeps them. A head or tail block beyond a gap of more than
+    ``gap_ft`` (and 5x the median station spacing) holding under 15% of the
+    rows is dropped; a real survey's unsurveyed stretch leaves big blocks on
+    both sides and is kept.
+    """
+    md = df["MeasuredDepth"].to_numpy()
+    if len(md) < 3:
+        return df
+    # A sparse plan (KOP / EOC / TD stations) has big steps throughout.
+    gap_ft = max(gap_ft, 5 * float(df["MeasuredDepth"].diff().median()))
+    cuts = [0, *(i + 1 for i in range(len(md) - 1) if md[i + 1] - md[i] > gap_ft), len(md)]
+    start, end = 0, len(md)
+    small = 0.15 * len(md)
+    blocks = list(zip(cuts, cuts[1:]))
+    while len(blocks) > 1 and blocks[-1][1] - blocks[-1][0] < small:
+        end = blocks.pop()[0]
+    while len(blocks) > 1 and blocks[0][1] - blocks[0][0] < small:
+        start = blocks.pop(0)[1]
+    return df.iloc[start:end].reset_index(drop=True)
 
 
 def _despike_inclination(df: pd.DataFrame, *, window: int = 5, threshold: float = 30.0) -> pd.DataFrame:
@@ -513,7 +541,8 @@ def _trim_outlier_endpoints(df: pd.DataFrame) -> pd.DataFrame:
     return df.iloc[start:end].reset_index(drop=True)
 
 
-_NUM_RE = re.compile(r"-?\d+\.\d+|-?\d+")
+# Thousands separators first ("1,500.00"), or the comma splits the MD in two.
+_NUM_RE = re.compile(r"-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|-?\d+\.\d+|-?\d+")
 
 
 def _parse_rows_linewise(text: str) -> list[tuple[float, float, float]]:
@@ -578,7 +607,7 @@ def _parse_rows_token_stream(text: str) -> list[tuple[float, float, float]]:
 
 def _try_row(md_s: str, inc_s: str, azi_s: str) -> tuple[float, float, float] | None:
     try:
-        md_, inc, azi = float(md_s), float(inc_s), float(azi_s)
+        md_, inc, azi = (float(v.replace(",", "")) for v in (md_s, inc_s, azi_s))
     except (TypeError, ValueError):
         return None
     if not (0 <= md_ <= 60_000):

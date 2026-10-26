@@ -10,8 +10,10 @@ Vertical WBD chart, JSON export) just reads computed properties.
 from __future__ import annotations
 
 import bisect
+import math
 from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
 
 from etools.core.casing_review.catalog import CasingCatalog
@@ -108,8 +110,11 @@ class CasingDesignEngine:
             # is a liner, and the hand-made reviews always place a liner in the
             # STRING 4 block, leaving STRING 3 empty. The APD tags these rows
             # "Prod" like any other production casing, so the tag can't tell us
-            # apart — the geometry can. Everything else fills in order.
-            if (cs.length_top_ft or 0) > 0:
+            # apart — the geometry can. Everything else fills in order, and so
+            # does a liner with a deeper string below it (an intermediate
+            # liner): STRING 4 is the last string, and the next/previous
+            # links follow block order.
+            if (cs.length_top_ft or 0) > 0 and cs is rows[-1][0]:
                 preferred = 3
             else:
                 preferred = next(
@@ -218,9 +223,9 @@ def welltrack_from_dataframe(df: pd.DataFrame) -> list[WelltrackPoint]:
     """Best-effort conversion from an arbitrary survey DataFrame.
 
     Matches MD / TVD columns by common names (case-, space- and
-    underscore-insensitive), including the database survey's
-    ``MeasuredDepth`` / ``TrueVerticalDepth``. For full-precision
-    min-curvature interpolation use the processed survey.
+    underscore-insensitive). A survey without a TVD column (the PDF readers'
+    and the typed survey's ``MeasuredDepth`` / ``Inclination`` / ``Azimuth``)
+    gets its TVD by minimum curvature.
     """
     # Normalise column names so "TrueVerticalDepth", "true_vertical_depth"
     # and "TVD" all collapse to the same key.
@@ -235,6 +240,18 @@ def welltrack_from_dataframe(df: pd.DataFrame) -> list[WelltrackPoint]:
          if a in norm),
         None,
     )
+    if md_col and not tvd_col:
+        # PDF and typed surveys carry MD / Inc / Azi only: derive TVD by
+        # minimum curvature rather than dropping the survey (which left the
+        # design on the straight-hole estimate behind a "Survey: …" chip).
+        inc_col = next(
+            (norm[a] for a in ("inc", "incl", "inclination") if a in norm), None
+        )
+        azi_col = next(
+            (norm[a] for a in ("azi", "azm", "azimuth") if a in norm), None
+        )
+        if inc_col:
+            return _min_curvature_welltrack(df, md_col, inc_col, azi_col)
     if not md_col or not tvd_col:
         return []
     return [
@@ -242,6 +259,33 @@ def welltrack_from_dataframe(df: pd.DataFrame) -> list[WelltrackPoint]:
         for _, r in df.iterrows()
         if pd.notna(r[md_col]) and pd.notna(r[tvd_col])
     ]
+
+
+def _min_curvature_welltrack(
+    df: pd.DataFrame, md_col: str, inc_col: str, azi_col: str | None
+) -> list[WelltrackPoint]:
+    """MD/TVD pairs from MD / Inc (/ Azi) stations by minimum curvature.
+
+    The hole is taken as vertical from surface to the first station, the
+    same tie-in the survey processor uses.
+    """
+    cols = [md_col, inc_col] + ([azi_col] if azi_col else [])
+    st = df[cols].apply(pd.to_numeric, errors="coerce").dropna()
+    st = st.sort_values(md_col).drop_duplicates(md_col)
+    if st.empty:
+        return []
+    md = st[md_col].to_numpy(dtype=float)
+    inc = np.radians(st[inc_col].to_numpy(dtype=float))
+    azi = np.radians(st[azi_col].to_numpy(dtype=float)) if azi_col else np.zeros_like(md)
+    tvd = np.empty_like(md)
+    tvd[0] = md[0] * math.cos(inc[0]) if md[0] > 0 else 0.0
+    for i in range(1, len(md)):
+        i1, i2, a1, a2 = inc[i - 1], inc[i], azi[i - 1], azi[i]
+        cos_dl = math.cos(i2 - i1) - math.sin(i1) * math.sin(i2) * (1 - math.cos(a2 - a1))
+        dl = math.acos(max(-1.0, min(1.0, cos_dl)))
+        rf = 1.0 if dl < 1e-9 else 2.0 / dl * math.tan(dl / 2.0)
+        tvd[i] = tvd[i - 1] + (md[i] - md[i - 1]) / 2.0 * (math.cos(i1) + math.cos(i2)) * rf
+    return [WelltrackPoint(md_ft=float(m), tvd_ft=float(t)) for m, t in zip(md, tvd)]
 
 
 def _synthetic_welltrack(

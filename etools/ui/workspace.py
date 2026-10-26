@@ -30,6 +30,7 @@ the one buffer in place rather than spawning duplicates.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # avoid a runtime import cycle (state imports nothing from here)
@@ -93,9 +94,19 @@ class WellDocument:
 # ---------------------------------------------------------------------------
 # Identity / labelling
 # ---------------------------------------------------------------------------
-def document_id_for(api: str | None, lateral: str | None) -> str:
-    """Stable buffer key for a well. ``API|lateral``, both normalised."""
-    a = (api or "").strip() or "unknown"
+def document_id_for(
+    api: str | None, lateral: str | None, source: str | None = None
+) -> str:
+    """Stable buffer key for a well. ``API|lateral``, both normalised.
+
+    A PDF with no readable API (blank or the ``0000000000`` placeholder) is
+    keyed by its file name (``source``) instead, so two such wells don't
+    share one buffer and inherit each other's edits.
+    """
+    a = (api or "").strip()
+    if not a.strip("0") and source:
+        a = f"noapi-{Path(source).name}"
+    a = a or "unknown"
     L = (lateral or "0000").strip() or "0000"
     return f"{a}|{L}"
 
@@ -105,7 +116,7 @@ def _label_for(state: "AppState") -> tuple[str, str, str]:
     p = state.primary
     if p is None:
         return ("", "", "")
-    doc_id = document_id_for(p.api, p.lateral)
+    doc_id = document_id_for(p.api, p.lateral, p.upload_filename)
     label = (p.well_name or p.api or "Unnamed well").strip()
     bits = [f"API {p.api}/{p.lateral}"]
     if p.citing_type:
@@ -282,7 +293,8 @@ def begin_document(
             cur.source = _source_for(_DataView(stash))
     target = state.documents.get(doc_id)
     data = dict(target.data) if target is not None else empty_document_data()
-    incoming_api = _api10(doc_id.split("|", 1)[0])
+    head = doc_id.split("|", 1)[0]
+    incoming_api = "" if head.startswith("noapi-") else _api10(head)
     retained = set(keep)
     for family, parsed in ((APD_FIELDS, "apd_data"), (WCR_FIELDS, "wcr_data")):
         if parsed in keep:

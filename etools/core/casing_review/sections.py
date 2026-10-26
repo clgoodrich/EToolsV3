@@ -567,9 +567,11 @@ class SegmentData:
         return self.degrees + (self.minutes or 0) / 60.0 + (self.seconds or 0) / 3600.0
 
     def is_blank(self) -> bool:
+        # Only None is blank: the editor stores just the fields that differ
+        # from the plat, so a typed 0 (a 1 deg -> 0 deg bearing) is an edit.
         return all(
-            v is None or v == 0
-            for v in (self.length_ft, self.degrees, self.minutes, self.seconds)
+            v is None
+            for v in (self.length_ft, self.degrees, self.minutes, self.seconds, self.alignment)
         )
 
 
@@ -669,7 +671,9 @@ class SectionDefinition:
 
         Closes back to NW corner so the returned ring is valid.
         """
-        if not self.has_overrides() and self.plat_polygon is not None:
+        # Bearings don't move corners (the walk uses lengths), so a
+        # bearing-only edit keeps the plat polygon.
+        if not self._moves_geometry() and self.plat_polygon is not None:
             return self.plat_polygon
         corners = self.resolve_corners()
         ring = [
@@ -709,11 +713,16 @@ class SectionDefinition:
     # ------------------------------------------------------------------
 
     def _needs_walk(self) -> bool:
-        """Walk only when we have segment overrides (corner overrides are
-        applied on top of the bbox result so they don't need a walk)."""
+        """Walk only when a segment length is overridden (corner overrides
+        are applied on top of the bbox result so they don't need a walk)."""
         return any(
-            ov is not None and not ov.is_blank()
+            ov is not None and ov.length_ft is not None
             for ov in self.segment_overrides.values()
+        )
+
+    def _moves_geometry(self) -> bool:
+        return self._needs_walk() or any(
+            v is not None for v in self.corner_overrides.values()
         )
 
     def _bbox_corners(self) -> dict[str, tuple[float, float]]:

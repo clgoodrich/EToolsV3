@@ -127,10 +127,15 @@ _TIMESTAMP_RE = re.compile(r"\b(\d{1,2}/\d{1,2}/\d{4})\s+(\d{1,2}:\d{2})\b")
 
 
 def _parse_one_ddr(chunk: str) -> DDRRecord | None:
+    # This job's "Job Category" line. The chunk ends at the next job's, so
+    # it is the last one; an earlier one is the previous job's, reached by
+    # the header lookback.
+    own_at = ([m.start() for m in _JOB_CATEGORY_RE.finditer(chunk)] or [0])[-1]
+
     # ---- header fields ----
     header: dict = {}
     for field, pat in _HEADER_FIELDS.items():
-        m = pat.search(chunk)
+        m = pat.search(chunk, own_at) if field == "job_category" else pat.search(chunk)
         if m:
             header[field] = m.group(1).strip()
 
@@ -144,17 +149,20 @@ def _parse_one_ddr(chunk: str) -> DDRRecord | None:
     )
 
     # ---- time-log rows ----
-    # Anchor on the "Time Log" section if present so we don't pick up
+    # Only from this job's "Job Category" line on: the header lookback in
+    # ``_split_into_ddrs`` can reach into the previous job's time-log tail.
+    # Then anchor on the "Time Log" section if present so we don't pick up
     # the "Start Date" header in the well-header block.
-    time_log_match = re.search(r"\bTime\s+Log\b", chunk, re.I)
-    body = chunk[time_log_match.end():] if time_log_match else chunk
+    own = chunk[own_at:]
+    time_log_match = re.search(r"\bTime\s+Log\b", own, re.I)
+    body = own[time_log_match.end():] if time_log_match else own
 
     record.entries, layout = _walk_entries(body)
-    if not record.entries and body is not chunk:
+    if not record.entries and body is not own:
         # The "Time Log" anchor can match prose inside a comment (e.g.
         # "...reviewed the time log...") and slice away the real rows —
-        # retry over the whole chunk before giving up.
-        record.entries, layout = _walk_entries(chunk)
+        # retry over the whole job before giving up.
+        record.entries, layout = _walk_entries(own)
     log.info(
         "ddr.parse.one",
         job=record.job_category,

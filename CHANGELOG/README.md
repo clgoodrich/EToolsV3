@@ -23,6 +23,7 @@ alters app behavior or output. Skip trivial edits (typos, formatting, one-line t
 ## Index
 
 <!-- newest first: - [YYYY-MM-DD Title](file.md) — one-line hook -->
+- [2026-10-26 Bug sweep 2](2026-10-26-bug-sweep-2.md) - 31 reproduced bugs fixed: Casing TVDs from PDF surveys (were straight-hole), WCR formation tops (294/294 now parse), APD side-column tops, magnetic altitude units, DataPrint sheet, liner ordering, per-well UI state, two-tab refresh.
 - [2026-10-26 Type / paste survey](2026-10-26-type-paste-survey.md) - WCR and Casing Review take a survey typed or pasted from Excel into a table (True/Grid choice, validated); identical workbook to the same survey from a file.
 - [2026-10-26 No SQL Server](2026-10-26-pdf-only-no-sql-server.md) - Surveys, casing, perf date and sundry now read from the PDFs (checked against the DB first: surveys 25/25 exact, casing 264/277); SQL Server code, Legacy flow and pyodbc removed.
 - [2026-10-26 WCR operations viewer](2026-10-26-wcr-operations-viewer.md) - Operations log grouped by day in a clean layout (wording unchanged) beside the PDF; click a day/entry to scroll to and highlight that row.

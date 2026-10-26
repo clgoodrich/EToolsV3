@@ -48,7 +48,12 @@ def _cells(line: str) -> list[str]:
     # text copied out of a PDF.
     if "\t" in line:
         return [c.strip() for c in line.split("\t")]
-    return [c for c in _SPLIT_RE.split(line.strip()) if c]
+    line = line.strip()
+    # Plain CSV ("1500,3.4,245.3"): every comma is a separator. Thousands
+    # separators only survive in spaced text ("1,500.00 3.40 245.30").
+    if "," in line and not re.search(r"\s", line):
+        return [c for c in line.split(",") if c]
+    return [c for c in _SPLIT_RE.split(line) if c]
 
 
 def _header_columns(cells: Sequence[str]) -> dict[str, int] | None:

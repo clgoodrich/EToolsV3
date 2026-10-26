@@ -224,13 +224,19 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
             )
             return
 
-        cache["surveys"] = parsed.surveys
-        cache["surveys_label"] = f"PDF / {name} ({len(parsed.surveys)} stations)"
-        cache["survey_source"] = "pdf"
-        cache["survey_pdf_lat"] = parsed.surface_lat
-        cache["survey_pdf_lon"] = parsed.surface_lon
-        cache["survey_pdf_elev"] = parsed.surface_elevation_ft
-        cache["survey_pdf_north_ref"] = parsed.north_reference or "grid"
+        # On state, like a typed survey, so a well switch or reconnect keeps
+        # it; the PDF's surface location rides along in attrs.
+        df = parsed.surveys
+        df.attrs.update(
+            north_reference=parsed.north_reference or "grid",
+            surface_lat=parsed.surface_lat,
+            surface_lon=parsed.surface_lon,
+            surface_elevation_ft=parsed.surface_elevation_ft,
+        )
+        state.wcr_survey_df = df
+        state.wcr_survey_label = f"PDF / {name} ({len(df)} stations)"
+        state.wcr_survey_source = "pdf"
+        _load_state_survey()
 
         survey_parse_status.text = (
             f"Parsed {name}: {len(parsed.surveys)} survey stations "
@@ -238,6 +244,19 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
         )
         _render_survey_status()
         _refresh_generate_button()
+
+    def _load_state_survey() -> None:
+        df = state.wcr_survey_df
+        pdf = state.wcr_survey_source == "pdf"
+        cache.update(
+            surveys=df,
+            surveys_label=state.wcr_survey_label,
+            survey_source=state.wcr_survey_source,
+            survey_pdf_lat=df.attrs.get("surface_lat") if pdf else None,
+            survey_pdf_lon=df.attrs.get("surface_lon") if pdf else None,
+            survey_pdf_elev=df.attrs.get("surface_elevation_ft") if pdf else None,
+            survey_pdf_north_ref=df.attrs.get("north_reference") if pdf else None,
+        )
 
     async def apply_manual_survey(df) -> None:
         label = (
@@ -307,7 +326,7 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
             state, survey_df=cache.get("surveys"), silent=False
         )
 
-    def generate_from_pdf() -> None:
+    async def generate_from_pdf() -> None:
         pdf_path = cache.get("wcr_pdf_path")
         wcr_data: WCRPdfData | None = cache.get("wcr_data")
         surveys = cache.get("surveys")
@@ -331,8 +350,10 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
                 kwargs["surface_elevation_ft"] = cache["survey_pdf_elev"]
             if cache.get("survey_pdf_north_ref"):
                 kwargs["north_reference"] = cache["survey_pdf_north_ref"]
+        # Off the event loop: building + saving the workbook takes ~1.3 s.
+        generate_btn.disable()
         try:
-            result = wcr_pdf_service.generate(**kwargs)
+            result = await asyncio.to_thread(wcr_pdf_service.generate, **kwargs)
         except Exception as exc:
             log.exception("wcr.generate_failed")
             msg = (
@@ -342,6 +363,10 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
             )
             ui.notify(msg, type="negative")
             return
+        finally:
+            _refresh_generate_button()
+        if cache.get("wcr_data") is not wcr_data:
+            return  # another well was loaded meanwhile; this one isn't shown
 
         cache["last_result"] = result
         path = result.output_path
@@ -580,14 +605,15 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
                 "last_result",
             ):
                 cache[k] = None
+            results_card.clear()
+            results_card.visible = False
+            generate_status.text = ""
             trk_filed.value = (state.wcr_data.received_date or "") if state.wcr_data else ""
         cache["wcr_data"] = state.wcr_data
         cache["wcr_pdf_path"] = state.wcr_pdf_path
         cache["wcr_pdf_name"] = state.wcr_pdf_name
         if state.wcr_survey_df is not None:
-            cache["surveys"] = state.wcr_survey_df
-            cache["surveys_label"] = state.wcr_survey_label
-            cache["survey_source"] = state.wcr_survey_source
+            _load_state_survey()
 
         data = state.wcr_data
         if data is None:

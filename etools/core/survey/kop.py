@@ -32,6 +32,9 @@ class KOPResult:
     candidates: dict[str, float]
 
 
+# Never past this inclination: drift in a vertical hole, not a kickoff.
+_NO_KICKOFF_MAX_INC_DEG = 5.0
+
 _METHOD_ORDER = ("piecewise_regression", "changepoint", "rate_of_change", "clustering", "threshold")
 _METHOD_WEIGHTS = {
     "rate_of_change": 0.25,
@@ -89,6 +92,10 @@ def detect_kop(
 
     # Median-filter to suppress single-point noise spikes; rolling stats for ROC.
     smoothed = medfilt(inc, kernel_size=kernel)
+    # A hole that never leaves vertical has no kickoff; the voters below
+    # always return a split point and would average noise into a KOP.
+    if float(np.max(smoothed)) <= _NO_KICKOFF_MAX_INC_DEG:
+        return KOPResult(md=None, confidence=0.0, method="vertical", candidates={})
     grad = np.gradient(smoothed, md, edge_order=2)
     grad_roll = pd.Series(grad).rolling(window, center=True).mean().bfill().ffill().to_numpy()
     grad_std = pd.Series(grad).rolling(window, center=True).std().bfill().ffill().to_numpy()

@@ -29,6 +29,14 @@ def test_text_copied_from_a_pdf_or_csv() -> None:
     assert parse_pasted_rows(text) == [(100.0, 0.25, 310.1), (200.0, 1.5, 45.0)]
 
 
+def test_csv_with_three_digit_azimuths() -> None:
+    # The thousands-separator rule used to glue "1.5,245.3" into one cell.
+    text = "MD,Inc,Azi\n1000,1.5,245.3\n2000,90,180\n"
+    assert parse_pasted_rows(text) == [(1000.0, 1.5, 245.3), (2000.0, 90.0, 180.0)]
+    spaced = "1,500.00 3.40 140.00 1,350.00\n"
+    assert parse_pasted_rows(spaced) == [(1500.0, 3.4, 140.0)]
+
+
 def test_build_sorts_skips_blanks_and_keeps_reference() -> None:
     df = build_manual_survey(
         [("200", "1.5", "45"), (None, None, None), (0, 0, 0), ("", "", "")], "true"

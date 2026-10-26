@@ -67,7 +67,9 @@ async def promote_apd_to_active(state: AppState, *, silent: bool = False) -> boo
             )
         return False
 
-    begin_document(state, document_id_for(header.api, header.lateral), keep=APD_FIELDS)
+    begin_document(
+        state, document_id_for(header.api, header.lateral, header.upload_filename), keep=APD_FIELDS
+    )
     state.headers = [header]
     state.primary = header
     if state.casing_survey_df is not None and not state.casing_survey_df.empty:
@@ -122,7 +124,9 @@ async def promote_wcr_to_active(
         return False
 
     survey_df = survey_df if survey_df is not None else state.wcr_survey_df
-    begin_document(state, document_id_for(header.api, header.lateral), keep=WCR_FIELDS)
+    begin_document(
+        state, document_id_for(header.api, header.lateral, header.upload_filename), keep=WCR_FIELDS
+    )
     state.headers = [header]
     state.primary = header
     if survey_df is not None and not survey_df.empty:
@@ -157,10 +161,12 @@ async def _run_post_load(state: AppState, header, *, what: str) -> bool:
         ui.notify("Post-load orchestrator not registered.", type="warning")
         return False
     try:
-        await state.post_load(switch_to_survey=False)
+        ok = await state.post_load(switch_to_survey=False)
     except Exception as exc:
         log.exception("promote.post_load_failed", what=what)
         ui.notify(f"Promote post-load failed: {exc}", type="negative")
+        return False
+    if ok is False:  # the pipeline already told the user what failed
         return False
     ui.notify(
         f"Promoted {header.well_name or header.api} — other tabs populated.",

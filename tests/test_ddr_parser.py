@@ -58,7 +58,12 @@ def test_daily_blocks_survive_time_log_phrase_in_comment():
 def test_report_rows_layout():
     ddrs = {d.job_category: d for d in _ddrs("WCR 43013543510000.pdf")}
     assert len(ddrs["Drilling"].entries) == 26
-    assert len(ddrs["Completion"].entries) == 31
+    # 25: the header lookback used to pull the Drilling log's last six
+    # rows into the Completion log as well.
+    assert len(ddrs["Completion"].entries) == 25
+    drilling = {(x.start_time, x.comment) for x in ddrs["Drilling"].entries}
+    assert not any((x.start_time, x.comment) in drilling for x in ddrs["Completion"].entries)
+    assert ddrs["Completion"].entries[0].start_time == datetime(2023, 3, 26)
     e = ddrs["Drilling"].entries[1]
     assert e.start_time == datetime(2022, 12, 25)
     assert e.end_time == datetime(2022, 12, 26)

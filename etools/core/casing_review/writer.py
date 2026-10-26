@@ -1,8 +1,8 @@
 """Write a fully-computed ``CasingDesign`` into the Casing Review xlsx.
 
-Drops computed values into the Casing Review sheet AND the DataPrint
-panel, so the workbook opens with every design factor already filled
-in (the formulas still recompute when Excel opens the file — we just
+Drops computed values into the Casing Review sheet (the DataPrint panel
+mirrors it by formula), so the workbook opens with every design factor
+already filled in (the formulas still recompute when Excel opens the file — we just
 don't depend on them).
 """
 
@@ -151,9 +151,9 @@ def _write_casing_review_to(
             overrides=bope_overrides,
         )
 
-    # DataPrint panel mirrors per-string outputs into a normalized form.
-    if "DataPrint" in wb.sheetnames:
-        _write_dataprint(wb["DataPrint"], design)
+    # DataPrint is left to the template: its cells are formulas that read the
+    # Casing Review sheet (row 7 = results, row 11 = mud / grade / cement).
+    # Writing values there used to land in row 11, one column left.
 
     # Formation tops. The template ships with a sample well's tops baked in,
     # so this must run even when we have none to write — otherwise every
@@ -348,8 +348,16 @@ def _ensure_section_sheets(wb) -> None:
     for idx in range(4, _MAX_BHL_SHEETS + 1):
         name = f"BHL Section {idx}"
         if name not in wb.sheetnames:
-            new_sheet = wb.copy_worksheet(wb["BHL Section 3"])
+            src = wb["BHL Section 3"]
+            new_sheet = wb.copy_worksheet(src)
             new_sheet.title = name
+            # copy_worksheet leaves out the conditional formats and the
+            # print area.
+            for cf in src.conditional_formatting:
+                for rule in cf.rules:
+                    new_sheet.conditional_formatting.add(str(cf.sqref), rule)
+            if src.print_area:
+                new_sheet.print_area = src.print_area
             log.info("section_sheet.created", name=name)
 
 
@@ -1049,47 +1057,3 @@ def _write_formations(ws, formations: list) -> None:
             have=len(rows),
             capacity=_FORMATION_LAST_ROW - _FORMATION_FIRST_ROW + 1,
         )
-
-
-def _write_dataprint(ws, design: CasingDesign) -> None:
-    """Write each string's normalized output into the DataPrint sheet.
-
-    Column-range per string starts at column B (string 1), Q (string 2),
-    AF (string 3), AU (string 4). The data rows start at row 11.
-    """
-    # Column per STRING block, matching the Casing Review sheet's layout — a
-    # liner in STRING 4 writes to AU and leaves AF (STRING 3) empty.
-    starts = ("B", "Q", "AF", "AU")
-    for s in design.strings[:4]:
-        col0 = starts[_block_of(s, design)]
-        # Row 7 carries the inch-prefix label, e.g. '9.625" Casing'.
-        ws[f"{col0}7"] = f'{s.od_in}" Casing'
-        # Row 11 starts the values; the spreadsheet repeats the per-stage
-        # block but we just write the single shoe values for the lead row.
-        row = 11
-        _put(ws, col0, "C", row, s.masp_psi)
-        _put(ws, col0, "D", row, s.collapse_psi)
-        _put(ws, col0, "E", row, s.collapse_load_psi)
-        _put(ws, col0, "F", row, s.collapse_df)
-        _put(ws, col0, "G", row, s.burst_psi)
-        _put(ws, col0, "H", row, s.burst_load_psi)
-        _put(ws, col0, "I", row, s.burst_df)
-        _put(ws, col0, "J", row, s.joint_klbs)
-        _put(ws, col0, "K", row, s.tension_df)
-        _put(ws, col0, "L", row, s.neutral_point_ft)
-        _put(ws, col0, "M", row, s.tension_air_klbs)
-        _put(ws, col0, "N", row, s.tension_buoyed_klbs)
-
-
-def _put(ws, base_col: str, offset_col: str, row: int, value) -> None:
-    """Write to (base_col + (offset_col - 'C') offset, row).
-
-    The DataPrint panel uses C..N for the per-stage output columns within
-    each string's block. We translate that to the string's starting column.
-    """
-    if value is None:
-        return
-    base_idx = openpyxl.utils.column_index_from_string(base_col)
-    offset_idx = openpyxl.utils.column_index_from_string(offset_col)
-    target = openpyxl.utils.get_column_letter(base_idx + offset_idx - 3)  # C is offset 0
-    ws[f"{target}{row}"] = value

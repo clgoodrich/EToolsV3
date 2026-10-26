@@ -216,9 +216,9 @@ def render_load_tab(
         except Exception as exc:
             ui.notify(f"Upload failed: {exc}", type="negative")
             return
-        state.apd_pdf_path = tmp_path
-        state.apd_pdf_name = name
-        state.apd_data = None
+        # Staged, not put on the live state: that belongs to the active well
+        # until Parse succeeds (a well switch would save the wipe into it).
+        cache["pending_apd"] = (tmp_path, name)
         try:
             apd_upload.reset()
         except Exception:
@@ -241,13 +241,13 @@ def render_load_tab(
         return None if df.empty else df
 
     async def _parse_apd_now() -> None:
-        tmp_path = state.apd_pdf_path
+        tmp_path, pdf_name = cache.get("pending_apd") or (state.apd_pdf_path, state.apd_pdf_name)
         if not tmp_path:
             ui.notify("Upload an APD PDF first.", type="warning")
             return
         mode = cache["apd_mode"].value or "rules+llm"
         cache["apd_parse_btn"].disable()
-        cache["apd_status"].text = f"Parsing {state.apd_pdf_name} (mode={mode})…"
+        cache["apd_status"].text = f"Parsing {pdf_name} (mode={mode})…"
         try:
             data = await asyncio.to_thread(parse_apd_pdf, tmp_path, mode=mode)
         except Exception as exc:
@@ -256,12 +256,15 @@ def render_load_tab(
             cache["apd_status"].text = "Parse failed."
             cache["apd_parse_btn"].enable()
             return
+        cache["pending_apd"] = None
         state.apd_data = data
+        state.apd_pdf_path = tmp_path
+        state.apd_pdf_name = pdf_name
         # A permit for a different well must not inherit the previous
         # well's casing knobs, BOPE edits, frac gradient or TVD survey.
         begin_document(
             state,
-            document_id_for((data.api or "")[:10] or "0000000000", "0000"),
+            document_id_for((data.api or "")[:10], "0000", data.source_pdf),
             keep=("apd_data", "apd_pdf_path", "apd_pdf_name"),
         )
         if (
@@ -320,12 +323,7 @@ def render_load_tab(
         except Exception as exc:
             ui.notify(f"Upload failed: {exc}", type="negative")
             return
-        state.wcr_pdf_path = tmp_path
-        state.wcr_pdf_name = name
-        state.wcr_data = None
-        state.wcr_survey_df = None
-        state.wcr_survey_label = None
-        state.wcr_survey_source = None
+        cache["pending_wcr"] = (tmp_path, name)  # see _handle_apd_upload
         try:
             wcr_upload.reset()
         except Exception:
@@ -334,7 +332,7 @@ def render_load_tab(
         cache["wcr_parse_btn"].enable()
 
     async def _parse_wcr_now() -> None:
-        tmp_path = state.wcr_pdf_path
+        tmp_path, pdf_name = cache.get("pending_wcr") or (state.wcr_pdf_path, state.wcr_pdf_name)
         if not tmp_path:
             ui.notify("Upload a WCR PDF first.", type="warning")
             return
@@ -343,7 +341,7 @@ def render_load_tab(
         max_pages = 5 if scope == "5" else None
         parse_ops = scope == "ops"
         cache["wcr_parse_btn"].disable()
-        base_status = f"Parsing {state.wcr_pdf_name} (mode={mode})…"
+        base_status = f"Parsing {pdf_name} (mode={mode})…"
         cache["wcr_status"].text = base_status
 
         # Progress reporting: the parse runs in a worker thread, so its
@@ -391,10 +389,16 @@ def render_load_tab(
         finally:
             timer.cancel()
             bar.visible = False
+        cache["pending_wcr"] = None
         state.wcr_data = data
+        state.wcr_pdf_path = tmp_path
+        state.wcr_pdf_name = pdf_name
+        state.wcr_survey_df = None
+        state.wcr_survey_label = None
+        state.wcr_survey_source = None
         begin_document(
             state,
-            document_id_for((data.api or "")[:10] or "0000000000", "0000"),
+            document_id_for((data.api or "")[:10], "0000", data.source_pdf),
             keep=("wcr_data", "wcr_pdf_path", "wcr_pdf_name"),
         )
         await _survey_from_wcr_pdf()

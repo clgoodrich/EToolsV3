@@ -180,11 +180,16 @@ def _events_from_entry(entry: DDRTimeLogEntry):
 # ---------------------------------------------------------------------------
 
 
+# Depths: "8,181" (comma after 1-3 digits) or "8181".
 _KOP_PHRASES = (
-    re.compile(r"ORIENT\s+TOOL\s+FACE.*?\bSLIDE\s+DRILL\s+F/\s*(\d{2,5}(?:,\d{3})*)", re.S),
-    re.compile(r"\bKICKOFF\s*@\s*(\d{2,5}(?:,\d{3})*)", re.I),
-    re.compile(r"\bKOP\s*@?\s*(\d{2,5}(?:,\d{3})*)", re.I),
-    re.compile(r"\bBUILD(?:ING)?\s+CURVE\s*F/\s*(\d{2,5}(?:,\d{3})*)", re.I),
+    re.compile(r"ORIENT\s+TOOL\s+FACE.*?\bSLIDE\s+DRILL\s+F/\s*(\d{1,3}(?:,\d{3})+|\d{2,5})", re.S),
+    re.compile(r"\bKICKOFF\s*@\s*(\d{1,3}(?:,\d{3})+|\d{2,5})", re.I),
+    # "KOP @ 7,989'", "** KOP** SLIDE 9,641'", "** KOP ** SLIDE CURVE 9,743'"
+    re.compile(
+        r"\bKOP\b[\s*]*@?[\s*]*(?:SLIDE(?:\s+CURVE)?\s+(?:F/\s*)?)?(\d{1,3}(?:,\d{3})+|\d{2,5})",
+        re.I,
+    ),
+    re.compile(r"\bBUILD(?:ING)?\s+CURVE\s*F/\s*(\d{1,3}(?:,\d{3})+|\d{2,5})", re.I),
 )
 
 
@@ -221,7 +226,7 @@ def _extract_kop(entry: DDRTimeLogEntry, c: str):
 
 
 _EOC_RE = re.compile(
-    r"\bEOC\s+(\d{2,5}(?:,\d{3})*)\'?\s*MD\s+([\d.]+)°?\s*INC\s+(\d{2,5}(?:,\d{3})*)\'?\s*TVD",
+    r"\bEOC\s+(\d{1,3}(?:,\d{3})+|\d{2,5})\'?\s*MD\s+([\d.]+)°?\s*INC\s+(\d{1,3}(?:,\d{3})+|\d{2,5})\'?\s*TVD",
     re.I,
 )
 
@@ -251,8 +256,8 @@ def _extract_eoc(entry: DDRTimeLogEntry, c: str):
 
 
 _LAND_PHRASES = (
-    re.compile(r"\bLAND(?:ED|ING)?\s+(?:CSG|CASING|LINER|F/S)\s*@\s*(\d{2,5}(?:,\d{3})*)", re.I),
-    re.compile(r"\bLANDED\s*@\s*(\d{2,5}(?:,\d{3})*)", re.I),
+    re.compile(r"\bLAND(?:ED|ING)?\s+(?:CSG|CASING|LINER|F/S)\s*@\s*(\d{1,3}(?:,\d{3})+|\d{2,5})", re.I),
+    re.compile(r"\bLANDED\s*@\s*(\d{1,3}(?:,\d{3})+|\d{2,5})", re.I),
 )
 
 
@@ -279,10 +284,10 @@ def _extract_landing(entry: DDRTimeLogEntry, c: str):
 
 
 _CSG_SHOE_RE = re.compile(
-    r"(?:CASING|CSG)\s+(?:LANDED|TO|@)\s*(\d{2,5}(?:,\d{3})*)\'?", re.I
+    r"(?:CASING|CSG)\s+(?:LANDED|TO|@)\s*(\d{1,3}(?:,\d{3})+|\d{2,5})\'?", re.I
 )
 _FLOAT_SHOE_RE = re.compile(
-    r"(?:FLOAT|SHOE|F\.E\.\s*CMT)\s*@\s*(\d{2,5}(?:,\d{3})*)", re.I
+    r"(?:FLOAT|SHOE|F\.E\.\s*CMT)\s*@\s*(\d{1,3}(?:,\d{3})+|\d{2,5})", re.I
 )
 
 
@@ -291,7 +296,7 @@ def _extract_casing_run(entry: DDRTimeLogEntry, c: str):
         return
     # Pull every depth referenced in the comment — shoe / float / collar.
     depths = []
-    for pat in (_CSG_SHOE_RE, _FLOAT_SHOE_RE, re.compile(r"@\s*(\d{2,5}(?:,\d{3})*)\'", re.I)):
+    for pat in (_CSG_SHOE_RE, _FLOAT_SHOE_RE, re.compile(r"@\s*(\d{1,3}(?:,\d{3})+|\d{2,5})\'", re.I)):
         for m in pat.finditer(c):
             d = _to_float(m.group(1))
             if d and 100 < d < 30000:
@@ -357,7 +362,7 @@ def _extract_cement_job(entry: DDRTimeLogEntry, c: str):
 
 
 _FIT_RE = re.compile(
-    r"FIT(?:\s+TEST)?\s+T/\s*(\d+(?:\.\d+)?)\s*(?:PPG|LB)\s*(?:MAMW|MWE|EMW)?\s*TVD\s+(\d{2,5}(?:,\d{3})*)",
+    r"FIT(?:\s+TEST)?\s+T/\s*(\d+(?:\.\d+)?)\s*(?:PPG|LB)\s*(?:MAMW|MWE|EMW)?\s*TVD\s+(\d{1,3}(?:,\d{3})+|\d{2,5})",
     re.I,
 )
 
