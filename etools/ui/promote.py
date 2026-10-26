@@ -72,6 +72,7 @@ async def promote_apd_to_active(state: AppState, *, silent: bool = False) -> boo
     state.headers = [header]
     state.primary = header
     if state.casing_survey_df is not None and not state.casing_survey_df.empty:
+        _adopt_survey_north_reference(header, state.casing_survey_df)
         citing = header.citing_type or "Planned"
         state.surveys = {citing: normalize_survey_dataframe(state.casing_survey_df)}
         state.selected_citing = citing
@@ -127,6 +128,7 @@ async def promote_wcr_to_active(
     state.headers = [header]
     state.primary = header
     if survey_df is not None and not survey_df.empty:
+        _adopt_survey_north_reference(header, survey_df)
         citing = header.citing_type or "AsDrilled"
         state.surveys = {citing: normalize_survey_dataframe(survey_df)}
         state.selected_citing = citing
@@ -138,6 +140,17 @@ async def promote_wcr_to_active(
     reset_survey_edits(state)
 
     return await _run_post_load(state, header, what="WCR")
+
+
+def _adopt_survey_north_reference(header, survey_df) -> None:
+    """Use the survey's own azimuth reference when it carries one.
+
+    The APD/WCR header builders assume "grid"; a DB survey knows its real
+    reference (``attrs["north_reference"]``, set by SurveyRepository).
+    """
+    nref = getattr(survey_df, "attrs", {}).get("north_reference")
+    if nref:
+        header.north_reference = nref
 
 
 async def _run_post_load(state: AppState, header, *, what: str) -> bool:

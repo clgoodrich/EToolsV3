@@ -152,7 +152,15 @@ def process_survey(
     # Geographic coords from local NEV: project back through the same aeqd centered at SHL.
     # welleng's n/e are in the working unit (feet); we need them in feet for this projection.
     # Inverse projection: take (north, east) in feet → lat/lon.
-    lat_arr, lon_arr = _nev_to_latlon(n, e, surface_lat, surface_lon)
+    # welleng integrates ``azi_grid``, so n/e are GRID-north offsets, but the
+    # aeqd is oriented to TRUE north at the SHL. Rotate by the convergence
+    # (true azimuth = grid azimuth + γ) before un-projecting; otherwise every
+    # station swings about the SHL by γ (~1.1° here, ~200 ft over a 2-mile
+    # lateral) and the footages / section assignments inherit the error.
+    g = np.radians(convergence or 0.0)
+    n_true = n * np.cos(g) - e * np.sin(g)
+    e_true = e * np.cos(g) + n * np.sin(g)
+    lat_arr, lon_arr = _nev_to_latlon(n_true, e_true, surface_lat, surface_lon)
 
     # UTM (meters) and easting/northing in feet relative to SHL UTM origin.
     eastings_m = np.empty_like(n)

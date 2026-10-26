@@ -81,7 +81,7 @@ class WCRPdfService:
         surface_lat: float | None = None,
         surface_lon: float | None = None,
         surface_elevation_ft: float | None = None,
-        north_reference: str = "grid",
+        north_reference: str | None = None,
         output_path: str | Path | None = None,
     ) -> WCRPdfResult:
         """Run the full pipeline. Returns the saved WCR Excel path
@@ -114,6 +114,12 @@ class WCRPdfService:
         if elev is None:
             raise ValueError("Surface elevation missing — provide it explicitly or fix the PDF.")
 
+        # Explicit > the survey's own reference (DB frames carry it) > grid.
+        # A blanket "grid" default treated true-north DB surveys as grid and
+        # rotated the whole lateral by the convergence (~114 ft at the BHL on
+        # South Moon 5-31-32-C4-3H).
+        if north_reference is None:
+            north_reference = surveys.attrs.get("north_reference") or "grid"
         processed = process_survey(
             surveys,
             surface_lat=lat,
