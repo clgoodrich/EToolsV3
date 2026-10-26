@@ -60,8 +60,7 @@ async def promote_apd_to_active(state: AppState, *, silent: bool = False) -> boo
     if header.surface_lat is None:
         if not silent:
             ui.notify(
-                "APD has no PLSS section we can geolocate. Upload a survey PDF "
-                "or load the well from the DB.",
+                "APD has no PLSS section we can geolocate.",
                 type="warning",
                 multi_line=True,
                 timeout=8000,
@@ -91,8 +90,8 @@ async def promote_wcr_to_active(
 ) -> bool:
     """Promote ``state.wcr_data`` to the active well.
 
-    ``survey_df`` lets the WCR tab pass the survey it resolved (DB lookup
-    or PDF upload) directly; when omitted we fall back to
+    ``survey_df`` lets the WCR tab pass the survey it resolved (from the
+    WCR, an upload or typed in) directly; when omitted we fall back to
     ``state.wcr_survey_df``.
     """
     from etools.core.casing_review.promote import (
@@ -115,8 +114,7 @@ async def promote_wcr_to_active(
     if header.surface_lat is None:
         if not silent:
             ui.notify(
-                "WCR has no surface UTM or PLSS we can geolocate. Upload a "
-                "survey PDF or load the well from the DB.",
+                "WCR has no surface UTM or PLSS we can geolocate.",
                 type="warning",
                 multi_line=True,
                 timeout=8000,
@@ -145,8 +143,8 @@ async def promote_wcr_to_active(
 def _adopt_survey_north_reference(header, survey_df) -> None:
     """Use the survey's own azimuth reference when it carries one.
 
-    The APD/WCR header builders assume "grid"; a DB survey knows its real
-    reference (``attrs["north_reference"]``, set by ``survey_table``).
+    The APD/WCR header builders assume "grid"; a parsed or typed survey
+    knows its real reference (``attrs["north_reference"]``, set by ``survey_table``).
     """
     nref = getattr(survey_df, "attrs", {}).get("north_reference")
     if nref:

@@ -96,7 +96,7 @@ class AppState:
     wcr_pdf_name: str | None = None
     wcr_survey_df: Optional[pd.DataFrame] = None
     wcr_survey_label: str | None = None
-    wcr_survey_source: str | None = None  # "db" or "pdf"
+    wcr_survey_source: str | None = None  # "pdf" or "manual"
 
     # ---- Multi-document workspace --------------------------------------
     # Every well loaded this session, keyed by ``API|lateral`` and ordered

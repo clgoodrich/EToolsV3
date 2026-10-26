@@ -1,15 +1,13 @@
 """WCR tab — generate the WCR Excel from a WCR PDF.
 
 Flow:
-    1. User uploads the WCR PDF (DOGM Form 8). It's parsed immediately
-       (PyMuPDF + regex — fast, no LLM).
-    2. The tab uses the API number from the PDF to look up a directional
-       survey in the local SQL Server (UTRBDMSNET.DirectionalSurveyData).
-    3. If a survey is found, the user can hit Generate immediately.
-    4. If no survey is found, an upload widget appears for a directional
-       survey PDF; that PDF is run through the same parse_survey_pdf
-       pipeline the regular PDF import uses (Docling → rules → LLM →
-       vision). The extracted MD/INC/AZI rows feed the generator.
+    1. User uploads the WCR PDF (DOGM Form 8) on the Load Well tab. It's
+       parsed immediately (PyMuPDF + regex — fast, no LLM), and the survey
+       report attached to the WCR, when there is one, becomes the survey.
+    2. If the WCR carries no survey, the user uploads a survey PDF (run
+       through parse_survey_pdf) or types / pastes the stations into the
+       survey table (``ui.survey_entry``).
+    3. Generate builds the workbook from the WCR data + that survey.
 
 """
 
@@ -33,6 +31,7 @@ from etools.services.wcr_pdf_service import WCRPdfResult, WCRPdfService
 from etools.ui.ops_viewer import HEAD_ASSETS as _OPS_HEAD, add_ops_viewer_button
 from etools.ui.promote import promote_wcr_to_active
 from etools.ui.state import AppState
+from etools.ui.survey_entry import build_survey_entry
 from etools.ui.output_mount import serve_output_file as _serve_output_file
 from etools.ui.upload_temp import save_upload as _save_upload
 
@@ -49,7 +48,7 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
         "wcr_pdf_path": None,
         "wcr_pdf_name": None,
         "wcr_data": None,            # WCRPdfData from parse_wcr_pdf
-        "survey_source": None,       # "db" or "pdf"
+        "survey_source": None,       # "pdf" or "manual"
         "surveys": None,             # pd.DataFrame of MD/INC/AZI
         "surveys_label": None,       # human-readable origin
         "survey_pdf_lat": None,      # parsed surface lat from a survey PDF
@@ -89,6 +88,11 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
                 survey_status = ui.label("").classes(
                     "text-xs px-2 py-1 rounded bg-slate-200 text-slate-700"
                 )
+                edit_survey_btn = ui.button(
+                    icon="edit_note", on_click=lambda: open_survey_entry(cache.get("surveys"))
+                ).props("flat round dense size=sm color=grey-8").tooltip(
+                    "Correct or replace the survey in a table"
+                )
                 promote_btn = ui.button(
                     "Use as active well",
                     icon="upgrade",
@@ -103,7 +107,7 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
                     icon="description",
                     on_click=lambda: generate_from_pdf(),
                 ).props("color=primary dense")
-            # Survey-PDF fallback upload — visible only when no DB survey was found.
+            # Shown only when the WCR carries no survey: upload one or type it.
             survey_upload_row = ui.row().classes("gap-2 items-center mt-1")
             with survey_upload_row:
                 survey_upload = ui.upload(
@@ -115,6 +119,12 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
                         f"Upload rejected: {e}", type="negative"
                     ),
                 ).classes("max-w-xs").props("accept=.pdf flat dense")
+                ui.label("or").classes("text-xs text-gray-500")
+                ui.button(
+                    "Type / paste survey",
+                    icon="table_rows",
+                    on_click=lambda: open_survey_entry(),
+                ).props("outline dense no-caps")
                 survey_parse_status = ui.label("").classes("text-xs text-gray-600")
             survey_upload_row.visible = False
             generate_status = ui.label("").classes("text-xs text-slate-500")
@@ -226,11 +236,50 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
             f"Parsed {name}: {len(parsed.surveys)} survey stations "
             f"(layers: {', '.join(parsed.layers_used)})."
         )
-        survey_status.text = f"Using surveys from {name}: {len(parsed.surveys)} stations."
-        survey_status.classes(
-            replace="text-sm px-3 py-2 rounded bg-green-100 text-green-800"
-        )
+        _render_survey_status()
         _refresh_generate_button()
+
+    async def apply_manual_survey(df) -> None:
+        label = (
+            f"Typed / pasted ({len(df)} stations, "
+            f"{df.attrs['north_reference']} north)"
+        )
+        # On state too: refresh() re-reads state.wcr_survey_df, which would
+        # otherwise put back the survey this one replaces.
+        state.wcr_survey_df = df
+        state.wcr_survey_label = label
+        state.wcr_survey_source = "manual"
+        cache.update(
+            surveys=df, surveys_label=label, survey_source="manual",
+            survey_pdf_lat=None, survey_pdf_lon=None, survey_pdf_elev=None,
+            survey_pdf_north_ref=None,
+        )
+        _render_survey_status()
+        _refresh_generate_button()
+        ui.notify(
+            f"Survey set: {len(df)} stations. Generate uses it now; "
+            "'Use as active well' sends it to the Survey, Map and Clearance tabs.",
+            type="positive",
+            multi_line=True,
+        )
+
+    open_survey_entry = build_survey_entry(apply_manual_survey)
+
+    def _render_survey_status() -> None:
+        if cache.get("surveys") is not None and cache.get("surveys_label"):
+            survey_status.text = f"Survey: {cache['surveys_label']}"
+            survey_status.classes(
+                replace="text-xs px-2 py-1 rounded bg-green-100 text-green-800"
+            )
+            survey_upload_row.visible = False
+            edit_survey_btn.visible = True
+        else:
+            survey_status.text = "No survey loaded — upload or type one below."
+            survey_status.classes(
+                replace="text-xs px-2 py-1 rounded bg-amber-100 text-amber-800"
+            )
+            survey_upload_row.visible = True
+            edit_survey_btn.visible = False
 
     # ----------------------------------------------------------------------
     # Step 3 — generate
@@ -252,7 +301,7 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
     async def promote_to_primary() -> None:
         # Manual 'Use as active well'. Shares one implementation with the
         # Load Well tab's auto-promote. The WCR tab keeps its resolved
-        # survey in ``cache["surveys"]`` (DB lookup or PDF upload made
+        # survey in ``cache["surveys"]`` (from the WCR, an upload or typed
         # right here), so pass it through explicitly.
         await promote_wcr_to_active(
             state, survey_df=cache.get("surveys"), silent=False
@@ -266,7 +315,7 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
             ui.notify("Upload a WCR PDF first.", type="warning")
             return
         if surveys is None or surveys.empty:
-            ui.notify("No surveys available — upload a survey PDF.", type="warning")
+            ui.notify("No survey yet — upload a survey PDF or type one in.", type="warning")
             return
         # Reuse the already-parsed WCR data so we don't re-run Docling/regex.
         kwargs: dict = {
@@ -555,20 +604,7 @@ def render_wcr_tab(state: AppState) -> Callable[[], None]:
                 f"{data.well_name or '(unnamed)'} · API {data.api or '—'}"
             )
 
-            # Survey status pill + fallback upload row.
-            if cache.get("surveys") is not None and cache.get("surveys_label"):
-                survey_status.text = f"Survey: {cache['surveys_label']}"
-                survey_status.classes(
-                    replace="text-xs px-2 py-1 rounded bg-green-100 text-green-800"
-                )
-                survey_upload_row.visible = False
-            else:
-                survey_status.text = "No survey loaded — upload one below."
-                survey_status.classes(
-                    replace="text-xs px-2 py-1 rounded bg-amber-100 text-amber-800"
-                )
-                survey_upload_row.visible = True
-
+            _render_survey_status()
             _refresh_generate_button()
             _render_wcr_metadata(wcr_meta_card, data)
             wcr_meta_card.visible = True

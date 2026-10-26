@@ -30,7 +30,7 @@ flowchart TD
     APD["APD PDF (Form 3 permit)"]:::you
     WCR["WCR PDF (Form 8 completion report)"]:::you
     LOAD["Load Well tab: read the PDF"]:::auto
-    SURVEY["Find the directional survey: in the PDF itself, or a survey PDF you upload"]:::auto
+    SURVEY["Find the directional survey: in the PDF itself, a survey PDF you upload, or one you type / paste in"]:::auto
     PIPE["Locate the well: process survey, footages, sections"]:::auto
     FILES[("Bundled files: PLSS sections, Grid Numbers, casing strengths")]:::data
 
@@ -86,7 +86,7 @@ flowchart TD
     A5["Set the previous well aside in the well switcher; start this one with a clean slate"]:::auto
     A6{"Does the APD carry its directional plan (a survey table)?"}:::dec
     A7["Use the plan as the survey, with the north reference it prints"]:::auto
-    A8["No survey yet: TVDs use a straight-line estimate from the permit's MD/TVD. You can upload a survey PDF on the Casing Review tab"]:::auto
+    A8["No survey yet: TVDs use a straight-line estimate from the permit's MD/TVD. You can upload a survey PDF or type / paste one on the Casing Review tab"]:::auto
     A9{"Can the surface location be placed on the map? (needs a PLSS section or UTM)"}:::dec
     A10["Make it the active well and run the well pipeline (section 4)"]:::auto
     A11["Stay on Casing Review with a 'Use as active well' button"]:::auto
@@ -149,8 +149,8 @@ flowchart TD
     W5["Set the previous well aside; start clean"]:::auto
     W6{"Does the WCR carry the as-drilled survey report?"}:::dec
     W7["Use it, with the north reference it prints"]:::auto
-    W8["WCR tab asks for a survey PDF"]:::you
-    W8b["Read the survey PDF: text first, then OCR, then the vision AI if needed"]:::auto
+    W8["WCR tab asks for a survey: upload a PDF, or Type / paste survey"]:::you
+    W8b["Read the survey PDF (text first, then OCR, then the vision AI), or check the typed table"]:::auto
     W9["Make it the active well if it can be placed; run the well pipeline (section 4)"]:::auto
     W10["WCR tab opens"]:::auto
 
@@ -229,8 +229,8 @@ flowchart TD
 | Tab | Needs | What it's for | Buttons and tools |
 |---|---|---|---|
 | **Load Well** | — | The only way to bring a well in | *From APD PDF* or *From WCR PDF*, a parse mode (Rules only / Rules + LLM / LLM only), then Parse |
-| **Casing Review** | A parsed APD | Casing design check → Casing Review workbook | Sub-tabs in section 2, *Use as active well*, *Generate Excel*, optional *Survey PDF* upload |
-| **WCR** | A parsed WCR | Completion-report check → WCR workbook | *Generate WCR Excel*, editable location rows + *Save updated Excel*, *Survey PDF* upload when the WCR has no survey, *Open operations log beside the PDF* (in the Operation Summary Reports section: click a day or entry to jump to it in the PDF; filter box), the *Personal Record* checklist, *Date filed* + *Update Personal Record* |
+| **Casing Review** | A parsed APD | Casing design check → Casing Review workbook | Sub-tabs in section 2, *Use as active well*, *Generate Excel*, optional *Survey PDF* upload or *Type / paste survey* table |
+| **WCR** | A parsed WCR | Completion-report check → WCR workbook | *Generate WCR Excel*, editable location rows + *Save updated Excel*, *Survey PDF* upload or *Type / paste survey* table when the WCR has no survey (the pencil next to the survey chip corrects or replaces it), *Open operations log beside the PDF* (in the Operation Summary Reports section: click a day or entry to jump to it in the PDF; filter box), the *Personal Record* checklist, *Date filed* + *Update Personal Record* |
 | **Survey** | An active well | See and correct the survey | Citing (Planned / As-Drilled), Frame (True / Grid), *Process Survey*, *Interpolate + Add* (insert a station at an MD), *Delete selected station*, *Reprocess with new SHL*, *Apply convergence*, *Restore original survey*. Every edit re-runs section 4 |
 | **Map & Viz** | Clearances | See where the well goes | *2D Map*: sections, well path, 100 / 330 / 500 ft setback buffers, click a station or section for details, basemap choice, *Add point* / *Clear points*. *3D Trajectory*: the wellbore under the crossed sections (outlined at the surface); hover for MD, angles, section and footages |
 | **Clearance** | A processed survey | Footage tables | Summary (SHL · KOP · Landing · BHL) and every station's FNL / FSL / FEL / FWL; *Calculate Clearances* re-runs section 4 |
@@ -296,7 +296,8 @@ flowchart LR
 ```
 
 - **A PDF without a survey?** Many WCRs don't attach the survey report.
-  You'll see that no survey was found; upload the survey PDF instead.
+  You'll see that no survey was found; upload the survey PDF, or click *Type / paste survey*
+  and paste the MD / Inc / Azi columns from Excel.
 - **No AI engine?** Pick *Rules only*. Everything except the AI backfill and
   scanned-page reading works.
 
@@ -306,7 +307,7 @@ flowchart LR
 
 | You see | It usually means | Do this |
 |---|---|---|
-| "No survey loaded — upload one below" / "No directional survey table found in this APD" | The PDF doesn't carry a survey table | Upload the survey PDF on the WCR or Casing Review tab |
+| "No survey loaded — upload or type one below" / "No directional survey table found in this APD" | The PDF doesn't carry a survey table | Upload the survey PDF, or use *Type / paste survey*, on the WCR or Casing Review tab |
 | "APD has no PLSS section we can geolocate" | The surface location couldn't be placed | Load a survey PDF, or set the surface location on the Survey tab |
 | A value parsed wrong | The PDF layout confused the reader | Fix it in the tab (Casing inputs, Formations, Sections, WCR rows) before generating |
 | "…is open in Excel" | The workbook is locked | Close it in Excel and click again |

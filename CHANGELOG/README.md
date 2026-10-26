@@ -23,6 +23,7 @@ alters app behavior or output. Skip trivial edits (typos, formatting, one-line t
 ## Index
 
 <!-- newest first: - [YYYY-MM-DD Title](file.md) — one-line hook -->
+- [2026-10-26 Type / paste survey](2026-10-26-type-paste-survey.md) - WCR and Casing Review take a survey typed or pasted from Excel into a table (True/Grid choice, validated); identical workbook to the same survey from a file.
 - [2026-10-26 No SQL Server](2026-10-26-pdf-only-no-sql-server.md) - Surveys, casing, perf date and sundry now read from the PDFs (checked against the DB first: surveys 25/25 exact, casing 264/277); SQL Server code, Legacy flow and pyodbc removed.
 - [2026-10-26 WCR operations viewer](2026-10-26-wcr-operations-viewer.md) - Operations log grouped by day in a clean layout (wording unchanged) beside the PDF; click a day/entry to scroll to and highlight that row.
 - [2026-10-26 Help tab](2026-10-26-help-tab-guide.md) - In-app Help tab: plain-language guide with six flow charts, tab-by-tab tables, file locations, troubleshooting and glossary (`etools/docs/app_guide.md`).

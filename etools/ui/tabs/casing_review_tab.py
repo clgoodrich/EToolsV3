@@ -48,6 +48,7 @@ from etools.models import APDFormationTop, APDPdfData
 from etools.services import CasingReviewService
 from etools.ui.promote import promote_apd_to_active
 from etools.ui.state import AppState
+from etools.ui.survey_entry import build_survey_entry
 from etools.core.io_safety import describe_write_error
 from etools.ui.output_mount import serve_output_file as _serve_output_file
 from etools.ui.upload_temp import save_upload as _save_upload
@@ -461,6 +462,12 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
                 cache["survey_status"] = ui.label("").classes(
                     "text-xs px-2 py-1 rounded bg-slate-200 text-slate-700"
                 )
+                cache["edit_survey_btn"] = ui.button(
+                    icon="edit_note",
+                    on_click=lambda: open_survey_entry(state.casing_survey_df),
+                ).props("flat round dense size=sm color=grey-8").tooltip(
+                    "Correct or replace the survey in a table"
+                )
                 ui.label("Frac:").classes("text-xs text-slate-600 ml-2")
                 cache["frac_input"] = (
                     ui.input(value="1.00")
@@ -483,7 +490,7 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
                     icon="description",
                     on_click=lambda: generate(),
                 ).props("color=primary dense")
-            # Survey-PDF upload only appears when no DB survey was found.
+            # Shown only when the APD carries no survey: upload one or type it.
             cache["survey_upload_row"] = ui.row().classes("gap-2 items-center mt-1")
             with cache["survey_upload_row"]:
                 survey_upload = ui.upload(
@@ -495,6 +502,12 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
                         f"Upload rejected: {e}", type="negative"
                     ),
                 ).classes("max-w-xs").props("accept=.pdf flat dense")
+                ui.label("or").classes("text-xs text-gray-500")
+                ui.button(
+                    "Type / paste survey",
+                    icon="table_rows",
+                    on_click=lambda: open_survey_entry(),
+                ).props("outline dense no-caps")
             cache["survey_upload_row"].visible = False
             cache["gen_status"] = ui.label("").classes("text-xs text-slate-500")
 
@@ -584,6 +597,21 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
         state.casing_survey_df = parsed.surveys
         state.casing_survey_label = f"PDF / {name} ({len(parsed.surveys)} stations)"
         _rebuild_from_state()
+
+    def apply_manual_survey(df) -> None:
+        state.casing_survey_df = df
+        state.casing_survey_label = (
+            f"Typed / pasted ({len(df)} stations, {df.attrs['north_reference']} north)"
+        )
+        _rebuild_from_state()
+        ui.notify(
+            f"Survey set: {len(df)} stations. TVDs and Generate use it now; "
+            "'Use as active well' sends it to the Survey, Map and Clearance tabs.",
+            type="positive",
+            multi_line=True,
+        )
+
+    open_survey_entry = build_survey_entry(apply_manual_survey)
 
     def _on_frac_change() -> None:
         try:
@@ -741,17 +769,21 @@ def render_casing_review_tab(state: AppState) -> Callable[[], None]:
         cache["meta_tab"].visible = True
 
         if state.casing_survey_df is not None and not state.casing_survey_df.empty:
-            cache["survey_status"].text = f"Using survey: {state.casing_survey_label}"
+            cache["survey_status"].text = f"Survey: {state.casing_survey_label}"
             cache["survey_status"].classes(
-                replace="text-sm px-3 py-2 rounded bg-green-100 text-green-800"
+                replace="text-xs px-2 py-1 rounded bg-green-100 text-green-800"
             )
             cache["survey_upload_row"].visible = False
+            cache["edit_survey_btn"].visible = True
         else:
             cache["survey_status"].text = (
-                "No directional survey loaded — TVDs use a synthetic vertical/"
-                "lateral fallback. Upload a survey PDF below for precise values."
+                "No survey — TVDs are estimated. Upload or type one below."
+            )
+            cache["survey_status"].classes(
+                replace="text-xs px-2 py-1 rounded bg-amber-100 text-amber-800"
             )
             cache["survey_upload_row"].visible = True
+            cache["edit_survey_btn"].visible = False
 
         if state.casing_frac_gradient_psi_per_ft is not None:
             cache["frac_input"].value = f"{state.casing_frac_gradient_psi_per_ft:.4f}"
