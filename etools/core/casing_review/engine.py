@@ -185,15 +185,25 @@ class CasingDesignEngine:
                 grade=s.grade,
                 collar=s.collar,
             )
+            connection_matched = rec is not None or not s.collar
             if rec is None and s.collar:
-                # Fall back to grade-only lookup if the connection isn't catalogued.
+                # The connection isn't catalogued. Pipe-body ratings don't
+                # depend on it, so take them from any row of this pipe; the
+                # joint strength does, and another connection's would rate
+                # tension against the wrong joint.
                 rec = self._catalog.lookup(
                     od_in=s.od_in, weight_ppf=s.weight_ppf, grade=s.grade
                 )
+                if rec is not None:
+                    log.warning(
+                        "casing.catalog.connection_miss",
+                        od=s.od_in, weight=s.weight_ppf,
+                        grade=s.grade, collar=s.collar,
+                    )
             if rec is not None:
                 s.collapse_psi = rec.collapse_psi
                 s.burst_psi = rec.burst_psi
-                s.joint_klbs = rec.joint_klbs
+                s.joint_klbs = rec.joint_klbs if connection_matched else None
                 s.body_klbs = rec.body_klbs
                 s.id_in = rec.id_in
             else:
@@ -216,7 +226,10 @@ def welltrack_from_processed_survey(processed) -> list[WelltrackPoint]:
     from etools.models import SurveyFrame
 
     points = processed.frames[SurveyFrame.TRUE].points
-    return [WelltrackPoint(md_ft=p.md, tvd_ft=p.tvd) for p in points]
+    return [
+        WelltrackPoint(md_ft=float(md), tvd_ft=float(tvd))
+        for md, tvd in zip(points["measured_depth"], points["tvd"])
+    ]
 
 
 def welltrack_from_dataframe(df: pd.DataFrame) -> list[WelltrackPoint]:

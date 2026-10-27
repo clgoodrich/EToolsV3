@@ -994,6 +994,8 @@ def _render_results(
             "Changes cascade through TVD / footages / PLSS labels automatically "
             "when you leave the field; click Save to rewrite the Excel."
         ).classes("text-xs text-gray-600 mt-1")
+        for note in result.notes:
+            ui.label(note).classes("text-xs p-2 rounded bg-amber-50 text-amber-800")
 
         # 15-column grid: label + 3 editable + 9 read-only + section block.
         headers = [

@@ -47,10 +47,13 @@ def locate_points(
         pts_gdf,
         sections[["Conc", "label", "geometry"]],
         how="left",
-        predicate="within",
+        # "within" excludes the boundary, so a point exactly on a section
+        # line or corner matched nothing. A point on the line belongs to
+        # every section that touches it; the first one is kept below.
+        predicate="intersects",
     )
     joined = joined.drop(columns=["index_right", "geometry"], errors="ignore")
-    # Some boundary points can match two adjacent sections; keep the first.
+    # Boundary points match two or more adjacent sections; keep the first.
     joined = joined[~joined.index.duplicated(keep="first")]
 
     # Decompose the Conc into its PLSS components so downstream consumers

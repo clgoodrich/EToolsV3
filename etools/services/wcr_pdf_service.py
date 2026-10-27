@@ -38,7 +38,11 @@ from etools.core.coordinates import utm_to_latlon
 from etools.core.pdf.wcr_parser import parse_wcr_pdf
 from etools.core.plat import locate_points
 from etools.core.survey.kop import detect_kop, detect_kop_simple
-from etools.core.survey.processor import interpolate_at_md, process_survey
+from etools.core.survey.processor import (
+    interpolate_at_md,
+    process_survey,
+    project_to_md,
+)
 from etools.core.wcr import generate_wcr_excel
 from etools.logging_setup import get_logger
 from etools.models import (
@@ -66,6 +70,8 @@ class WCRPdfResult:
     points: pd.DataFrame = field(default_factory=pd.DataFrame)
     sections: gpd.GeoDataFrame | None = None
     elevation_ft: float = 0.0
+    # Assumptions the run had to make (e.g. survey projected to TD).
+    notes: list[str] = field(default_factory=list)
 
 
 class WCRPdfService:
@@ -120,6 +126,23 @@ class WCRPdfService:
         # South Moon 5-31-32-C4-3H).
         if north_reference is None:
             north_reference = surveys.attrs.get("north_reference") or "grid"
+        # The last survey station sits short of TD (the bit is behind the
+        # MWD sensor). Project to TD on the last inclination/azimuth and say
+        # so; holding the last station's position under the TD MD put the
+        # BHL short by the whole gap.
+        last_md = float(surveys["MeasuredDepth"].max())
+        td_wanted = max(
+            (m for m in (pdf_data.total_md_ft, pdf_data.last_perf_md) if m),
+            default=None,
+        )
+        notes: list[str] = []
+        if td_wanted is not None and td_wanted > last_md + 0.5:
+            surveys = project_to_md(surveys, td_wanted)
+            notes.append(
+                f"The survey ends at MD {last_md:,.0f} ft, {td_wanted - last_md:,.0f} ft "
+                f"short of TD ({td_wanted:,.0f} ft). The BHL is projected to TD on "
+                "the last station's inclination and azimuth."
+            )
         processed = process_survey(
             surveys,
             surface_lat=lat,
@@ -210,6 +233,7 @@ class WCRPdfService:
             points=points,
             sections=bundle.sections,
             elevation_ft=float(elev),
+            notes=notes,
         )
 
     # ------------------------------------------------------------------

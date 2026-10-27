@@ -221,9 +221,11 @@ def interpolate_at_md(points: pd.DataFrame, target_md: float) -> dict[str, float
     """Linearly interpolate the processed-survey points at an arbitrary MD.
 
     Returns a dict with measured_depth, tvd, n_offset, e_offset, easting,
-    northing, lat, lon, inclination, azimuth (if present). Out-of-range MDs
-    clamp to the first/last station rather than raising — the WCR pipeline
-    tolerates the SHL row at MD=0 even when surveys start at a non-zero MD.
+    northing, lat, lon, inclination, azimuth (if present). An MD above the
+    first station clamps to it (the WCR pipeline asks for the SHL at MD 0).
+    An MD past the last station raises: holding the last station's position
+    under a deeper MD reported a BHL the survey never reached. Callers that
+    need TD extend the survey first (:func:`project_to_md`).
     """
     if points.empty:
         raise ValueError("Cannot interpolate against an empty survey.")
@@ -250,6 +252,11 @@ def interpolate_at_md(points: pd.DataFrame, target_md: float) -> dict[str, float
     if target_md <= md[0]:
         row = df.iloc[0]
         return {"measured_depth": float(target_md), **{c: float(row[c]) for c in cols}}
+    if target_md > md[-1] + _MD_END_TOLERANCE_FT:
+        raise ValueError(
+            f"MD {target_md:,.1f} ft is past the last survey station "
+            f"({md[-1]:,.1f} ft)."
+        )
     if target_md >= md[-1]:
         row = df.iloc[-1]
         return {"measured_depth": float(target_md), **{c: float(row[c]) for c in cols}}
@@ -262,7 +269,35 @@ def interpolate_at_md(points: pd.DataFrame, target_md: float) -> dict[str, float
     for c in cols:
         a = float(df[c].iloc[lo])
         b = float(df[c].iloc[hi])
-        out[c] = a + t * (b - a)
+        if c == "azimuth":
+            # The short way round: 359 -> 1 passes through 0, not 180.
+            out[c] = (a + t * ((b - a + 180.0) % 360.0 - 180.0)) % 360.0
+        else:
+            out[c] = a + t * (b - a)
+    return out
+
+
+# Rounding slack when an MD read off a PDF equals the last station.
+_MD_END_TOLERANCE_FT = 0.5
+
+
+def project_to_md(raw: pd.DataFrame, target_md: float) -> pd.DataFrame:
+    """Extend a raw MD/Inc/Azi survey to ``target_md`` (projection to TD).
+
+    Adds one station at ``target_md`` with the last station's inclination
+    and azimuth, i.e. a straight line from the last survey to the bit. A
+    survey that already reaches ``target_md`` is returned unchanged.
+    """
+    last = raw.sort_values("MeasuredDepth").iloc[-1]
+    if target_md <= float(last["MeasuredDepth"]) + _MD_END_TOLERANCE_FT:
+        return raw
+    row = {
+        "MeasuredDepth": float(target_md),
+        "Inclination": float(last["Inclination"]),
+        "Azimuth": float(last["Azimuth"]),
+    }
+    out = pd.concat([raw, pd.DataFrame([row])], ignore_index=True)
+    out.attrs = dict(raw.attrs)
     return out
 
 
